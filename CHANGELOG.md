@@ -7,6 +7,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+<!-- Add new changes here.
+     Canonical sections (docs/RELEASING.md): ### 🆕 What's New (curated highlights, ≤6 bullets ≤140 chars) →
+     ### Added / Changed / Deprecated / Removed / Fixed / Security → ### ⚠️ Known Issues / ### ✅ Closed Issues.
+     `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
+     Running apply will move this section to a versioned entry and reset the template below. -->
+
+## [v2.2.2] - 2026-11-24
+
+### 🆕 What's New
+
+- **100% Native Plugin-Only (`opencode plugin add pantheon-opencode`)**: Retired the `npx` CLI installer and file copying completely.
+- **Full Legacy Auto-Cleanup**: Auto-removes old Python MCPs, `plugins/pantheon-tui`, `tui.json`, `.venv`, and copied assets cleanly.
+- **In-App Data Purge & Native Sandbox**: Added confirmed TUI data purge in `/pantheon-settings` and plugin-only sandbox verification.
+
+### Changed
+
+- **install** — retired `bin/pantheon-init.mjs`, `scripts/sync-tui.mjs`, `scripts/install-mcp.mjs`, and 21 CLI-installer helpers; simplified `postinstall.mjs`.
+- **tui** — updated `/pantheon-settings` Updates tab with two-step `Purge Pantheon data` (`purgeAllPantheonData`) and updated `doctor-state.ts`.
+- **sandbox** — updated `scripts/test-opencode-sandbox.sh` and `validate-sandbox-install.mjs` to mount package root (server + TUI) with zero `.venv`.
+
+### Fixed
+
+- **mcp** — resolved `pantheon-code-mode` / `ChildProcess.spawn (.venv/bin/python3 scripts/code_mode.py)` ENOENT by auto-cleaning stale MCPs in JSON/JSONC.
+- **migration** — guarded repo `.pantheon/code-mode` files with `isRepoSourceRoot` so native cleanup never deletes tracked repo scripts.
+- **doctor** — added `opencode.jsonc` support, native plugin-root detection, and `--fix` legacy cleanup without requiring Python `.venv`.
 ## [v2.2.1] - 2026-11-20
 
 ### 🆕 What's New
@@ -563,6 +588,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ---
 
 ## [Unreleased]
+
+### 🆕 What's New
+
+- **100% Native Plugin-Only Architecture (`opencode plugin add pantheon-opencode`)**: Retired the legacy `npx pantheon-opencode` CLI binary and file-copy installer (`bin/pantheon-init.mjs`, `scripts/install/opencode.mjs`, `sync-tui.mjs`, `install-mcp.mjs`). OpenCode 2.x loads all agents, commands, skills, 30 native TypeScript tools, and TUI in-process with zero copied files or `.venv`.
+- **Full Legacy Upgrade Auto-Cleanup**: Both npm `postinstall` and plugin boot (`ensureLegacyStoresMigratedOnce`) migrate legacy SQLite stores first and automatically remove legacy Python Pantheon MCPs (`pantheon-code-mode`, `pantheon-memory`, `pantheon-persistence`, `pantheon-resources`, `pantheon-vision`) from `opencode.json` & JSONC `opencode.jsonc` (preserving user comments & third-party MCPs), legacy V1 hooks, copied `plugins/pantheon-tui/`, `tui.json`/`cli.json` residue, `configDir/.venv`, `scripts/*.py`, and redundant copied Pantheon agents/commands/skills.
+- **In-App Store Purge & Plugin-Only Sandbox**: Added two-step confirmed **"Purge Pantheon data"** inside TUI `/pantheon-settings` → **Updates** (`purgeAllPantheonData`) and updated `scripts/test-opencode-sandbox.sh` + `scripts/validate-sandbox-install.mjs` to validate clean native plugin installs and full dirty-legacy upgrade cleanup locally.
+
+### Fixed
+
+- **mcp** — resolved `MCP server: pantheon-code-mode` / `ChildProcess.spawn (.venv/bin/python3 scripts/code_mode.py)` ENOENT errors caused by leftover legacy Python MCP entries surviving upgrades.
+- **doctor** — `scripts/doctor.mjs` now recognizes active native `pantheon-opencode` plugin setups without requiring external MCPs or Python `.venv`, and `--fix` removes legacy Python MCPs/plugins automatically.
 
 ### 🆕 What's New
 

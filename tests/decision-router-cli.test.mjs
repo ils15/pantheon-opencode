@@ -362,7 +362,7 @@ test('CLI reports a usage error as one line without a stack', (t) => {
   try {
     const result = spawnSync(
       process.execPath,
-      [join(ROOT, 'bin', 'pantheon-init.mjs'), 'decision-router', 'caps', 'user'],
+      [join(ROOT, 'scripts', 'decision-router.mjs'), 'caps', 'user'],
       { encoding: 'utf8', env: { ...process.env, ...env } },
     )
     assert.equal(result.status, 1, result.stderr)

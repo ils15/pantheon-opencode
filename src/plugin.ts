@@ -3080,21 +3080,33 @@ export const plugin = define({
     activeHostWorkspaceDir = hostLocationDir || undefined
     loadRuntimeOverrides(hostLocationDir)
     const safeGlobalConfigDir = resolveSafeGlobalConfigDir()
+    let migrationReport: ReturnType<typeof ensureLegacyStoresMigratedOnce> = null
     if (hostLocationDir) {
       try {
-        ensureLegacyStoresMigratedOnce(
-          hostLocationDir,
-          safeGlobalConfigDir ? { globalConfigDir: safeGlobalConfigDir } : {},
-        )
+        migrationReport = ensureLegacyStoresMigratedOnce(hostLocationDir, {
+          ...(safeGlobalConfigDir ? { globalConfigDir: safeGlobalConfigDir } : {}),
+          cleanCopiedInstallArtifacts: true,
+        })
       } catch {
         /* fail-open: never block plugin startup */
       }
     } else if (safeGlobalConfigDir) {
       try {
-        ensureLegacyStoresMigratedOnce(safeGlobalConfigDir)
+        migrationReport = ensureLegacyStoresMigratedOnce(safeGlobalConfigDir, {
+          isGlobalConfig: true,
+          cleanCopiedInstallArtifacts: true,
+        })
       } catch {
         /* fail-open: never block plugin startup */
       }
+    }
+    if (migrationReport && migrationReport.staleFilesDeleted.length > 0) {
+      appendV2HookLog(
+        `[legacy-migration] Auto-cleaned ${migrationReport.staleFilesDeleted.length} legacy MCP/plugin/copied artifact(s)` +
+          (migrationReport.memoriesMigrated > 0
+            ? ` (migrated ${migrationReport.memoriesMigrated} memory record(s))`
+            : ''),
+      )
     }
 
     // ─── Phase 0: idle todo enforcer ─────────────────────────────────────

@@ -16,11 +16,96 @@
  * The write mirrors the `/pantheon-vision` command: atomic, `.bak` backup,
  * and a MERGE — existing keys are never overwritten.
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
+import {
+  chmodSync,
+  closeSync,
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { writeConfigWithBackup } from './shared.mjs'
-import { verifyRegularFile } from './verify.mjs'
+import {
+  assertNoSymlinkAncestors,
+  assertSafeRemoval,
+  verifyPathRemoved,
+  verifyRegularFile,
+} from './verify.mjs'
+
+function readFileOrNull(filePath) {
+  try {
+    return readFileSync(filePath, 'utf8')
+  } catch {
+    return null
+  }
+}
+
+function lstatOrNull(filePath) {
+  try {
+    return lstatSync(filePath)
+  } catch {
+    return null
+  }
+}
+
+function writeConfigWithBackup(filePath, content, dryRun, options = {}) {
+  const { expectedContent, beforeSwap, beforeRecheck, mode = 0o600 } = options
+  assertNoSymlinkAncestors(filePath)
+  const stat = lstatOrNull(filePath)
+  if (stat?.isSymbolicLink()) {
+    throw new Error(`Refusing to write through symlink: ${filePath}`)
+  }
+  const targetMode = stat === null ? mode : stat.mode & 0o777
+  const existing = stat === null ? null : readFileOrNull(filePath)
+  if (existing === content) return 'skipped'
+  if (expectedContent !== undefined && existing !== expectedContent) return 'conflict'
+  if (dryRun) return 'created'
+  if (typeof beforeRecheck === 'function') beforeRecheck(existing)
+  const tmpPath = `${filePath}.tmp-${process.pid}`
+  assertNoSymlinkAncestors(tmpPath)
+  let fd
+  let createdTemporary = false
+  try {
+    fd = openSync(tmpPath, 'wx', targetMode)
+    createdTemporary = true
+    writeFileSync(fd, content, { encoding: 'utf8' })
+    closeSync(fd)
+    fd = undefined
+    if (targetMode !== undefined) chmodSync(tmpPath, targetMode)
+    if (expectedContent !== undefined && readFileOrNull(filePath) !== expectedContent) {
+      return 'conflict'
+    }
+    if (typeof beforeSwap === 'function') beforeSwap(existing)
+    assertNoSymlinkAncestors(filePath)
+    renameSync(tmpPath, filePath)
+    createdTemporary = false
+    verifyRegularFile(filePath, content)
+    return 'created'
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd)
+      } catch {
+        // ignore close error
+      }
+    }
+    if (createdTemporary) {
+      try {
+        assertSafeRemoval(dirname(tmpPath), tmpPath)
+        rmSync(tmpPath, { force: true })
+        verifyPathRemoved(tmpPath)
+      } catch {
+        // ignore cleanup error
+      }
+    }
+  }
+}
 
 const CONFIG_FILENAME = 'opencode-vision.json'
 /** `provider/model` — exactly one slash, no surrounding whitespace. */

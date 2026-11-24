@@ -197,8 +197,8 @@ export function buildDoctorTab(input: DoctorSectionInput): SettingsTab {
           {
             id: 'doctor.cli',
             name: 'Full check',
-            value: '`pantheon-opencode doctor`',
-            note: 'MCP smoke, venv pins, git stay in the CLI',
+            value: 'Settings -> Updates -> Legacy & Drift',
+            note: 'Scan & clean obsolete files/MCPs or purge Pantheon stores in-app',
           },
         ],
       },

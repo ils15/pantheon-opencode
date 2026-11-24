@@ -5,39 +5,33 @@
 Pantheon 2.2 **requires OpenCode 2.x** (the OpenCode V1 contract was removed
 entirely; 1.7.x was the last line with V1 support).
 
-**Best-practice install (`opencode plugin add`):** loading Pantheon directly
-through OpenCode's native plugin manager registers all **14 agents, 25 skills,
-9 slash commands, 30 native TypeScript tools, and TUI** in-process with zero
-copied files on disk — so it works immediately in **any directory** (git repos,
-worktrees, or empty folders) and upgrades cleanly without leaving stale copied
-assets behind.
-
-`npx pantheon-opencode init` remains available when you specifically want
-file-based `.opencode/` artifacts, `AGENTS.md` injection, or optional legacy
-Python MCPs. If migrating from an older `init` install, open
-`/pantheon-settings` → **Updates** (**Legacy & Drift Cleanup**) to remove
-redundant copied files and stale plugin caches safely.
+**Native plugin install (`opencode plugin add`):** in v2.2.2+, loading Pantheon directly
+through OpenCode's native plugin manager is the **only** installation method — the
+legacy `npx pantheon-opencode` CLI installer was retired. OpenCode loads all
+**14 agents, 25 skills, 9 slash commands, 30 native TypeScript tools, and TUI**
+in-process with zero copied files on disk, works in **any directory** (git repos,
+worktrees, or empty folders), and automatically cleans legacy Python MCPs,
+copied TUI folders, and `.venv`/`.py` artifacts during `postinstall` and startup.
+Open `/pantheon-settings` → **Updates** (**Legacy, Drift & Cleanup**) anytime to
+inspect legacy artifacts or purge `.pantheon/` stores.
 
 ## TL;DR (Quick Start)
 
 ```bash
-# Recommended: native OpenCode 2.x plugin (zero copied clutter, works anywhere)
+# Install native OpenCode 2.x plugin (zero copied clutter, works anywhere)
 opencode plugin add pantheon-opencode
 
 # Upgrade later (also available interactively inside /pantheon-settings -> Updates)
 opencode plugin update pantheon-opencode
 
-# Optional CLI installer: explicit file-based install / project AGENTS.md / MCP
-npx pantheon-opencode init --project --no-mcp
-npx pantheon-opencode init --headless --yes
+# Uninstall cleanly:
+opencode plugin remove pantheon-opencode
+# (Optional: use /pantheon-settings -> Updates -> Purge Pantheon data first to wipe .pantheon/ stores)
 
-# Verify installation & clean stale/legacy artifacts
-npx pantheon-opencode doctor
-node scripts/prune.mjs            # preview stale backups/caches/worktrees
-
-# Development & Testing Prerequisites (repo checkout only):
+# Development & Local Sandbox Validation (repo checkout only):
 npm install
-npm run setup                     # config migration review + installer preflight
+npm run doctor
+bash scripts/test-opencode-sandbox.sh --prepare && bash scripts/test-opencode-sandbox.sh --run v2
 ```
 
 - **Requirements:** a supported host — **OpenCode 2.x** (Pantheon 2.x does not

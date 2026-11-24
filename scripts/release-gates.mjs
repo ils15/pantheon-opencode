@@ -87,7 +87,8 @@ const REQUIRED_TARBALL_PAYLOAD = [
   'package/src/plugins/tui/dist/server.js',
   'package/src/plugins/tui/package.json',
   'package/src/plugins/tui/package-lock.json',
-  'package/bin/pantheon-init.mjs',
+  'package/src/plugin/index.js',
+  'package/scripts/postinstall.mjs',
   'package/scripts/doctor.mjs',
   'package/.pantheon/code-mode/compress-inline.py',
 ]

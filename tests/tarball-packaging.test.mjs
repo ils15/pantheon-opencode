@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
+  accessSync,
+  cpSync,
   existsSync,
+  constants as fsConstants,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -11,8 +14,8 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join, relative, resolve } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { join, relative } from 'node:path'
 import { test } from 'node:test'
 
 // test:node runs on machines without an OpenCode binary, so the host gate
@@ -33,6 +36,16 @@ const executableForbidden = new RegExp(
 const privateUrl =
   /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|[^/\s"]+\.(?:local|internal|corp))(?:[:/]|$)/i
 
+function writableNpmCacheEnv(workDir) {
+  const defaultCache = process.env.npm_config_cache || join(homedir(), '.npm')
+  try {
+    accessSync(defaultCache, fsConstants.W_OK)
+    return {}
+  } catch {
+    return { npm_config_cache: join(workDir, '.npm-cache') }
+  }
+}
+
 function pack(destination) {
   // Do not bypass prepack: the published archive is the artifact under test.
   // --json emits the full manifest + file listing (>1MB once the tarball
@@ -44,9 +57,26 @@ function pack(destination) {
     cwd: ROOT,
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024,
-    env: { ...process.env, HUSKY: '0' },
+    env: { ...process.env, ...writableNpmCacheEnv(destination), HUSKY: '0' },
   })
   return join(destination, firstPackEntry(result).filename)
+}
+
+function unpackInstalledPackage(tarball, prefixDir) {
+  const installedRoot = join(prefixDir, 'node_modules', 'pantheon-opencode')
+  mkdirSync(installedRoot, { recursive: true })
+  execFileSync('tar', ['-xzf', tarball, '-C', installedRoot, '--strip-components=1'], {
+    encoding: 'utf8',
+  })
+  const runtimeDeps = ['@opencode-ai', 'js-yaml', 'jsonc-parser', 'tiktoken']
+  for (const dep of runtimeDeps) {
+    const src = join(ROOT, 'node_modules', dep)
+    const dst = join(prefixDir, 'node_modules', dep)
+    if (existsSync(src) && !existsSync(dst)) {
+      cpSync(src, dst, { recursive: true })
+    }
+  }
+  return installedRoot
 }
 
 /**
@@ -207,8 +237,10 @@ test('tarball contains no machine paths and ships the runtime inputs', () => {
     assert.doesNotMatch(listing, /package\/src\/plugins\/pantheon-hooks\.ts/)
     // The plugin export target and its directory shim both ship.
     assert.match(listing, /^package\/src\/plugin\/index\.ts$/m)
+    assert.match(listing, /^package\/src\/plugin\/index\.js$/m)
     assert.match(listing, /^package\/src\/plugin\.ts$/m)
-    assert.match(listing, /^package\/bin\/pantheon-init\.mjs$/m)
+    assert.match(listing, /^package\/scripts\/postinstall\.mjs$/m)
+    assert.doesNotMatch(listing, /^package\/bin\//m)
     // The code-mode payload must ship inside the tarball so fresh installs
     // can seed the runtime scripts directory.
     assert.match(listing, /^package\/\.pantheon\/code-mode\/compress-inline\.py$/m)
@@ -241,220 +273,105 @@ test('tarball contains no machine paths and ships the runtime inputs', () => {
   }
 })
 
-test('installed package resolves hooks to its installed absolute path', () => {
+test('installed tarball runs postinstall legacy cleanup and serves native plugin scripts without bin CLI', () => {
   const work = mkdtempSync(join(tmpdir(), 'pantheon-prefix-'))
   const project = join(work, 'project')
   mkdirSync(project)
   try {
     const tarball = pack(work)
-    // Install the tarball with a redirected OpenCode config dir. Installing our
-    // own tarball runs its `postinstall` (`postinstall.mjs && sync-tui.mjs`), and
-    // sync-tui resolves the developer's REAL config dir: $XDG_CONFIG_HOME/
-    // opencode if it exists, else ~/.opencode. Left unredirected it copies the
-    // repo's src/plugins/tui over the live ~/.config/opencode/plugins/pantheon-tui
-    // and then runs `npm ci --omit=dev` *there* — silently rewriting the user's
-    // environment (and dropping dev deps) while this suite still reports green.
-    //
-    // The sandbox dir must CONTAIN an `opencode` entry: resolveConfigDir() only
-    // falls through to the real ~/.opencode when the XDG path is absent.
     const sandboxConfig = join(work, 'sandbox-config')
-    mkdirSync(sandboxConfig, { recursive: true, mode: 0o700 })
-    mkdirSync(join(sandboxConfig, 'opencode'), { recursive: true, mode: 0o700 })
-    execFileSync('npm', ['install', '--prefer-offline', '--prefix', work, tarball], {
-      encoding: 'utf8',
-      env: { ...process.env, XDG_CONFIG_HOME: sandboxConfig },
+    const opencodeDir = join(sandboxConfig, 'opencode')
+    mkdirSync(join(opencodeDir, 'plugins', 'pantheon-tui', 'dist'), {
+      recursive: true,
+      mode: 0o700,
     })
-    const cli = join(work, 'node_modules', 'pantheon-opencode', 'bin', 'pantheon-init.mjs')
-    const routerStatus = spawnSync(process.execPath, [cli, 'decision-router', 'status'], {
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        HOME: join(work, 'home'),
-        XDG_CONFIG_HOME: sandboxConfig,
-        XDG_STATE_HOME: join(work, 'state'),
-      },
-    })
-    assert.equal(routerStatus.status, 0, routerStatus.stderr || routerStatus.stdout)
-    assert.match(routerStatus.stdout, /Enabled: no/)
-    assert.doesNotMatch(routerStatus.stderr, /ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING/)
-    const result = spawnSync(
-      process.execPath,
-      // OPENCODE_VERSION pins the gate: this asserts path resolution inside the
-      // INSTALLED package, not the host gate. Left on the default it would
-      // resolve against the developer's real OpenCode and assert nothing.
-      [cli, 'init', '--project', '--no-mcp', '--headless', '-y'],
-      {
-        cwd: project,
-        encoding: 'utf8',
-        env: { ...process.env, OPENCODE_VERSION: 'v2' },
-      },
+    writeFileSync(
+      join(opencodeDir, 'plugins', 'pantheon-tui', 'dist', 'tui.js'),
+      '// stale legacy copied TUI\n',
     )
-    assert.equal(result.status, 0, result.stderr || result.stdout)
-    const config = JSON.parse(readFileSync(join(project, 'opencode.json'), 'utf8'))
-    const installedRoot = resolve(work, 'node_modules', 'pantheon-opencode')
-    // The defaults asserted below are read from the installer's code. Pin that
-    // independence here: if a template ever ships again and quietly starts
-    // seeding them, this test stops proving the code path it exists to guard.
+    writeFileSync(
+      join(opencodeDir, 'opencode.json'),
+      JSON.stringify(
+        {
+          plugins: ['pantheon-opencode', join(opencodeDir, 'plugins', 'pantheon-tui')],
+          mcp: {
+            servers: {
+              'pantheon-code-mode': {
+                type: 'local',
+                command: [join(opencodeDir, '.venv', 'bin', 'python3'), 'scripts/code_mode.py'],
+              },
+              context7: {
+                type: 'remote',
+                url: 'https://mcp.context7.com/mcp',
+              },
+            },
+          },
+          theme: 'user-theme',
+        },
+        null,
+        2,
+      ),
+    )
+
+    const installedRoot = unpackInstalledPackage(tarball, work)
+    const installedManifest = JSON.parse(readFileSync(join(installedRoot, 'package.json'), 'utf8'))
+    assert.equal(installedManifest.bin, undefined, 'retired bin CLI must not ship in package.json')
     assert.equal(
       existsSync(join(installedRoot, 'opencode.json')),
       false,
       'installed package must not ship an opencode.json template',
     )
-    // Installer contract: the plugin DIRECTORY inside the INSTALLED package is
-    // registered under the plural `plugins` key, in object form, resolved to an
-    // absolute path (never a dev-machine path). The singular `plugin` key is
-    // never written.
-    assert.ok(!('plugin' in config), 'the legacy singular plugin key must not be written')
-    const registered = (config.plugins ?? []).find(
-      (entry) =>
-        typeof entry === 'object' && entry?.package === join(installedRoot, 'src', 'plugin'),
-    )
-    assert.ok(
-      registered,
-      `the installed plugin directory must be registered: ${JSON.stringify(config.plugins)}`,
-    )
-    assert.equal(
-      existsSync(registered.package),
-      true,
-      `registered plugin must exist: ${registered.package}`,
-    )
-    assert.deepEqual(registered.options, {})
-    // Regression guard (after the packaged opencode.json template was dropped
-    // from `files`): the product defaults an install seeds are code constants in
-    // scripts/install/opencode.mjs, NOT read from a template that no longer
-    // ships. If they move back to a template — or back out of the installer —
-    // these two assertions are what fails.
-    assert.equal(config.default_agent, 'zeus')
-    // The skills component IS selected by this install (`pantheon-init` default
-    // component list includes skills, and no --components narrows it), so the
-    // grant below is the gated one — not the unconditional merge it used to be
-    // shadowed by. Assert the component explicitly so the two cannot be
-    // confused again.
-    assert.ok(
-      existsSync(join(project, '.opencode', 'skills')),
-      'this install must select the skills component for the skill grant to apply',
-    )
-    // The seeded grants are written in the host's plural `permissions` rule
-    // shape. The skills component IS selected by this install (`pantheon-init`
-    // default component list includes skills, and no --components narrows it),
-    // so the skill grant below is the gated one.
-    const rules = config.permissions ?? []
-    const ruleEffect = (action, resource) =>
-      rules.find((rule) => rule.action === action && rule.resource === resource)?.effect
-    assert.equal(ruleEffect('skill', '*'), 'allow')
-    // Regression guard: the default shell allowlist is the five commands
-    // Pantheon's own agents must run unattended, and nothing else. Growing it
-    // again is a silent product/security decision made for every installer, so
-    // the allow-set and the deny-set are both pinned here.
-    const shellResources = rules
-      .filter((rule) => rule.action === 'shell')
-      .map((rule) => rule.resource)
-    for (const required of ['git *', 'npm *', 'npx *', 'pytest *', 'ruff *']) {
-      assert.equal(
-        ruleEffect('shell', required),
-        'allow',
-        `permissions must allow shell \`${required}\``,
-      )
-    }
-    for (const forbidden of ['black', 'pip', 'docker', 'curl', 'gh', 'make']) {
-      assert.equal(
-        shellResources.includes(`${forbidden} *`) || shellResources.includes(forbidden),
-        false,
-        `permissions must NOT pre-allow \`${forbidden}\` — that is the installing user's call`,
-      )
-    }
-    assert.deepEqual(
-      shellResources.slice().sort(),
-      ['git *', 'npm *', 'npx *', 'pytest *', 'ruff *'],
-      'shell grants must be exactly the five agent-required commands',
-    )
-    assert.doesNotMatch(JSON.stringify(config), executableForbidden)
-    // Installer contract: the TUI plugin is COPIED to the target config's
-    // plugins/pantheon-tui and the COPY is registered under `plugins` — never
-    // the in-package src/plugins/tui — so installs stay hermetic and
-    // idempotent. No tui.json is written: the host loads the copy through its
-    // plugins entry, and the copy carries the loader contract (dist/tui.js).
-    const tuiDir = join(project, '.opencode', 'plugins', 'pantheon-tui')
-    assert.equal(
-      existsSync(join(project, '.opencode', 'tui.json')),
-      false,
-      'no tui.json is written',
-    )
-    assert.equal(existsSync(join(tuiDir, 'dist', 'tui.js')), true)
-    assert.ok(
-      (config.plugins ?? []).some((entry) =>
-        typeof entry === 'string' ? entry === tuiDir : entry?.package === tuiDir,
-      ),
-      'the copied TUI plugin must be registered under plugins',
-    )
-  } finally {
-    rmSync(work, { recursive: true, force: true })
-  }
-})
 
-test('installed package leaves an explicit permission.skill choice alone', () => {
-  // Same mechanism as the installer tests that seed an existing user config
-  // (runInstall(target, existingConfig) in install-opencode.test.mjs): write the
-  // user's own opencode.json into the target, then install over it. This one
-  // does it against the real tarball, because the bug is in shipped code.
-  const work = mkdtempSync(join(tmpdir(), 'pantheon-prefix-skill-'))
-  const project = join(work, 'project')
-  mkdirSync(project)
-  try {
-    const tarball = pack(work)
-    const sandboxConfig = join(work, 'sandbox-config')
-    mkdirSync(sandboxConfig, { recursive: true, mode: 0o700 })
-    mkdirSync(join(sandboxConfig, 'opencode'), { recursive: true, mode: 0o700 })
-    execFileSync('npm', ['install', '--prefer-offline', '--prefix', work, tarball], {
-      encoding: 'utf8',
-      env: { ...process.env, XDG_CONFIG_HOME: sandboxConfig },
-    })
-    // A user who locked skills down on purpose. The skills component IS selected
-    // (same default component list as the test above), so the installer reaches
-    // the grant — and must decline to make it.
-    writeFileSync(
-      join(project, 'opencode.json'),
-      JSON.stringify(
-        { permission: { skill: { '*': 'deny' }, websearch: 'allow' }, theme: 'user-theme' },
-        null,
-        2,
-      ),
-    )
-    const cli = join(work, 'node_modules', 'pantheon-opencode', 'bin', 'pantheon-init.mjs')
-    const result = spawnSync(
+    const postinstall = spawnSync(
       process.execPath,
-      // Pinned to v2 for the same reason as the test above: the subject is the
-      // permission merge, not the host gate.
-      [cli, 'init', '--project', '--no-mcp', '--headless', '-y'],
-      { cwd: project, encoding: 'utf8', env: { ...process.env, OPENCODE_VERSION: 'v2' } },
+      [join(installedRoot, 'scripts', 'postinstall.mjs')],
+      {
+        cwd: work,
+        encoding: 'utf8',
+        env: { ...process.env, XDG_CONFIG_HOME: sandboxConfig, HOME: join(work, 'home') },
+      },
     )
-    assert.equal(result.status, 0, result.stderr || result.stdout)
-    assert.ok(
-      existsSync(join(project, '.opencode', 'skills')),
-      'this install must select the skills component, or the guard proves nothing',
+    assert.equal(postinstall.status, 0, postinstall.stderr || postinstall.stdout)
+    assert.match(postinstall.stdout, /opencode plugin add pantheon-opencode/)
+
+    const cleanedConfig = JSON.parse(readFileSync(join(opencodeDir, 'opencode.json'), 'utf8'))
+    assert.equal(cleanedConfig.mcp?.servers?.['pantheon-code-mode'], undefined)
+    assert.equal(cleanedConfig.mcp?.servers?.context7?.type, 'remote')
+    assert.deepEqual(cleanedConfig.plugins, ['pantheon-opencode'])
+    assert.equal(cleanedConfig.theme, 'user-theme')
+    assert.equal(existsSync(join(opencodeDir, 'plugins', 'pantheon-tui')), false)
+
+    const routerStatus = spawnSync(
+      process.execPath,
+      [join(installedRoot, 'scripts', 'decision-router.mjs'), 'status'],
+      {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          HOME: join(work, 'home'),
+          XDG_CONFIG_HOME: sandboxConfig,
+          XDG_STATE_HOME: join(work, 'state'),
+        },
+      },
     )
-    const config = JSON.parse(readFileSync(join(project, 'opencode.json'), 'utf8'))
-    // The regression: an unconditional `config.permission.skill = {'*':'allow'}`
-    // silently flipped this deny to allow on every install that selected skills.
-    // The user's V1-spelled block is normalized to the host's rule array, and
-    // the deny must survive it verbatim.
-    const rules = config.permissions ?? []
-    assert.deepEqual(
-      rules.find((rule) => rule.action === 'skill'),
-      { action: 'skill', resource: '*', effect: 'deny' },
-      'explicit deny must survive',
+    assert.equal(routerStatus.status, 0, routerStatus.stderr || routerStatus.stdout)
+    assert.match(routerStatus.stdout, /Enabled: no/)
+    assert.doesNotMatch(routerStatus.stderr, /ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING/)
+
+    const doctor = spawnSync(
+      process.execPath,
+      [join(installedRoot, 'scripts', 'doctor.mjs'), '--target', project],
+      {
+        cwd: project,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          HOME: join(work, 'home'),
+          XDG_CONFIG_HOME: sandboxConfig,
+        },
+      },
     )
-    assert.equal(
-      rules.find((rule) => rule.action === 'websearch')?.effect,
-      'allow',
-      'the neighbouring allow rule survives the normalization',
-    )
-    assert.equal(
-      rules.some((rule) => rule.action === 'skill' && rule.effect === 'allow'),
-      false,
-    )
-    assert.equal(config.theme, 'user-theme')
-    assert.equal(config.default_agent, 'zeus', 'unrelated defaults are still seeded')
+    assert.equal(doctor.status, 0, doctor.stderr || doctor.stdout)
   } finally {
     rmSync(work, { recursive: true, force: true })
   }

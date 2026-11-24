@@ -2614,7 +2614,7 @@ function decideHeuristic(request) {
 
 // scripts/install/decision-router-config.mjs
 import { chmodSync, existsSync as existsSync3, lstatSync as lstatSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync4, writeFileSync as writeFileSync3 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir as homedir2 } from "node:os";
 import { dirname as dirname3, isAbsolute as isAbsolute2, join as join4, parse as parse2, resolve as resolve4, sep as sep4 } from "node:path";
 
 // scripts/install/verify.mjs
@@ -2714,7 +2714,7 @@ function normalizeDecisionProviderId(provider) {
 }
 function resolveUserDecisionRouterConfigPath(env = process.env) {
   const xdg = env.XDG_CONFIG_HOME;
-  const home = env.HOME && isAbsolute2(env.HOME) ? env.HOME : homedir();
+  const home = env.HOME && isAbsolute2(env.HOME) ? env.HOME : homedir2();
   const root = xdg && isAbsolute2(xdg) ? xdg : join4(home, ".config");
   return resolve4(root, "pantheon", "decision-router.json");
 }
@@ -7296,7 +7296,7 @@ import {
   mkdirSync as mkdirSync4,
   openSync as openSync2
 } from "node:fs";
-import { homedir as homedir2 } from "node:os";
+import { homedir as homedir3 } from "node:os";
 import { basename as basename3, dirname as dirname7, isAbsolute as isAbsolute3, join as join9, parse as parse3, resolve as resolve8, sep as sep5 } from "node:path";
 import { performance } from "node:perf_hooks";
 import { DatabaseSync } from "node:sqlite";
@@ -7399,7 +7399,7 @@ var RESERVATION_ID2 = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 var CLOCK_ROLLBACK_TOLERANCE_MS = 6e4;
 function resolveLocalDecisionBudgetDbPath(env = process.env) {
   const xdgStateHome = env.XDG_STATE_HOME;
-  const home = env.HOME && isAbsolute3(env.HOME) ? env.HOME : homedir2();
+  const home = env.HOME && isAbsolute3(env.HOME) ? env.HOME : homedir3();
   const base = xdgStateHome && isAbsolute3(xdgStateHome) ? xdgStateHome : join9(home, ".local", "state");
   return resolve8(base, "pantheon", DB_FILENAME);
 }
@@ -9506,16 +9506,19 @@ function createJ3EscalationObserver(options) {
 
 // src/pantheon/legacy-store-migration.mjs
 import {
+  chmodSync as chmodSync3,
   existsSync as existsSync8,
+  lstatSync as lstatSync5,
   mkdirSync as mkdirSync5,
   readdirSync,
   readFileSync as readFileSync9,
   realpathSync as realpathSync4,
+  renameSync as renameSync2,
   rmSync,
   statSync as statSync4,
   writeFileSync as writeFileSync4
 } from "node:fs";
-import { dirname as dirname8, join as join12, resolve as resolve9 } from "node:path";
+import { basename as basename4, dirname as dirname8, isAbsolute as isAbsolute4, join as join12, resolve as resolve9 } from "node:path";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 var SAFE_SEGMENT_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
 function resolveSafeGlobalConfigDir(env = process.env) {
@@ -9592,7 +9595,583 @@ function safeMtimeMs(filePath) {
     return 0;
   }
 }
-function hasPendingLegacyFiles(rootDir) {
+var PANTHEON_LEGACY_MCP_NAMES = /* @__PURE__ */ new Set([
+  "pantheon-resources",
+  "pantheon-code-mode",
+  "pantheon-memory",
+  "pantheon-persistence",
+  "pantheon-vision"
+]);
+var LEGACY_PYTHON_MCP_SCRIPTS = /* @__PURE__ */ new Set([
+  "mcp_resources.py",
+  "mcp_resources_server.py",
+  "code_mode.py",
+  "code_mode_server.py",
+  "memory_mcp.py",
+  "memory_mcp_server.py",
+  "mcp_persistence.py",
+  "mcp_persistence_server.py",
+  "pantheon_vision.py",
+  "pantheon_vision_server.py"
+]);
+var LEGACY_PYTHON_RUNTIME_SCRIPTS = [
+  ...LEGACY_PYTHON_MCP_SCRIPTS,
+  "_pantheon_paths.py",
+  "eval_store.py",
+  "mcp_codemap_module.py",
+  "themis_heuristic_scan.py",
+  "scrub-secrets.py"
+];
+function isPlainObject2(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function parseJsoncString(source, cursor) {
+  const start = cursor;
+  cursor += 1;
+  let escaped = false;
+  while (cursor < source.length) {
+    const ch = source[cursor];
+    if (escaped) {
+      escaped = false;
+    } else if (ch === "\\") {
+      escaped = true;
+    } else if (ch === '"') {
+      const end = cursor + 1;
+      return { value: JSON.parse(source.slice(start, end)), start, end, cursor: end };
+    }
+    cursor += 1;
+  }
+  throw new SyntaxError(`Unterminated string at offset ${start}`);
+}
+function parseJsoncAst(source, allowComments = true) {
+  let cursor = 0;
+  function skipTrivia() {
+    while (cursor < source.length) {
+      if (/\s/.test(source[cursor])) {
+        cursor += 1;
+        continue;
+      }
+      if (allowComments && source.startsWith("//", cursor)) {
+        const nl = source.indexOf("\n", cursor + 2);
+        cursor = nl < 0 ? source.length : nl;
+        continue;
+      }
+      if (allowComments && source.startsWith("/*", cursor)) {
+        const close = source.indexOf("*/", cursor + 2);
+        if (close < 0) throw new SyntaxError(`Unterminated comment at offset ${cursor}`);
+        cursor = close + 2;
+        continue;
+      }
+      break;
+    }
+  }
+  function parseValue() {
+    skipTrivia();
+    const start = cursor;
+    const ch = source[cursor];
+    if (ch === '"') {
+      const tok = parseJsoncString(source, cursor);
+      cursor = tok.cursor;
+      return { type: "scalar", value: tok.value, start, end: cursor };
+    }
+    if (ch === "{") {
+      cursor += 1;
+      const value = {};
+      const properties = [];
+      skipTrivia();
+      if (source[cursor] === "}") {
+        cursor += 1;
+        return { type: "object", value, properties, start, end: cursor };
+      }
+      let prevProp = null;
+      while (cursor < source.length) {
+        skipTrivia();
+        if (source[cursor] !== '"') throw new SyntaxError(`Expected object key at ${cursor}`);
+        const keyTok = parseJsoncString(source, cursor);
+        cursor = keyTok.cursor;
+        skipTrivia();
+        if (source[cursor] !== ":") throw new SyntaxError(`Expected ':' at ${cursor}`);
+        cursor += 1;
+        const valNode = parseValue();
+        Object.defineProperty(value, keyTok.value, {
+          value: valNode.value,
+          enumerable: true,
+          configurable: true,
+          writable: true
+        });
+        const prop = {
+          key: keyTok.value,
+          keyStart: keyTok.start,
+          keyEnd: keyTok.end,
+          valueStart: valNode.start,
+          valueEnd: valNode.end,
+          value: valNode.value,
+          valueNode: valNode,
+          commaBefore: prevProp?.commaAfter ?? null,
+          commaAfter: null
+        };
+        properties.push(prop);
+        skipTrivia();
+        if (source[cursor] === ",") {
+          prop.commaAfter = cursor;
+          cursor += 1;
+          skipTrivia();
+          if (source[cursor] === "}") {
+            if (!allowComments) throw new SyntaxError(`Trailing comma at ${prop.commaAfter}`);
+            cursor += 1;
+            return { type: "object", value, properties, start, end: cursor };
+          }
+          prevProp = prop;
+          continue;
+        }
+        if (source[cursor] === "}") {
+          cursor += 1;
+          return { type: "object", value, properties, start, end: cursor };
+        }
+        throw new SyntaxError(`Expected ',' or '}' at ${cursor}`);
+      }
+      throw new SyntaxError(`Unterminated object at ${start}`);
+    }
+    if (ch === "[") {
+      cursor += 1;
+      const value = [];
+      const items = [];
+      skipTrivia();
+      if (source[cursor] === "]") {
+        cursor += 1;
+        return { type: "array", value, items, start, end: cursor };
+      }
+      let prevItem = null;
+      while (cursor < source.length) {
+        const itemNode = parseValue();
+        value.push(itemNode.value);
+        const item = {
+          ...itemNode,
+          commaBefore: prevItem?.commaAfter ?? null,
+          commaAfter: null
+        };
+        items.push(item);
+        skipTrivia();
+        if (source[cursor] === ",") {
+          item.commaAfter = cursor;
+          cursor += 1;
+          skipTrivia();
+          if (source[cursor] === "]") {
+            if (!allowComments) throw new SyntaxError(`Trailing comma at ${item.commaAfter}`);
+            cursor += 1;
+            return { type: "array", value, items, start, end: cursor };
+          }
+          prevItem = item;
+          continue;
+        }
+        if (source[cursor] === "]") {
+          cursor += 1;
+          return { type: "array", value, items, start, end: cursor };
+        }
+        throw new SyntaxError(`Expected ',' or ']' at ${cursor}`);
+      }
+      throw new SyntaxError(`Unterminated array at ${start}`);
+    }
+    const lit = /^(?:true|false|null|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)/.exec(
+      source.slice(cursor)
+    );
+    if (!lit) throw new SyntaxError(`Expected JSON value at ${cursor}`);
+    cursor += lit[0].length;
+    return { type: "scalar", value: JSON.parse(lit[0]), start, end: cursor };
+  }
+  const root = parseValue();
+  skipTrivia();
+  if (cursor !== source.length) throw new SyntaxError(`Unexpected trailing content at ${cursor}`);
+  if (root.type !== "object") throw new SyntaxError("Config root must be a JSON object");
+  return root;
+}
+function spliceOutJsoncEntry(source, start, end, commaBefore, commaAfter) {
+  let removeStart = start;
+  let removeEnd = end;
+  if (commaAfter !== null) {
+    removeEnd = commaAfter + 1;
+  } else if (commaBefore !== null) {
+    removeStart = commaBefore;
+  }
+  while (removeStart > 0 && (source[removeStart - 1] === " " || source[removeStart - 1] === "	")) {
+    removeStart -= 1;
+  }
+  if (commaAfter !== null) {
+    while (removeEnd < source.length && (source[removeEnd] === " " || source[removeEnd] === "	")) {
+      removeEnd += 1;
+    }
+    if (source[removeEnd] === "\r") removeEnd += 1;
+    if (source[removeEnd] === "\n") removeEnd += 1;
+  } else if (commaBefore !== null && source[removeStart - 1] === "\n") {
+    removeStart -= 1;
+    if (source[removeStart - 1] === "\r") removeStart -= 1;
+  }
+  return source.slice(0, removeStart) + source.slice(removeEnd);
+}
+function findObjectProp(astNode, key) {
+  return astNode?.type === "object" ? astNode.properties.find((p) => p.key === key) : void 0;
+}
+function isPantheonMcpServer(name, entry) {
+  if (typeof name === "string" && PANTHEON_LEGACY_MCP_NAMES.has(name)) return true;
+  if (!isPlainObject2(entry)) return false;
+  return ["managed-by", "managedBy", "owner"].some(
+    (key) => typeof entry[key] === "string" && /^pantheon(?:-|$)/i.test(entry[key])
+  );
+}
+function classifyPantheonMcpEntry(name, entry, configDir, options = {}) {
+  if (!isPantheonMcpServer(name, entry) || !isPlainObject2(entry)) {
+    return { remove: false, isPython: false, isWorkingPython: false };
+  }
+  const cmdList = Array.isArray(entry.command) ? entry.command.filter((x) => typeof x === "string") : typeof entry.command === "string" ? [entry.command] : [];
+  const argList = Array.isArray(entry.args) ? entry.args.filter((x) => typeof x === "string") : [];
+  const parts = [...cmdList, ...argList];
+  const isPythonScript = parts.some(
+    (p) => LEGACY_PYTHON_MCP_SCRIPTS.has(basename4(p.replaceAll("\\", "/")))
+  );
+  const isPythonBin = parts.length > 0 && /(?:^|[\\/])python(?:\d+(?:\.\d+)*)?(?:\.exe)?$/i.test(parts[0]);
+  const isVenvPath = parts.some((p) => /(?:^|[\\/])\.venv(?:[\\/]|$)/.test(p));
+  const isPython = isPythonScript || isPythonBin || isVenvPath;
+  const cwd = typeof entry.cwd === "string" && entry.cwd.trim() !== "" ? resolve9(configDir, entry.cwd) : configDir;
+  const exe = parts[0];
+  const hasMissingExe = typeof exe === "string" && (exe.includes("/") || exe.includes("\\")) && !existsSync8(isAbsolute4(exe) ? exe : resolve9(cwd, exe));
+  const hasMissingScript = parts.slice(1).some((p) => {
+    if (!/\.(?:py|mjs|js|ts)$/i.test(p) || p.startsWith("-")) return false;
+    return !existsSync8(isAbsolute4(p) ? p : resolve9(cwd, p));
+  });
+  const isLocal = entry.type === "local" || entry.type === "stdio" || entry.type === void 0;
+  const isBrokenLocal = isLocal && (hasMissingExe || hasMissingScript);
+  if (options.preserveWorkingPythonMcp && isPython && !isBrokenLocal) {
+    return { remove: false, isPython: true, isWorkingPython: true };
+  }
+  return { remove: isPython || isBrokenLocal, isPython, isWorkingPython: false };
+}
+function getPluginRefString(entry) {
+  if (typeof entry === "string") return entry;
+  if (isPlainObject2(entry) && typeof entry.package === "string") return entry.package;
+  return null;
+}
+function isPantheonPluginRef(ref) {
+  if (typeof ref !== "string") return false;
+  const norm = ref.replaceAll("\\", "/");
+  return /^pantheon-opencode(?:\/.*)?$/i.test(norm) || /^pantheon-tui$/i.test(norm) || /^plugins\/pantheon-tui$/i.test(norm) || /pantheon-hooks(?:\.(?:ts|js|mjs))?$/i.test(norm) || /(?:^|\/)src\/plugin\.ts$/i.test(norm) || /(?:^|\/)pantheon-opencode\/src\/plugin$/i.test(norm) || /(?:^|\/)plugins\/pantheon-tui$/i.test(norm);
+}
+function isNpmNativePantheonPluginRef(ref) {
+  if (typeof ref !== "string") return false;
+  const norm = ref.trim().replaceAll("\\", "/");
+  return norm === "pantheon-opencode" || norm === "pantheon-opencode/plugin";
+}
+function shouldRemoveLegacyPluginEntry(entry, configDir, { singularKey, hasNpmNativePlugin }) {
+  const ref = getPluginRefString(entry);
+  if (!ref || !isPantheonPluginRef(ref)) return false;
+  if (singularKey) return true;
+  const norm = ref.replaceAll("\\", "/");
+  if (/pantheon-hooks(?:\.(?:ts|js|mjs))?$/i.test(norm)) return true;
+  if (/(?:^|\/)src\/plugin\.ts$/i.test(norm)) return true;
+  const isCopiedTui = /^pantheon-tui$/i.test(norm) || /^plugins\/pantheon-tui$/i.test(norm) || /(?:^|\/)plugins\/pantheon-tui$/i.test(norm);
+  if (isCopiedTui && hasNpmNativePlugin) return true;
+  const isPackageSubpath = norm === "pantheon-opencode" || norm === "pantheon-opencode/plugin" || norm === "pantheon-opencode/tui";
+  if (!isPackageSubpath) {
+    const isPathLike = norm.startsWith("/") || norm.startsWith(".") || norm.includes("/");
+    if (isPathLike) {
+      const targetPath = isAbsolute4(ref) ? ref : resolve9(configDir, ref);
+      if (!existsSync8(targetPath)) return true;
+      if (hasNpmNativePlugin && (norm.includes("/_npx/") || norm.endsWith("/src/plugin"))) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+function isRepoSourceRoot(dirPath) {
+  return existsSync8(join12(dirPath, "package.json")) && (existsSync8(join12(dirPath, "src", "mcp", "code_mode.py")) && existsSync8(join12(dirPath, "src", "plugin.ts")) || existsSync8(join12(dirPath, "src", "plugin.ts")) && existsSync8(join12(dirPath, "src", "agents", "roster.json")));
+}
+function collectConfigDirsForRoot(root, isGlobalConfig = false) {
+  const dirs = [];
+  const seen = /* @__PURE__ */ new Set();
+  const add = (dir, isConfigScope) => {
+    const resolved = resolve9(dir);
+    if (seen.has(resolved) || !existsSync8(resolved)) return;
+    seen.add(resolved);
+    dirs.push({ dir: resolved, isConfigScope });
+  };
+  const base = basename4(resolve9(root));
+  const rootIsFlatConfig = isGlobalConfig || base === "opencode" || base === ".opencode";
+  add(root, rootIsFlatConfig && !isRepoSourceRoot(root));
+  add(join12(root, ".opencode"), !isRepoSourceRoot(join12(root, ".opencode")));
+  return dirs;
+}
+function writeFileAtomicallyWithBackup(filePath, content, backupScopeRoot) {
+  const st = lstatSync5(filePath);
+  if (st.isSymbolicLink() || !st.isFile()) return false;
+  const original = readFileSync9(filePath, "utf8");
+  if (original === content) return false;
+  try {
+    const backupRoot = join12(backupScopeRoot, ".pantheon", "backups");
+    const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+    const backupDir = join12(backupRoot, `legacy-migration-${stamp}`);
+    mkdirSync5(backupDir, { recursive: true, mode: 448 });
+    chmodSync3(backupDir, 448);
+    const backupFile = join12(backupDir, basename4(filePath));
+    writeFileSync4(backupFile, original, { encoding: "utf8", mode: 384 });
+    chmodSync3(backupFile, 384);
+  } catch {
+  }
+  const tmpPath = `${filePath}.tmp-${process.pid}`;
+  writeFileSync4(tmpPath, content, { encoding: "utf8", mode: st.mode & 511 });
+  renameSync2(tmpPath, filePath);
+  return true;
+}
+function inspectConfigFileLegacyItems(filePath, configDir, options = {}) {
+  if (!existsSync8(filePath)) return null;
+  let st;
+  try {
+    st = lstatSync5(filePath);
+  } catch {
+    return null;
+  }
+  if (st.isSymbolicLink() || !st.isFile()) return null;
+  const isJsonc = filePath.endsWith(".jsonc");
+  let raw;
+  let parsed;
+  try {
+    raw = readFileSync9(filePath, "utf8");
+    parsed = isJsonc ? parseJsoncAst(raw, true).value : JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!isPlainObject2(parsed)) return null;
+  const isTuiConfig = basename4(filePath) === "tui.json" || basename4(filePath) === "cli.json";
+  const legacyMcps = [];
+  let hasWorkingPythonMcp = false;
+  if (!isTuiConfig && isPlainObject2(parsed.mcp)) {
+    const servers = isPlainObject2(parsed.mcp.servers) ? parsed.mcp.servers : null;
+    if (servers) {
+      for (const [name, entry] of Object.entries(servers)) {
+        const res = classifyPantheonMcpEntry(name, entry, configDir, options);
+        if (res.remove) legacyMcps.push({ layout: "v2", name, isPython: res.isPython });
+        else if (res.isWorkingPython) hasWorkingPythonMcp = true;
+      }
+    }
+    for (const [name, entry] of Object.entries(parsed.mcp)) {
+      if (servers && name === "servers") continue;
+      const res = classifyPantheonMcpEntry(name, entry, configDir, options);
+      if (res.remove) legacyMcps.push({ layout: "v1", name, isPython: res.isPython });
+      else if (res.isWorkingPython) hasWorkingPythonMcp = true;
+    }
+  }
+  const pluralPlugins = Array.isArray(parsed.plugins) ? parsed.plugins : [];
+  const hasNpmNativePlugin = options.forceNativePluginActive === true || pluralPlugins.some((entry) => isNpmNativePantheonPluginRef(getPluginRefString(entry)));
+  const isLegacyTuiEntry = (entry) => {
+    const ref = getPluginRefString(entry);
+    if (!ref) return false;
+    const cleanRef = ref.startsWith("!") ? ref.slice(1) : ref;
+    return isPantheonPluginRef(cleanRef) && (hasNpmNativePlugin || ref.startsWith("!") || !existsSync8(resolve9(configDir, cleanRef)));
+  };
+  const legacyPlugins = [];
+  if (Array.isArray(parsed.plugin)) {
+    parsed.plugin.forEach((entry, index) => {
+      if (isTuiConfig ? isLegacyTuiEntry(entry) : shouldRemoveLegacyPluginEntry(entry, configDir, {
+        singularKey: true,
+        hasNpmNativePlugin
+      })) {
+        legacyPlugins.push({ key: "plugin", index, ref: getPluginRefString(entry) });
+      }
+    });
+  }
+  if (Array.isArray(parsed.plugins)) {
+    parsed.plugins.forEach((entry, index) => {
+      if (isTuiConfig ? isLegacyTuiEntry(entry) : shouldRemoveLegacyPluginEntry(entry, configDir, {
+        singularKey: false,
+        hasNpmNativePlugin
+      })) {
+        legacyPlugins.push({ key: "plugins", index, ref: getPluginRefString(entry) });
+      }
+    });
+  }
+  return {
+    filePath,
+    raw,
+    isJsonc,
+    parsed,
+    legacyMcps,
+    legacyPlugins,
+    hasNpmNativePlugin,
+    hasWorkingPythonMcp
+  };
+}
+function cleanConfigFileInPlace(inspection, backupScopeRoot, dryRun = false) {
+  if (!inspection) return false;
+  const { filePath, raw, isJsonc, legacyMcps, legacyPlugins } = inspection;
+  if (legacyMcps.length === 0 && legacyPlugins.length === 0) return false;
+  if (dryRun) return true;
+  let nextContent;
+  if (!isJsonc) {
+    const cfg = JSON.parse(raw);
+    for (const item of legacyMcps) {
+      if (item.layout === "v2" && isPlainObject2(cfg.mcp?.servers)) {
+        delete cfg.mcp.servers[item.name];
+      } else if (item.layout === "v1" && isPlainObject2(cfg.mcp)) {
+        delete cfg.mcp[item.name];
+      }
+    }
+    if (isPlainObject2(cfg.mcp?.servers) && Object.keys(cfg.mcp.servers).length === 0) {
+      delete cfg.mcp.servers;
+    }
+    if (isPlainObject2(cfg.mcp) && Object.keys(cfg.mcp).length === 0) {
+      delete cfg.mcp;
+    }
+    for (const key of ["plugin", "plugins"]) {
+      if (!Array.isArray(cfg[key])) continue;
+      const dropIndexes = new Set(legacyPlugins.filter((p) => p.key === key).map((p) => p.index));
+      if (dropIndexes.size === 0) continue;
+      cfg[key] = cfg[key].filter((_, idx) => !dropIndexes.has(idx));
+      if (cfg[key].length === 0 && (key === "plugin" || basename4(filePath) === "tui.json" || basename4(filePath) === "cli.json")) {
+        delete cfg[key];
+      }
+    }
+    if ((basename4(filePath) === "tui.json" || basename4(filePath) === "cli.json") && Object.keys(cfg).length === 0) {
+      writeFileAtomicallyWithBackup(filePath, `${JSON.stringify(cfg, null, 2)}
+`, backupScopeRoot);
+      rmSync(filePath, { force: true });
+      return true;
+    }
+    nextContent = `${JSON.stringify(cfg, null, 2)}
+`;
+  } else {
+    let text2 = raw;
+    for (const item of legacyMcps) {
+      const ast = parseJsoncAst(text2, true);
+      const mcpProp = findObjectProp(ast, "mcp");
+      if (!mcpProp) continue;
+      const targetMap = item.layout === "v2" ? findObjectProp(mcpProp.valueNode, "servers")?.valueNode : mcpProp.valueNode;
+      const prop = findObjectProp(targetMap, item.name);
+      if (prop) {
+        text2 = spliceOutJsoncEntry(
+          text2,
+          prop.keyStart,
+          prop.valueEnd,
+          prop.commaBefore,
+          prop.commaAfter
+        );
+      }
+    }
+    {
+      const ast = parseJsoncAst(text2, true);
+      const mcpProp = findObjectProp(ast, "mcp");
+      const serversProp = mcpProp ? findObjectProp(mcpProp.valueNode, "servers") : void 0;
+      if (serversProp?.valueNode?.type === "object" && serversProp.valueNode.properties.length === 0) {
+        text2 = spliceOutJsoncEntry(
+          text2,
+          serversProp.keyStart,
+          serversProp.valueEnd,
+          serversProp.commaBefore,
+          serversProp.commaAfter
+        );
+      }
+      const ast2 = parseJsoncAst(text2, true);
+      const mcpProp2 = findObjectProp(ast2, "mcp");
+      if (mcpProp2?.valueNode?.type === "object" && mcpProp2.valueNode.properties.length === 0) {
+        text2 = spliceOutJsoncEntry(
+          text2,
+          mcpProp2.keyStart,
+          mcpProp2.valueEnd,
+          mcpProp2.commaBefore,
+          mcpProp2.commaAfter
+        );
+      }
+    }
+    const sortedPlugins = [...legacyPlugins].sort((a, b) => b.index - a.index);
+    for (const item of sortedPlugins) {
+      const ast = parseJsoncAst(text2, true);
+      const prop = findObjectProp(ast, item.key);
+      const arr = prop?.valueNode;
+      if (arr?.type !== "array" || !arr.items[item.index]) continue;
+      const elem = arr.items[item.index];
+      text2 = spliceOutJsoncEntry(text2, elem.start, elem.end, elem.commaBefore, elem.commaAfter);
+    }
+    for (const pluginKey of ["plugin", "plugins"]) {
+      if (pluginKey === "plugins" && basename4(filePath) !== "tui.json" && basename4(filePath) !== "cli.json") {
+        continue;
+      }
+      const ast = parseJsoncAst(text2, true);
+      const pluginProp = findObjectProp(ast, pluginKey);
+      if (pluginProp?.valueNode?.type === "array" && pluginProp.valueNode.items.length === 0) {
+        text2 = spliceOutJsoncEntry(
+          text2,
+          pluginProp.keyStart,
+          pluginProp.valueEnd,
+          pluginProp.commaBefore,
+          pluginProp.commaAfter
+        );
+      }
+    }
+    if (basename4(filePath) === "tui.json" || basename4(filePath) === "cli.json") {
+      const remaining = parseJsoncAst(text2, true).value;
+      if (isPlainObject2(remaining) && Object.keys(remaining).length === 0) {
+        writeFileAtomicallyWithBackup(filePath, raw, backupScopeRoot);
+        rmSync(filePath, { force: true });
+        return true;
+      }
+    }
+    nextContent = text2;
+  }
+  return writeFileAtomicallyWithBackup(filePath, nextContent, backupScopeRoot);
+}
+function inspectAndCleanLegacyConfigs(root, options = {}) {
+  const dryRun = options.dryRun === true;
+  const isGlobalConfig = options.isGlobalConfig === true;
+  const configDirs = collectConfigDirsForRoot(root, isGlobalConfig);
+  const inspectedFiles = [];
+  let hasWorkingPythonMcp = false;
+  let hasNpmNativePlugin = options.cleanCopiedInstallArtifacts === true;
+  const cleanedConfigTags = [];
+  const primaryNames = ["opencode.json", "opencode.jsonc"];
+  const tuiNames = ["tui.json", "cli.json"];
+  const seenFiles = /* @__PURE__ */ new Set();
+  const processFile = (filePath, dir, isConfigScope) => {
+    const resolved = resolve9(filePath);
+    if (seenFiles.has(resolved)) return;
+    seenFiles.add(resolved);
+    const preserveWorkingPythonMcp = options.preserveWorkingPythonMcp ?? (hasNpmNativePlugin || options.cleanCopiedInstallArtifacts === true ? false : process.env.PANTHEON_USE_PYTHON_MCP === "1");
+    const info = inspectConfigFileLegacyItems(resolved, dir, {
+      preserveWorkingPythonMcp,
+      forceNativePluginActive: hasNpmNativePlugin
+    });
+    if (!info) return;
+    inspectedFiles.push({ ...info, configDir: dir, isConfigScope });
+    if (info.hasWorkingPythonMcp) hasWorkingPythonMcp = true;
+    if (info.hasNpmNativePlugin) hasNpmNativePlugin = true;
+    if (info.legacyMcps.length > 0 || info.legacyPlugins.length > 0) {
+      const changed = cleanConfigFileInPlace(info, root, dryRun);
+      if (changed) {
+        for (const mcp of info.legacyMcps) {
+          cleanedConfigTags.push(`${resolved}#legacy-mcp:${mcp.name}`);
+        }
+        if (info.legacyPlugins.length > 0) {
+          cleanedConfigTags.push(`${resolved}#legacy-plugin`);
+        }
+      }
+    }
+  };
+  for (const { dir, isConfigScope } of configDirs) {
+    for (const fileName of primaryNames) {
+      processFile(join12(dir, fileName), dir, isConfigScope);
+    }
+  }
+  for (const { dir, isConfigScope } of configDirs) {
+    for (const fileName of tuiNames) {
+      processFile(join12(dir, fileName), dir, isConfigScope);
+    }
+  }
+  return {
+    configDirs,
+    inspectedFiles,
+    hasWorkingPythonMcp,
+    hasNpmNativePlugin,
+    cleanedConfigTags
+  };
+}
+function hasPendingLegacyFiles(rootDir, isGlobalConfig = false) {
   const checks = [
     join12(rootDir, ".pantheon", "memory.db"),
     join12(rootDir, "memory", "memory.db"),
@@ -9612,7 +10191,29 @@ function hasPendingLegacyFiles(rootDir) {
     join12(rootDir, ".pantheon", ".fastembed"),
     join12(rootDir, "fastembed_cache")
   ];
-  return checks.some((p) => existsSync8(p));
+  if (checks.some((p) => existsSync8(p))) return true;
+  const preserveWorkingPythonMcp = process.env.PANTHEON_USE_PYTHON_MCP === "1";
+  for (const { dir, isConfigScope } of collectConfigDirsForRoot(rootDir, isGlobalConfig)) {
+    for (const fileName of ["opencode.json", "opencode.jsonc", "tui.json", "cli.json"]) {
+      const info = inspectConfigFileLegacyItems(join12(dir, fileName), dir, {
+        preserveWorkingPythonMcp
+      });
+      if (info && (info.legacyMcps.length > 0 || info.legacyPlugins.length > 0)) return true;
+    }
+    if (isConfigScope) {
+      if (existsSync8(join12(dir, "plugins", "pantheon-tui"))) return true;
+      if (existsSync8(join12(dir, "commands", "pantheon.md"))) return true;
+      if (existsSync8(join12(dir, "routing.yml"))) return true;
+      if (existsSync8(join12(dir, ".pantheon", "install-state.json"))) return true;
+      if (!preserveWorkingPythonMcp) {
+        for (const py of LEGACY_PYTHON_RUNTIME_SCRIPTS) {
+          if (existsSync8(join12(dir, "scripts", py))) return true;
+        }
+      }
+    }
+  }
+  if (existsSync8(join12(rootDir, ".pantheon", "install-state.json"))) return true;
+  return false;
 }
 function canSkipMigrationViaStamp(workspaceDir, globalConfigDir) {
   const stampPath = join12(workspaceDir, ".pantheon", ".migration-v2.json");
@@ -9620,9 +10221,9 @@ function canSkipMigrationViaStamp(workspaceDir, globalConfigDir) {
   try {
     const stamp = JSON.parse(readFileSync9(stampPath, "utf8"));
     if (stamp?.version !== 2) return false;
-    if (hasPendingLegacyFiles(workspaceDir)) return false;
+    if (hasPendingLegacyFiles(workspaceDir, false)) return false;
     if (globalConfigDir && existsSync8(globalConfigDir)) {
-      if (hasPendingLegacyFiles(globalConfigDir)) return false;
+      if (hasPendingLegacyFiles(globalConfigDir, true)) return false;
       const globalMemDb = join12(globalConfigDir, ".pantheon", "memory", "memory.db");
       if (safeMtimeMs(globalMemDb) !== Number(stamp.globalMtimeMs ?? -1)) return false;
     }
@@ -9635,18 +10236,23 @@ function ensureLegacyStoresMigratedOnce(workspaceDir, options = {}) {
   if (!workspaceDir || typeof workspaceDir !== "string") return null;
   const key = resolve9(workspaceDir);
   if (key === "/" || !existsSync8(key)) return null;
-  const globalKey = options.globalConfigDir ? resolve9(options.globalConfigDir) : "";
+  const resolvedGlobal = options.globalConfigDir !== void 0 ? options.globalConfigDir ? resolve9(options.globalConfigDir) : void 0 : resolveSafeGlobalConfigDir(options.env ?? process.env);
+  const globalKey = resolvedGlobal ? resolve9(resolvedGlobal) : "";
   const cacheKey = `${key}::${globalKey}`;
   if (migratedWorkspaces.has(cacheKey)) return null;
   migratedWorkspaces.add(cacheKey);
   if (!options.dryRun && canSkipMigrationViaStamp(key, globalKey || void 0)) {
     return null;
   }
-  return migrateLegacyStoresAndPurgeStale(key, options);
+  return migrateLegacyStoresAndPurgeStale(key, {
+    ...options,
+    ...resolvedGlobal ? { globalConfigDir: resolvedGlobal } : {}
+  });
 }
 function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
   const root = resolve9(workspaceDir);
   const dryRun = options.dryRun === true;
+  const skipMemoryMigration = options.skipMemoryMigration === true;
   const nowIso = (/* @__PURE__ */ new Date()).toISOString();
   let memoriesMigrated = 0;
   let memoriesExpiredPurged = 0;
@@ -9668,7 +10274,12 @@ function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
   if (options.globalConfigDir) {
     const globalRoot = resolve9(options.globalConfigDir);
     if (globalRoot !== "/" && globalRoot !== root && existsSync8(globalRoot)) {
-      const globalReport = migrateLegacyStoresAndPurgeStale(globalRoot, { dryRun });
+      const globalReport = migrateLegacyStoresAndPurgeStale(globalRoot, {
+        dryRun,
+        isGlobalConfig: true,
+        preserveWorkingPythonMcp: options.preserveWorkingPythonMcp,
+        cleanCopiedInstallArtifacts: options.cleanCopiedInstallArtifacts
+      });
       memoriesMigrated += globalReport.memoriesMigrated;
       memoriesExpiredPurged += globalReport.memoriesExpiredPurged;
       vectorTablesDropped += globalReport.vectorTablesDropped;
@@ -9677,6 +10288,15 @@ function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
       staleFilesDeleted.push(...globalReport.staleFilesDeleted);
       globalCanonicalMemDb = join12(globalRoot, ".pantheon", "memory", "memory.db");
     }
+  }
+  const configCleanup = inspectAndCleanLegacyConfigs(root, {
+    dryRun,
+    isGlobalConfig: options.isGlobalConfig === true,
+    preserveWorkingPythonMcp: options.preserveWorkingPythonMcp,
+    cleanCopiedInstallArtifacts: options.cleanCopiedInstallArtifacts
+  });
+  for (const tag of configCleanup.cleanedConfigTags) {
+    staleFilesDeleted.push(tag);
   }
   const pantheonDir = join12(root, ".pantheon");
   const canonicalMemoryDir = join12(pantheonDir, "memory");
@@ -9693,7 +10313,7 @@ function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
   const existingLegacyMemDbs = legacyMemoryCandidates.filter(
     (c) => existsSync8(c.path) && !sameFileOrPath(c.path, canonicalMemoryDbPath)
   );
-  if (existingLegacyMemDbs.length > 0 || existsSync8(canonicalMemoryDbPath)) {
+  if (!skipMemoryMigration && (existingLegacyMemDbs.length > 0 || existsSync8(canonicalMemoryDbPath))) {
     if (!dryRun) {
       mkdirSync5(canonicalMemoryDir, { recursive: true });
     }
@@ -10167,8 +10787,10 @@ function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
     join12(root, "fastembed_cache"),
     join12(root, "plugins", "pantheon-hooks.ts"),
     join12(root, "plugins", "pantheon-hooks.js"),
+    join12(root, "plugins", "pantheon-hooks.mjs"),
     join12(root, ".opencode", "plugins", "pantheon-hooks.ts"),
     join12(root, ".opencode", "plugins", "pantheon-hooks.js"),
+    join12(root, ".opencode", "plugins", "pantheon-hooks.mjs"),
     join12(root, "tiers.json"),
     join12(root, ".opencode", "tiers.json")
   ];
@@ -10176,6 +10798,147 @@ function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
     if (existsSync8(target)) {
       if (!dryRun) rmSync(target, { recursive: true, force: true });
       staleFilesDeleted.push(target);
+    }
+  }
+  if (!configCleanup.hasWorkingPythonMcp) {
+    for (const { dir, isConfigScope } of configCleanup.configDirs) {
+      if (!isConfigScope) continue;
+      const scriptsDir = join12(dir, "scripts");
+      const hadPantheonPy = existsSync8(scriptsDir) && LEGACY_PYTHON_RUNTIME_SCRIPTS.some((name) => existsSync8(join12(scriptsDir, name)));
+      const hadRequirementsVision = existsSync8(join12(dir, "requirements-vision.txt"));
+      const hadRemovedPythonMcps = configCleanup.cleanedConfigTags.some(
+        (tag) => tag.includes("#legacy-mcp:")
+      );
+      if (existsSync8(scriptsDir)) {
+        for (const name of LEGACY_PYTHON_RUNTIME_SCRIPTS) {
+          const pyPath = join12(scriptsDir, name);
+          if (existsSync8(pyPath)) {
+            if (!dryRun) rmSync(pyPath, { force: true });
+            staleFilesDeleted.push(pyPath);
+          }
+        }
+        const pycacheDir = join12(scriptsDir, "__pycache__");
+        if (existsSync8(pycacheDir) && hadPantheonPy) {
+          if (!dryRun) rmSync(pycacheDir, { recursive: true, force: true });
+          staleFilesDeleted.push(pycacheDir);
+        }
+        removeEmptyDirIfPossible(scriptsDir, staleFilesDeleted, dryRun);
+      }
+      const reqVisionPath = join12(dir, "requirements-vision.txt");
+      if (existsSync8(reqVisionPath)) {
+        if (!dryRun) rmSync(reqVisionPath, { force: true });
+        staleFilesDeleted.push(reqVisionPath);
+      }
+      const configVenvPath = join12(dir, ".venv");
+      if (existsSync8(configVenvPath) && (hadPantheonPy || hadRequirementsVision || hadRemovedPythonMcps)) {
+        if (!dryRun) rmSync(configVenvPath, { recursive: true, force: true });
+        staleFilesDeleted.push(configVenvPath);
+      }
+    }
+  }
+  if (configCleanup.hasNpmNativePlugin || options.cleanCopiedInstallArtifacts === true) {
+    for (const { dir, isConfigScope } of configCleanup.configDirs) {
+      if (!isConfigScope) continue;
+      const copiedTui = join12(dir, "plugins", "pantheon-tui");
+      if (existsSync8(copiedTui) && !lstatSync5(copiedTui).isSymbolicLink()) {
+        if (!dryRun) rmSync(copiedTui, { recursive: true, force: true });
+        staleFilesDeleted.push(copiedTui);
+      }
+      const isPantheonMarkdown = (filePath) => {
+        try {
+          if (lstatSync5(filePath).isSymbolicLink()) return false;
+          const content = readFileSync9(filePath, "utf8");
+          return /(?:pantheon|mcp_tools|tier\s*:|orchestrat|description\s*:)/i.test(content);
+        } catch {
+          return false;
+        }
+      };
+      for (const agentFile of CANONICAL_AGENT_MD_FILES) {
+        for (const sub of ["agents", "agent", "prompts"]) {
+          const candidate = join12(dir, sub, agentFile);
+          if (existsSync8(candidate) && isPantheonMarkdown(candidate)) {
+            if (!dryRun) rmSync(candidate, { force: true });
+            staleFilesDeleted.push(candidate);
+          }
+        }
+      }
+      for (const cmdFile of CANONICAL_COMMAND_MD_FILES) {
+        for (const sub of ["commands", "command"]) {
+          const candidate = join12(dir, sub, cmdFile);
+          if (existsSync8(candidate) && isPantheonMarkdown(candidate)) {
+            if (!dryRun) rmSync(candidate, { force: true });
+            staleFilesDeleted.push(candidate);
+          }
+        }
+      }
+      for (const instr of LEGACY_INSTRUCTION_FILES) {
+        const candidate = join12(dir, "instructions", instr);
+        if (existsSync8(candidate)) {
+          if (!dryRun) rmSync(candidate, { force: true });
+          staleFilesDeleted.push(candidate);
+        }
+      }
+      for (const skillId of CANONICAL_SKILL_IDS) {
+        const skillDir = join12(dir, "skills", skillId);
+        if (existsSync8(skillDir) && !lstatSync5(skillDir).isSymbolicLink() && existsSync8(join12(skillDir, "SKILL.md"))) {
+          if (!dryRun) rmSync(skillDir, { recursive: true, force: true });
+          staleFilesDeleted.push(skillDir);
+        }
+      }
+      const routingCandidate = join12(dir, "routing.yml");
+      if (existsSync8(routingCandidate)) {
+        try {
+          const routingContent = readFileSync9(routingCandidate, "utf8");
+          if (/pantheon|zeus:|athena:|apollo:/i.test(routingContent)) {
+            if (!dryRun) rmSync(routingCandidate, { force: true });
+            staleFilesDeleted.push(routingCandidate);
+          }
+        } catch {
+        }
+      }
+      const rootIsRepoSource = isRepoSourceRoot(root);
+      if (!configCleanup.hasWorkingPythonMcp) {
+        const codeModeDirs = [join12(dir, ".pantheon", "code-mode")];
+        if (!rootIsRepoSource && join12(root, ".pantheon", "code-mode") !== codeModeDirs[0]) {
+          codeModeDirs.push(join12(root, ".pantheon", "code-mode"));
+        }
+        for (const cmDir of codeModeDirs) {
+          if (!existsSync8(cmDir) || lstatSync5(cmDir).isSymbolicLink()) continue;
+          try {
+            for (const entry of readdirSync(cmDir)) {
+              if (entry.endsWith(".py") || entry.endsWith(".sh") || entry === "manifest.json") {
+                const target = join12(cmDir, entry);
+                if (!dryRun) rmSync(target, { force: true });
+                staleFilesDeleted.push(target);
+              }
+            }
+            removeEmptyDirIfPossible(cmDir, staleFilesDeleted, dryRun);
+          } catch {
+          }
+        }
+      }
+      const installStatePaths = [join12(dir, ".pantheon", "install-state.json")];
+      if (!rootIsRepoSource) {
+        installStatePaths.push(join12(root, ".pantheon", "install-state.json"));
+      }
+      for (const statePath of installStatePaths) {
+        if (existsSync8(statePath)) {
+          if (!dryRun) rmSync(statePath, { force: true });
+          staleFilesDeleted.push(statePath);
+        }
+      }
+      for (const emptySub of [
+        "agents",
+        "agent",
+        "commands",
+        "command",
+        "prompts",
+        "skills",
+        "instructions",
+        "plugins"
+      ]) {
+        removeEmptyDirIfPossible(join12(dir, emptySub), staleFilesDeleted, dryRun);
+      }
     }
   }
   const backupCutoffMs = Date.now() - 30 * 864e5;
@@ -10249,8 +11012,10 @@ var CANONICAL_AGENT_MD_FILES = Object.freeze([
 var CANONICAL_COMMAND_MD_FILES = Object.freeze([
   "pantheon.md",
   "pantheon-audit.md",
+  "pantheon-consolidate.md",
   "pantheon-deepwork.md",
   "pantheon-focus.md",
+  "pantheon-forge.md",
   "pantheon-model.md",
   "pantheon-optimize.md",
   "pantheon-settings.md",
@@ -10296,7 +11061,7 @@ import { readFile as readFile4 } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
-import { homedir as homedir4 } from "node:os";
+import { homedir as homedir5 } from "node:os";
 import { join as join14, resolve as resolve10 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
@@ -10312,18 +11077,18 @@ function safeSessionPath(id) {
 // src/pantheon/vision.ts
 import { createHash as createHash5, randomUUID as randomUUID2 } from "node:crypto";
 import {
-  chmodSync as chmodSync3,
+  chmodSync as chmodSync4,
   existsSync as existsSync9,
   mkdirSync as mkdirSync6,
   readdirSync as readdirSync2,
   readFileSync as readFileSync10,
-  renameSync as renameSync2,
+  renameSync as renameSync3,
   statSync as statSync5,
   unlinkSync as unlinkSync2,
   writeFileSync as writeFileSync5
 } from "node:fs";
 import { readFile as readFile3, unlink } from "node:fs/promises";
-import { homedir as homedir3, tmpdir } from "node:os";
+import { homedir as homedir4, tmpdir } from "node:os";
 import { join as join13 } from "node:path";
 
 // src/pantheon/vision-local.ts
@@ -10527,7 +11292,7 @@ function legacyZenBaseURL(modelID) {
   return null;
 }
 function defaultAuthStateDir() {
-  const dataHome = process.env.XDG_DATA_HOME || join13(homedir3(), ".local", "share");
+  const dataHome = process.env.XDG_DATA_HOME || join13(homedir4(), ".local", "share");
   return join13(dataHome, "opencode");
 }
 function v2CredentialDbPath(stateDir, env) {
@@ -10716,8 +11481,8 @@ function writeFileAtomicSync(filePath, data) {
   const tempPath = `${filePath}.tmp-${process.pid}`;
   try {
     writeFileSync5(tempPath, data, { mode: 384 });
-    chmodSync3(tempPath, 384);
-    renameSync2(tempPath, filePath);
+    chmodSync4(tempPath, 384);
+    renameSync3(tempPath, filePath);
   } catch (err) {
     try {
       unlinkSync2(tempPath);
@@ -10740,10 +11505,10 @@ function writeTempImageSync(data, mime) {
   }
   const dir = join13(tmpdir(), TEMP_DIR_NAME);
   mkdirSync6(dir, { recursive: true, mode: 448 });
-  chmodSync3(dir, 448);
+  chmodSync4(dir, 448);
   const filePath = join13(dir, `${hashContent(data)}.${getExtensionForMime(mime)}`);
   if (!fileHasContent(filePath, data)) writeFileAtomicSync(filePath, data);
-  chmodSync3(filePath, 384);
+  chmodSync4(filePath, 384);
   touchTempFile(filePath);
   return filePath;
 }
@@ -11067,7 +11832,7 @@ function selectV2VisionModel(available, preferred) {
   })[0];
 }
 function activePresetCandidates2(directory) {
-  const home = process.env.HOME || homedir4();
+  const home = process.env.HOME || homedir5();
   const xdg = process.env.XDG_CONFIG_HOME || join14(home, ".config");
   return [
     join14(directory, ".pantheon", "active-preset.json"),
@@ -11076,7 +11841,7 @@ function activePresetCandidates2(directory) {
   ];
 }
 async function configuredVisionModel(directory) {
-  const home = process.env.HOME || homedir4();
+  const home = process.env.HOME || homedir5();
   const xdg = process.env.XDG_CONFIG_HOME || join14(home, ".config");
   const paths = [
     join14(directory, ".opencode", "opencode-vision.json"),
@@ -11246,7 +12011,7 @@ async function imageAttachment(value, directory, signal) {
   } else if (url) {
     throw new Error("only file, HTTP, HTTPS, and base64 image sources are supported");
   } else {
-    const expanded = source.startsWith("~/") ? join14(homedir4(), source.slice(2)) : source;
+    const expanded = source.startsWith("~/") ? join14(homedir5(), source.slice(2)) : source;
     localPath = resolve10(directory, expanded);
   }
   let bytes;
@@ -11268,7 +12033,7 @@ function discoverActiveSessionId(directory) {
     if (isValidSessionId(val)) return val;
   }
   try {
-    const dataHome = process.env.XDG_DATA_HOME || join14(homedir4(), ".local", "share");
+    const dataHome = process.env.XDG_DATA_HOME || join14(homedir5(), ".local", "share");
     const dbPath = process.env.OPENCODE_DB || join14(dataHome, "opencode", "opencode.db");
     if (!existsSync10(dbPath)) return void 0;
     const sqlite = __require("node:sqlite");
@@ -11340,7 +12105,7 @@ function createV2VisionTool(runtime) {
         }
         stage = "resolve OpenCode Zen authentication";
         const modelID = modelKey(model);
-        const dataHome = process.env.XDG_DATA_HOME || join14(homedir4(), ".local", "share");
+        const dataHome = process.env.XDG_DATA_HOME || join14(homedir5(), ".local", "share");
         const target = await resolveNativeVisionTarget({
           preset: { vision: { model: modelID } },
           env: { ...process.env, PANTHEON_VISION_MODEL: modelID },
@@ -14775,12 +15540,12 @@ import { fileURLToPath as fileURLToPath4 } from "node:url";
 import { z } from "zod";
 
 // src/plugins/tui/src/cost-data.ts
-import { homedir as homedir6 } from "node:os";
+import { homedir as homedir7 } from "node:os";
 import { join as join23 } from "node:path";
 
 // src/plugins/tui/src/model-pricing.ts
-import { existsSync as existsSync16, mkdirSync as mkdirSync11, readFileSync as readFileSync16, renameSync as renameSync3, writeFileSync as writeFileSync9 } from "node:fs";
-import { homedir as homedir5 } from "node:os";
+import { existsSync as existsSync16, mkdirSync as mkdirSync11, readFileSync as readFileSync16, renameSync as renameSync4, writeFileSync as writeFileSync9 } from "node:fs";
+import { homedir as homedir6 } from "node:os";
 import { dirname as dirname11, join as join22 } from "node:path";
 var MODELS_DEV_URL = "https://models.dev/api.json";
 var PRICING_CACHE_VERSION = 1;
@@ -14790,7 +15555,7 @@ function resolvePricingCacheDir(env = process.env) {
   const explicit = env.PANTHEON_HOME?.trim();
   if (explicit !== void 0 && explicit !== "") return explicit;
   const xdg = env.XDG_CONFIG_HOME?.trim();
-  const base = xdg !== void 0 && xdg !== "" ? xdg : join22(homedir5(), ".config");
+  const base = xdg !== void 0 && xdg !== "" ? xdg : join22(homedir6(), ".config");
   return join22(base, "opencode");
 }
 function resolvePricingCachePath(env = process.env) {
@@ -14937,7 +15702,7 @@ function writePricingCache(cachePath, catalog) {
     mkdirSync11(dirname11(cachePath), { recursive: true });
     writeFileSync9(temp, `${JSON.stringify(catalog)}
 `, "utf8");
-    renameSync3(temp, cachePath);
+    renameSync4(temp, cachePath);
     return true;
   } catch {
     return false;
@@ -15084,7 +15849,7 @@ var VERSION_SOURCES = {
 };
 function defaultDbPath() {
   const xdg = process.env.XDG_DATA_HOME;
-  const dataHome = xdg !== void 0 && xdg !== "" ? xdg : join23(homedir6(), ".local", "share");
+  const dataHome = xdg !== void 0 && xdg !== "" ? xdg : join23(homedir7(), ".local", "share");
   return join23(dataHome, "opencode", "opencode.db");
 }
 function requestedVersion() {
@@ -16962,7 +17727,7 @@ ${JSON.stringify(todoPayload, null, 2)}
 
 // src/pantheon/hashline/tool.ts
 import { readFile as readFile7, rename as rename6, rm, writeFile as writeFile4 } from "node:fs/promises";
-import { isAbsolute as isAbsolute4, resolve as resolve18, sep as sep9 } from "node:path";
+import { isAbsolute as isAbsolute5, resolve as resolve18, sep as sep9 } from "node:path";
 import { z as z4 } from "zod";
 var hashlineEditOpArgs = {
   op: z4.enum(["replace", "append", "prepend", "delete"]),
@@ -16976,7 +17741,7 @@ var hashlineEditArgs = {
   edits: z4.array(z4.object(hashlineEditOpArgs)).min(1)
 };
 function resolveFile(file, ctx, fallbackDir) {
-  if (isAbsolute4(file)) return { ok: true, file: resolve18(file) };
+  if (isAbsolute5(file)) return { ok: true, file: resolve18(file) };
   const base = resolve18(resolveToolCwd(ctx, fallbackDir));
   const resolved = resolve18(base, file);
   if (resolved !== base && !resolved.startsWith(base + sep9)) {
@@ -17228,8 +17993,8 @@ function createV2LocalDecisionDefinition(options = {}) {
 import { randomBytes } from "node:crypto";
 import { constants as constants4 } from "node:fs";
 import { lstat as lstat2, mkdir as mkdir7, open as open3, rename as rename7, unlink as unlink4 } from "node:fs/promises";
-import { homedir as homedir7 } from "node:os";
-import { basename as basename4, dirname as dirname13, join as join27, resolve as resolve19 } from "node:path";
+import { homedir as homedir8 } from "node:os";
+import { basename as basename5, dirname as dirname13, join as join27, resolve as resolve19 } from "node:path";
 import { z as z5 } from "zod";
 var MODEL_REF_PATTERN2 = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._:+-]*$/;
 var SAFE_PRESET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -17315,7 +18080,7 @@ async function syncDirectory(path5) {
 }
 async function createTemporaryFile(path5) {
   const directory = dirname13(path5);
-  const prefix = `.${basename4(path5)}.tmp-`;
+  const prefix = `.${basename5(path5)}.tmp-`;
   const flags = constants4.O_WRONLY | constants4.O_CREAT | constants4.O_EXCL | NO_FOLLOW;
   for (let attempt = 0; attempt < 10; attempt += 1) {
     const temporaryPath = join27(directory, `${prefix}${randomBytes(16).toString("hex")}`);
@@ -17389,14 +18154,14 @@ function projectConfigPath(options) {
 }
 function defaultGlobalConfigPath(options) {
   const env = envValue(options);
-  const home = env.HOME?.trim() || homedir7();
+  const home = env.HOME?.trim() || homedir8();
   const xdg = env.XDG_CONFIG_HOME?.trim() || join27(home, ".config");
   return join27(xdg, "opencode", "opencode.json");
 }
 function globalConfigCandidates(options) {
   if (options.globalConfigPath !== void 0) return [options.globalConfigPath];
   const canonical = defaultGlobalConfigPath(options);
-  const home = envValue(options).HOME?.trim() || homedir7();
+  const home = envValue(options).HOME?.trim() || homedir8();
   const legacy = join27(home, ".opencode", "opencode.json");
   return [.../* @__PURE__ */ new Set([canonical, legacy])];
 }
@@ -17990,8 +18755,8 @@ import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
 
 // src/pantheon/memory-federation.ts
 import { existsSync as existsSync19, readFileSync as readFileSync17, realpathSync as realpathSync8 } from "node:fs";
-import { homedir as homedir8 } from "node:os";
-import { basename as basename5, join as join28, resolve as resolve20 } from "node:path";
+import { homedir as homedir9 } from "node:os";
+import { basename as basename6, join as join28, resolve as resolve20 } from "node:path";
 import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
 var NOT_EXPIRED_SQL = "(expires_at IS NULL OR expires_at > ?)";
 function safeRealpath(dir) {
@@ -18013,7 +18778,7 @@ function resolveFederatedRepoDirs(primaryWorkspaceDir, options = {}) {
       if (trimmed) candidates.push(trimmed);
     }
   }
-  const manifestFile = options.manifestPath ?? join28(homedir8(), ".pantheon", "federation.json");
+  const manifestFile = options.manifestPath ?? join28(homedir9(), ".pantheon", "federation.json");
   if (existsSync19(manifestFile)) {
     try {
       const parsed = JSON.parse(readFileSync17(manifestFile, "utf8"));
@@ -18043,7 +18808,7 @@ function resolveFederatedRepoDirs(primaryWorkspaceDir, options = {}) {
 function querySinglePeerDb(peerRoot, rawQuery, nowIso, limit, namespace) {
   const dbPath = join28(peerRoot, ".pantheon", "memory", "memory.db");
   if (!existsSync19(dbPath)) return [];
-  const repoName = basename5(peerRoot) || peerRoot;
+  const repoName = basename6(peerRoot) || peerRoot;
   let db;
   try {
     db = new DatabaseSync4(dbPath, { readOnly: true });
@@ -18130,7 +18895,7 @@ function getFederatedStats(primaryWorkspaceDir, options = {}) {
       } catch {
       }
     }
-    repos.push({ repo: basename5(peer) || peer, path: peer, total: count });
+    repos.push({ repo: basename6(peer) || peer, path: peer, total: count });
     total += count;
   }
   return { total, repos };
@@ -18949,7 +19714,7 @@ function createReviewVerdictTool(sessionDomain) {
 
 // src/pantheon/skill-search-tool.ts
 import { existsSync as existsSync21, readdirSync as readdirSync7, readFileSync as readFileSync19 } from "node:fs";
-import { homedir as homedir9 } from "node:os";
+import { homedir as homedir10 } from "node:os";
 import { join as join30 } from "node:path";
 
 // scripts/skill-search.mjs
@@ -19232,9 +19997,9 @@ function scanInstalledSkills(cwd = process.cwd()) {
     } catch {
     }
   };
-  const xdgConfig = process.env.XDG_CONFIG_HOME || join30(homedir9(), ".config");
+  const xdgConfig = process.env.XDG_CONFIG_HOME || join30(homedir10(), ".config");
   scanDir(join30(xdgConfig, "opencode", "skills"), "global");
-  scanDir(join30(homedir9(), ".agents", "skills"), "global");
+  scanDir(join30(homedir10(), ".agents", "skills"), "global");
   scanDir(join30(cwd, ".opencode", "skills"), "project");
   scanDir(join30(cwd, ".agents", "skills"), "project");
   scanDir(join30(cwd, "skills"), "project");
@@ -19412,7 +20177,7 @@ function createV2SkillSearchDefinition(defaultDir) {
 // src/pantheon/worktree-orchestrator.ts
 import { execFile as execFile5 } from "node:child_process";
 import { existsSync as existsSync22, mkdirSync as mkdirSync13, realpathSync as realpathSync10 } from "node:fs";
-import { basename as basename6, dirname as dirname14, join as join31, resolve as resolve22 } from "node:path";
+import { basename as basename7, dirname as dirname14, join as join31, resolve as resolve22 } from "node:path";
 import { promisify as promisify4 } from "node:util";
 var execFileAsync4 = promisify4(execFile5);
 var SAFE_TASK_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
@@ -19420,7 +20185,7 @@ function isAbortError(err) {
   return err instanceof Error && err.name === "AbortError";
 }
 function sanitizeTaskSlug(raw) {
-  const base = basename6(raw.trim()).replace(/[^a-zA-Z0-9._-]/g, "-");
+  const base = basename7(raw.trim()).replace(/[^a-zA-Z0-9._-]/g, "-");
   if (!base || !SAFE_TASK_RE.test(base) || base.includes("..")) {
     return `wt-${Date.now()}`;
   }
@@ -19429,7 +20194,7 @@ function sanitizeTaskSlug(raw) {
 function resolvePantheonWorktreePath(sourceDirectory, taskName) {
   const sourceReal = existsSync22(sourceDirectory) ? realpathSync10(resolve22(sourceDirectory)) : resolve22(sourceDirectory);
   const parent = dirname14(sourceReal);
-  const repoName = basename6(sourceReal) || "workspace";
+  const repoName = basename7(sourceReal) || "workspace";
   const taskSlug = sanitizeTaskSlug(taskName);
   return join31(parent, ".pantheon-worktrees", repoName, taskSlug);
 }
@@ -19458,7 +20223,7 @@ function createPantheonWorktreeDefinition() {
     create: async (input, context) => {
       const source = resolve22(input.sourceDirectory);
       const requestedDir = input.directory ? resolve22(input.directory) : "";
-      const targetDir = !requestedDir || isInsideOrDotPantheon(source, requestedDir) ? resolvePantheonWorktreePath(source, basename6(requestedDir) || `wt-${Date.now()}`) : requestedDir;
+      const targetDir = !requestedDir || isInsideOrDotPantheon(source, requestedDir) ? resolvePantheonWorktreePath(source, basename7(requestedDir) || `wt-${Date.now()}`) : requestedDir;
       if (input.branch && (!SAFE_TASK_RE.test(input.branch) || input.branch.startsWith("-"))) {
         throw new Error(`Unsafe git ref "${input.branch}" for worktree creation`);
       }
@@ -21459,19 +22224,28 @@ var plugin = define({
     activeHostWorkspaceDir = hostLocationDir || void 0;
     loadRuntimeOverrides(hostLocationDir);
     const safeGlobalConfigDir = resolveSafeGlobalConfigDir();
+    let migrationReport = null;
     if (hostLocationDir) {
       try {
-        ensureLegacyStoresMigratedOnce(
-          hostLocationDir,
-          safeGlobalConfigDir ? { globalConfigDir: safeGlobalConfigDir } : {}
-        );
+        migrationReport = ensureLegacyStoresMigratedOnce(hostLocationDir, {
+          ...safeGlobalConfigDir ? { globalConfigDir: safeGlobalConfigDir } : {},
+          cleanCopiedInstallArtifacts: true
+        });
       } catch {
       }
     } else if (safeGlobalConfigDir) {
       try {
-        ensureLegacyStoresMigratedOnce(safeGlobalConfigDir);
+        migrationReport = ensureLegacyStoresMigratedOnce(safeGlobalConfigDir, {
+          isGlobalConfig: true,
+          cleanCopiedInstallArtifacts: true
+        });
       } catch {
       }
+    }
+    if (migrationReport && migrationReport.staleFilesDeleted.length > 0) {
+      appendV2HookLog(
+        `[legacy-migration] Auto-cleaned ${migrationReport.staleFilesDeleted.length} legacy MCP/plugin/copied artifact(s)` + (migrationReport.memoriesMigrated > 0 ? ` (migrated ${migrationReport.memoriesMigrated} memory record(s))` : "")
+      );
     }
     let idleEnforcer;
     try {

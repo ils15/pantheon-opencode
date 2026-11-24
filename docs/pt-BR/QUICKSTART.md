@@ -18,39 +18,25 @@ Certifique-se de que seu ambiente atende aos seguintes requisitos:
 
 ## 1. Instalação
 
-### Instalação Nativa como Plugin do OpenCode (Recomendada — Funciona em Qualquer Lugar)
+### Instalação Nativa como Plugin do OpenCode (Fluxo Único na v2.2.2+)
 
-Um único comando registra em memória os 14 agentes especialistas, 25 skills, 8 comandos, 26 tools nativas em TypeScript e a interface TUI, sem copiar arquivos redundantes para o disco:
+Um único comando registra em memória os 14 agentes especialistas, 25 skills, 9 comandos, 30 tools nativas em TypeScript e a interface TUI, sem copiar arquivos redundantes para o disco (e limpando automaticamente MCPs Python legados e cópias antigas da TUI/CLI):
 
 ```bash
 opencode plugin add pantheon-opencode
 ```
 
-Por que essa é a melhor prática:
-- Funciona imediatamente em **qualquer diretório** (repositórios existentes, worktrees Git ou pastas vazias) sem precisar rodar `init`.
+Por que esse é o fluxo ideal:
+- Funciona imediatamente em **qualquer diretório** (repositórios existentes, worktrees Git ou pastas vazias) sem `init` nem lixo no cache `_npx/`.
 - Atualiza de forma limpa com `opencode plugin update pantheon-opencode` (ou `/pantheon-updates`) sem deixar cópias antigas em `.opencode/agents/` ou `plugins/pantheon-tui/` coexistindo.
-
-### Instalação Opcional via CLI (`init`)
-
-Use o instalador CLI apenas quando quiser gravar arquivos de projeto (`AGENTS.md`, overrides em `.opencode/`) ou habilitar MCPs Python legados:
-
-```bash
-npx pantheon-opencode init --project --no-mcp
-```
 
 ---
 
 ## 2. Validar Saúde e Limpar Caches Antigos
 
-Dentro do OpenCode, use `/pantheon-settings` (ou `/pantheon-updates`) para rodar o **Doctor** e a seção **Legados, Drift & Limpeza** (que detecta e remove caches `@beta`/revisões antigas coexistentes e cópias obsoletas).
+Dentro do OpenCode, use `/pantheon-settings` (ou `/pantheon-updates`) para rodar o **Doctor** e a seção **Legados, Drift & Limpeza** (que detecta/remove caches antigos, MCPs Python legados e também permite resetar os stores `.pantheon/` com segurança).
 
-Pelo terminal, você também pode executar:
-
-```bash
-npx pantheon-opencode doctor
-```
-
-Uma instalação saudável exibirá veredicto **PASS** com zero erros bloqueantes.
+Em desenvolvimento local no repositório, você também pode rodar `npm run doctor`.
 
 ---
 

@@ -4,12 +4,11 @@ import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const PACKAGE_REF = /^(?:npm:)?pantheon-opencode(?:@[^/]+)?(?:\/(?:plugin|plugin))?$/
+const STALE_VERSIONED_REF = /^(?:npm:)?pantheon-opencode@[^/]+(?:\/.*)?$/
 export const SANDBOX_SOURCE_FILES = [
-  'bin/pantheon-init.mjs',
-  'scripts/install/config-migration.mjs',
-  'scripts/install/opencode.mjs',
+  'scripts/postinstall.mjs',
   'scripts/validate-sandbox-install.mjs',
+  'src/pantheon/legacy-store-migration.mjs',
   'src/plugin.ts',
 ]
 
@@ -69,7 +68,8 @@ export function validateSandboxInstall({ repoDir, installDir, projectConfig, con
     sourceHash.update(relativePath).update('\0').update(installed).update('\0')
   }
 
-  const expectedPluginPath = resolve(installDir, 'src', 'plugin')
+  const expectedPluginDir = resolve(installDir, 'src', 'plugin')
+  const expectedInstallRoot = resolve(installDir)
   const allConfigPaths = [...new Set([projectConfig, ...configPaths].map((path) => resolve(path)))]
   let activeProjectPluginCount = 0
   for (const configPath of allConfigPaths) {
@@ -79,10 +79,15 @@ export function validateSandboxInstall({ repoDir, installDir, projectConfig, con
     }
     for (const ref of pluginReferences(config)) {
       const normalized = ref.replaceAll('\\', '/').replace(/\/$/, '')
-      if (PACKAGE_REF.test(normalized)) {
+      if (STALE_VERSIONED_REF.test(normalized)) {
         throw new Error(`stale Pantheon package reference in ${configPath}: ${ref}`)
       }
-      if (resolve(ref) === expectedPluginPath) {
+      const isNativePkgName =
+        normalized === 'pantheon-opencode' || normalized === 'npm:pantheon-opencode'
+      const matchesInstalledPath =
+        (ref.startsWith('/') || ref.startsWith('.')) &&
+        (resolve(ref) === expectedPluginDir || resolve(ref) === expectedInstallRoot)
+      if (isNativePkgName || matchesInstalledPath) {
         if (configPath === resolve(projectConfig)) activeProjectPluginCount += 1
       }
     }

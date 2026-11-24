@@ -128,7 +128,7 @@ describe('decision config health', () => {
 })
 
 describe('doctor section rows', () => {
-  it('renders the four file checks with the CLI pointer', () => {
+  it('renders the four file checks with the Settings Legacy & Drift pointer', () => {
     const section = buildDoctorTab({
       runningVersion: '2.0.0-beta.2',
       nodeVersion: '26.4.0',
@@ -141,8 +141,8 @@ describe('doctor section rows', () => {
       ['doctor.version', 'doctor.node', 'doctor.overrides', 'doctor.decision', 'doctor.cli'],
     )
     assert.ok(
-      rows.some((row) => row.id === 'doctor.cli' && row.value.includes('pantheon-opencode doctor')),
-      'the CLI pointer row names the full doctor',
+      rows.some((row) => row.id === 'doctor.cli' && row.value.includes('Legacy & Drift')),
+      'the CLI pointer row points to Settings -> Updates -> Legacy & Drift',
     )
     const node = rows.find((row) => row.id === 'doctor.node')
     assert.equal(node.value, '26.4.0')

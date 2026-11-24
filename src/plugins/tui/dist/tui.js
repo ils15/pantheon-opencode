@@ -1,9 +1,9 @@
 import { createComponent, createElement, createTextNode, effect, insert, insertNode, memo, mergeProps, setProp, spread } from "@opentui/solid";
 import { execFile } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Plugin } from "@opencode/plugin/tui";
 import { ErrorBoundary, For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount } from "solid-js";
 import { fileURLToPath } from "node:url";
@@ -3933,8 +3933,8 @@ function buildDoctorTab(input) {
 		}, { rows: [{
 			id: "doctor.cli",
 			name: "Full check",
-			value: "`pantheon-opencode doctor`",
-			note: "MCP smoke, venv pins, git stay in the CLI"
+			value: "Settings -> Updates -> Legacy & Drift",
+			note: "Scan & clean obsolete files/MCPs or purge Pantheon stores in-app"
 		}] }]
 	};
 }
@@ -4046,8 +4046,10 @@ const CANONICAL_AGENT_MD_FILES = Object.freeze([
 const CANONICAL_COMMAND_MD_FILES = Object.freeze([
 	"pantheon.md",
 	"pantheon-audit.md",
+	"pantheon-consolidate.md",
 	"pantheon-deepwork.md",
 	"pantheon-focus.md",
+	"pantheon-forge.md",
 	"pantheon-model.md",
 	"pantheon-optimize.md",
 	"pantheon-settings.md",
@@ -4085,6 +4087,227 @@ const LEGACY_INSTRUCTION_FILES = Object.freeze([
 	"zeus-orchestration.instructions.md",
 	"zeus-workflow.instructions.md"
 ]);
+const PANTHEON_LEGACY_MCP_NAMES = /* @__PURE__ */ new Set([
+	"pantheon-resources",
+	"pantheon-code-mode",
+	"pantheon-memory",
+	"pantheon-persistence",
+	"pantheon-vision"
+]);
+const LEGACY_PYTHON_MCP_SCRIPTS = /* @__PURE__ */ new Set([
+	"mcp_resources.py",
+	"mcp_resources_server.py",
+	"code_mode.py",
+	"code_mode_server.py",
+	"memory_mcp.py",
+	"memory_mcp_server.py",
+	"mcp_persistence.py",
+	"mcp_persistence_server.py",
+	"pantheon_vision.py",
+	"pantheon_vision_server.py"
+]);
+const LEGACY_PYTHON_RUNTIME_SCRIPTS = Object.freeze([
+	...LEGACY_PYTHON_MCP_SCRIPTS,
+	"_pantheon_paths.py",
+	"eval_store.py",
+	"mcp_codemap_module.py",
+	"themis_heuristic_scan.py",
+	"scrub-secrets.py"
+]);
+function isPlainRecord(value) {
+	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function stripJsonCommentsAndTrailingCommas(raw) {
+	let out = "";
+	let inString = false;
+	let escaped = false;
+	for (let i = 0; i < raw.length; i += 1) {
+		const ch = raw[i];
+		if (inString) {
+			out += ch;
+			if (escaped) escaped = false;
+			else if (ch === "\\") escaped = true;
+			else if (ch === "\"") inString = false;
+			continue;
+		}
+		if (ch === "\"") {
+			inString = true;
+			out += ch;
+			continue;
+		}
+		if (ch === "/" && raw[i + 1] === "/") {
+			while (i < raw.length && raw[i] !== "\n") i += 1;
+			if (i < raw.length) out += "\n";
+			continue;
+		}
+		if (ch === "/" && raw[i + 1] === "*") {
+			i += 2;
+			while (i < raw.length && !(raw[i] === "*" && raw[i + 1] === "/")) i += 1;
+			i += 1;
+			continue;
+		}
+		out += ch;
+	}
+	return out.replace(/,\s*([}\]])/g, "$1");
+}
+function isPantheonMcpServer(name, entry) {
+	if (PANTHEON_LEGACY_MCP_NAMES.has(name)) return true;
+	if (!isPlainRecord(entry)) return false;
+	return [
+		"managed-by",
+		"managedBy",
+		"owner"
+	].some((k) => typeof entry[k] === "string" && /^pantheon(?:-|$)/i.test(String(entry[k])));
+}
+function isLegacyOrBrokenPantheonMcp(name, entry, configDir) {
+	if (!isPantheonMcpServer(name, entry) || !isPlainRecord(entry)) return {
+		remove: false,
+		isPython: false
+	};
+	const cmdList = Array.isArray(entry.command) ? entry.command.filter((x) => typeof x === "string") : typeof entry.command === "string" ? [entry.command] : [];
+	const argList = Array.isArray(entry.args) ? entry.args.filter((x) => typeof x === "string") : [];
+	const parts = [...cmdList, ...argList];
+	const isPythonScript = parts.some((p) => LEGACY_PYTHON_MCP_SCRIPTS.has(basename(p.replaceAll("\\", "/"))));
+	const isPythonBin = parts.length > 0 && /(?:^|[\\/])python(?:\d+(?:\.\d+)*)?(?:\.exe)?$/i.test(parts[0]);
+	const isVenvPath = parts.some((p) => /(?:^|[\\/])\.venv(?:[\\/]|$)/.test(p));
+	const isPython = isPythonScript || isPythonBin || isVenvPath;
+	const cwd = typeof entry.cwd === "string" && entry.cwd.trim() !== "" ? resolve(configDir, entry.cwd) : configDir;
+	const exe = parts[0];
+	const hasMissingExe = typeof exe === "string" && (exe.includes("/") || exe.includes("\\")) && !existsSync(isAbsolute(exe) ? exe : resolve(cwd, exe));
+	const hasMissingScript = parts.slice(1).some((p) => {
+		if (!/\.(?:py|mjs|js|ts)$/i.test(p) || p.startsWith("-")) return false;
+		return !existsSync(isAbsolute(p) ? p : resolve(cwd, p));
+	});
+	const isBrokenLocal = (entry.type === "local" || entry.type === "stdio" || entry.type === void 0) && (hasMissingExe || hasMissingScript);
+	return {
+		remove: isPython || isBrokenLocal,
+		isPython
+	};
+}
+function getAuditPluginRef(entry) {
+	if (typeof entry === "string") return entry;
+	if (isPlainRecord(entry) && typeof entry.package === "string") return entry.package;
+	return null;
+}
+function isAuditPantheonPluginRef(ref) {
+	if (!ref) return false;
+	const norm = ref.replaceAll("\\", "/");
+	return /^pantheon-opencode(?:\/.*)?$/i.test(norm) || /^pantheon-tui$/i.test(norm) || /^plugins\/pantheon-tui$/i.test(norm) || /pantheon-hooks(?:\.(?:ts|js|mjs))?$/i.test(norm) || /(?:^|\/)src\/plugin\.ts$/i.test(norm) || /(?:^|\/)pantheon-opencode\/src\/plugin$/i.test(norm) || /(?:^|\/)plugins\/pantheon-tui$/i.test(norm);
+}
+function isAuditLegacyPluginEntry(entry, configDir, singularKey, hasNpmNativePlugin) {
+	const ref = getAuditPluginRef(entry);
+	if (!ref || !isAuditPantheonPluginRef(ref)) return false;
+	if (singularKey) return true;
+	const norm = ref.replaceAll("\\", "/");
+	if (/pantheon-hooks(?:\.(?:ts|js|mjs))?$/i.test(norm)) return true;
+	if (/(?:^|\/)src\/plugin\.ts$/i.test(norm)) return true;
+	if (hasNpmNativePlugin && (/^pantheon-tui$/i.test(norm) || /^plugins\/pantheon-tui$/i.test(norm) || /(?:^|\/)plugins\/pantheon-tui$/i.test(norm))) return true;
+	if (!(norm === "pantheon-opencode" || norm === "pantheon-opencode/plugin" || norm === "pantheon-opencode/tui") && (norm.startsWith("/") || norm.startsWith(".") || norm.includes("/"))) {
+		const targetPath = isAbsolute(ref) ? ref : resolve(configDir, ref);
+		if (!existsSync(targetPath)) return true;
+	}
+	return false;
+}
+function inspectAuditConfigFile(filePath, configDir) {
+	if (!existsSync(filePath)) return null;
+	try {
+		const st = lstatSync(filePath);
+		if (st.isSymbolicLink() || !st.isFile()) return null;
+		const raw = readFileSync(filePath, "utf8");
+		const parsed = JSON.parse(filePath.endsWith(".jsonc") ? stripJsonCommentsAndTrailingCommas(raw) : raw);
+		if (!isPlainRecord(parsed)) return null;
+		const legacyMcps = [];
+		if (basename(filePath) !== "tui.json" && isPlainRecord(parsed.mcp)) {
+			const servers = isPlainRecord(parsed.mcp.servers) ? parsed.mcp.servers : null;
+			if (servers) {
+				for (const [name, entry] of Object.entries(servers)) if (isLegacyOrBrokenPantheonMcp(name, entry, configDir).remove) legacyMcps.push({
+					layout: "v2",
+					name
+				});
+			}
+			for (const [name, entry] of Object.entries(parsed.mcp)) {
+				if (servers && name === "servers") continue;
+				if (isLegacyOrBrokenPantheonMcp(name, entry, configDir).remove) legacyMcps.push({
+					layout: "v1",
+					name
+				});
+			}
+		}
+		const hasNpmNativePlugin = (Array.isArray(parsed.plugins) ? parsed.plugins : []).some((e) => {
+			const ref = getAuditPluginRef(e)?.trim();
+			return ref === "pantheon-opencode" || ref === "pantheon-opencode/plugin";
+		});
+		const legacyPlugins = [];
+		if (Array.isArray(parsed.plugin)) parsed.plugin.forEach((entry, index) => {
+			if (isAuditLegacyPluginEntry(entry, configDir, true, hasNpmNativePlugin)) legacyPlugins.push({
+				key: "plugin",
+				index
+			});
+		});
+		if (Array.isArray(parsed.plugins)) parsed.plugins.forEach((entry, index) => {
+			if (isAuditLegacyPluginEntry(entry, configDir, false, hasNpmNativePlugin)) legacyPlugins.push({
+				key: "plugins",
+				index
+			});
+		});
+		return {
+			filePath,
+			raw,
+			parsed,
+			legacyMcps,
+			legacyPlugins
+		};
+	} catch {
+		return null;
+	}
+}
+function cleanAuditConfigFile(filePath, configDir, backupScopeRoot) {
+	const inspected = inspectAuditConfigFile(filePath, configDir);
+	if (!inspected || inspected.legacyMcps.length === 0 && inspected.legacyPlugins.length === 0) return;
+	const cfg = structuredClone(inspected.parsed);
+	if (isPlainRecord(cfg.mcp)) {
+		const mcpObj = cfg.mcp;
+		for (const item of inspected.legacyMcps) if (item.layout === "v2" && isPlainRecord(mcpObj.servers)) delete mcpObj.servers[item.name];
+		else if (item.layout === "v1") delete mcpObj[item.name];
+		if (isPlainRecord(mcpObj.servers) && Object.keys(mcpObj.servers).length === 0) delete mcpObj.servers;
+		if (Object.keys(mcpObj).length === 0) delete cfg.mcp;
+	}
+	for (const key of ["plugin", "plugins"]) {
+		if (!Array.isArray(cfg[key])) continue;
+		const drop = new Set(inspected.legacyPlugins.filter((p) => p.key === key).map((p) => p.index));
+		if (drop.size === 0) continue;
+		cfg[key] = cfg[key].filter((_, i) => !drop.has(i));
+		if (cfg[key].length === 0 && (key === "plugin" || basename(filePath) === "tui.json" || basename(filePath) === "cli.json")) delete cfg[key];
+	}
+	const next = `${JSON.stringify(cfg, null, 2)}\n`;
+	if (next === inspected.raw) return;
+	try {
+		const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+		const bdir = join(backupScopeRoot, ".pantheon", "backups", `legacy-migration-${stamp}`);
+		mkdirSync(bdir, {
+			recursive: true,
+			mode: 448
+		});
+		chmodSync(bdir, 448);
+		const bfile = join(bdir, basename(filePath));
+		writeFileSync(bfile, inspected.raw, {
+			encoding: "utf8",
+			mode: 384
+		});
+		chmodSync(bfile, 384);
+	} catch {}
+	if ((basename(filePath) === "tui.json" || basename(filePath) === "cli.json") && Object.keys(cfg).length === 0) {
+		rmSync(filePath, { force: true });
+		return;
+	}
+	const st = lstatSync(filePath);
+	const tmpPath = `${filePath}.tmp-${process.pid}`;
+	writeFileSync(tmpPath, next, {
+		encoding: "utf8",
+		mode: st.mode & 511
+	});
+	renameSync(tmpPath, filePath);
+}
 function resolveAuditCacheDir(env = process.env) {
 	if (env.NODE_TEST_CONTEXT) return void 0;
 	if (env.XDG_CACHE_HOME?.trim()) return join(resolve(env.XDG_CACHE_HOME.trim()), "opencode", "npm");
@@ -4253,6 +4476,43 @@ function collectScopeAudit(scope, baseRoot, configRoot, options) {
 	]) addItem(join(configRoot, "plugins", hookName), "hooks", "Obsolete OpenCode V1 hook plugin");
 	addItem(join(configRoot, "tiers.json"), "v1Obsolete", "Obsolete V1 model tiers registry");
 	addItem(join(baseRoot, "tiers.json"), "v1Obsolete", "Obsolete V1 model tiers registry");
+	const configCandidates = /* @__PURE__ */ new Set();
+	for (const dir of [baseRoot, configRoot]) for (const fileName of [
+		"opencode.json",
+		"opencode.jsonc",
+		"tui.json"
+	]) configCandidates.add(resolve(join(dir, fileName)));
+	let removedPythonMcpInConfig = false;
+	for (const cfgPath of configCandidates) {
+		const inspected = inspectAuditConfigFile(cfgPath, dirname(cfgPath));
+		if (!inspected) continue;
+		for (const mcp of inspected.legacyMcps) {
+			removedPythonMcpInConfig = true;
+			items.push({
+				path: `${cfgPath}#legacy-mcp:${mcp.name}`,
+				scope,
+				category: "v1Obsolete",
+				reason: `Legacy or broken MCP entry (${mcp.name}) in ${basename(cfgPath)}`,
+				bytes: 0
+			});
+		}
+		if (inspected.legacyPlugins.length > 0) items.push({
+			path: `${cfgPath}#legacy-plugin`,
+			scope,
+			category: "hooks",
+			reason: `Legacy or broken Pantheon plugin entry in ${basename(cfgPath)}`,
+			bytes: 0
+		});
+	}
+	if (!(existsSync(join(configRoot, "src", "mcp", "code_mode.py")) && existsSync(join(configRoot, "package.json"))) && existsSync(configRoot)) {
+		const scriptsDir = join(configRoot, "scripts");
+		const hasPyScripts = existsSync(scriptsDir) && LEGACY_PYTHON_RUNTIME_SCRIPTS.some((name) => existsSync(join(scriptsDir, name)));
+		if (existsSync(scriptsDir)) for (const name of LEGACY_PYTHON_RUNTIME_SCRIPTS) addItem(join(scriptsDir, name), "v1Obsolete", "Obsolete legacy Python MCP script (replaced by native tools / Node MCP)");
+		const reqVision = join(configRoot, "requirements-vision.txt");
+		addItem(reqVision, "v1Obsolete", "Obsolete Python vision requirements file");
+		const configVenv = join(configRoot, ".venv");
+		if (existsSync(configVenv) && (hasPyScripts || existsSync(reqVision) || removedPythonMcpInConfig)) addItem(configVenv, "v1Obsolete", "Obsolete Python virtual environment for legacy MCPs");
+	}
 	const pantheonDir = join(baseRoot, ".pantheon");
 	addItem(join(pantheonDir, "fastembed_cache"), "v1Obsolete", "Unused legacy fastembed cache");
 	addItem(join(pantheonDir, ".fastembed"), "v1Obsolete", "Unused legacy fastembed cache");
@@ -4325,6 +4585,22 @@ function collectScopeAudit(scope, baseRoot, configRoot, options) {
 			const runningVersion = options.runningVersion ? String(options.runningVersion) : "";
 			const drifted = Boolean(runningVersion && copiedVersion && copiedVersion !== runningVersion);
 			addItem(tuiCopyDir, drifted ? "drift" : "redundantAsset", drifted ? `Copied TUI plugin v${copiedVersion} drifts from v${runningVersion}` : "Copied TUI directory superseded by npm package export");
+		}
+		const routingPath = join(configRoot, "routing.yml");
+		if (existsSync(routingPath)) try {
+			if (/pantheon|zeus:|athena:|apollo:/i.test(readFileSync(routingPath, "utf8"))) addItem(routingPath, "redundantAsset", "Copied routing.yml superseded by bundled roster");
+		} catch {}
+		const isRepoRoot = existsSync(join(baseRoot, "package.json")) && existsSync(join(baseRoot, "src", "plugin.ts")) && existsSync(join(baseRoot, "src", "agents", "roster.json"));
+		const statePaths = [join(configRoot, ".pantheon", "install-state.json")];
+		if (!isRepoRoot) statePaths.push(join(pantheonDir, "install-state.json"));
+		for (const statePath of statePaths) addItem(statePath, "redundantAsset", "Legacy CLI installer manifest");
+		const codeModeDirs = [join(configRoot, ".pantheon", "code-mode")];
+		if (!isRepoRoot && join(pantheonDir, "code-mode") !== codeModeDirs[0]) codeModeDirs.push(join(pantheonDir, "code-mode"));
+		for (const cmDir of codeModeDirs) {
+			if (!existsSync(cmDir)) continue;
+			try {
+				for (const entry of readdirSync(cmDir)) if (entry.endsWith(".py") || entry.endsWith(".sh") || entry === "manifest.json") addItem(join(cmDir, entry), "v1Obsolete", "Obsolete Python code-mode script (replaced by native tools)");
+			} catch {}
 		}
 	}
 	return {
@@ -4534,10 +4810,35 @@ function cleanLegacyArtifacts(options = {}) {
 	const removed = [];
 	const errors = [];
 	let reclaimedBytes = 0;
+	const cleanedConfigs = /* @__PURE__ */ new Set();
 	for (const item of scan.items) {
 		if (scopeFilter && item.scope !== scopeFilter) continue;
 		if (item.path.endsWith("#legacy-vec")) {
 			removed.push(item.path);
+			continue;
+		}
+		if (item.path.includes("#legacy-mcp:") || item.path.endsWith("#legacy-plugin")) {
+			const cfgPath = item.path.split("#")[0];
+			const scopeRoot = item.scope === "global" ? globalConfigDir : workspaceDir;
+			if (!scopeRoot || !isConfinedWithin(scopeRoot, cfgPath)) {
+				errors.push({
+					path: item.path,
+					reason: "Path escapes target scope root"
+				});
+				continue;
+			}
+			try {
+				if (!cleanedConfigs.has(cfgPath)) {
+					cleanedConfigs.add(cfgPath);
+					cleanAuditConfigFile(cfgPath, dirname(cfgPath), scopeRoot);
+				}
+				removed.push(item.path);
+			} catch (err) {
+				errors.push({
+					path: item.path,
+					reason: err instanceof Error ? err.message : String(err)
+				});
+			}
 			continue;
 		}
 		const scopeRoot = item.scope === "global" ? globalConfigDir : workspaceDir;
@@ -4582,6 +4883,61 @@ function cleanLegacyArtifacts(options = {}) {
 		removed,
 		reclaimedBytes,
 		migratedRecords,
+		errors
+	};
+}
+function purgeAllPantheonData(options = {}) {
+	const dryRun = options.dryRun === true;
+	const workspaceDir = options.workspaceDir ? resolve(options.workspaceDir) : void 0;
+	const globalConfigDir = options.globalConfigDir ? resolve(options.globalConfigDir) : resolveAuditGlobalDir(options.env);
+	const scopeFilter = options.scope && options.scope !== "all" ? options.scope : null;
+	const scan = scanLegacyArtifacts({
+		...options,
+		includeRedundantCopiedAssets: true
+	});
+	const removed = [];
+	const errors = [];
+	let reclaimedBytes = 0;
+	if (!dryRun) {
+		const cleanRes = cleanLegacyArtifacts({
+			...options,
+			includeRedundantCopiedAssets: true
+		});
+		removed.push(...cleanRes.removed);
+		reclaimedBytes += cleanRes.reclaimedBytes;
+		errors.push(...cleanRes.errors);
+	}
+	const purgeRoot = (rootDir, configRoot) => {
+		if (!rootDir || rootDir === "/" || !existsSync(rootDir)) return;
+		if (existsSync(join(rootDir, "src", "mcp", "code_mode.py")) && existsSync(join(rootDir, "package.json"))) return;
+		for (const store of [join(rootDir, ".pantheon"), join(configRoot, ".pantheon")]) {
+			if (!existsSync(store) || !isConfinedWithin(rootDir, store)) continue;
+			const bytes = measurePathBytes(store);
+			try {
+				if (!dryRun) rmSync(store, {
+					recursive: true,
+					force: true
+				});
+				removed.push(store);
+				reclaimedBytes += bytes;
+			} catch (err) {
+				errors.push({
+					path: store,
+					reason: err instanceof Error ? err.message : String(err)
+				});
+			}
+		}
+	};
+	if (scopeFilter !== "project" && globalConfigDir) purgeRoot(globalConfigDir, globalConfigDir);
+	if (scopeFilter !== "global" && workspaceDir && (!globalConfigDir || !samePath(workspaceDir, globalConfigDir))) purgeRoot(workspaceDir, join(workspaceDir, ".opencode"));
+	if (dryRun) {
+		for (const item of scan.items) removed.push(item.path);
+		reclaimedBytes += scan.summary.totalBytes;
+	}
+	return {
+		removed: [...new Set(removed)],
+		reclaimedBytes,
+		migratedRecords: 0,
 		errors
 	};
 }
@@ -4825,6 +5181,13 @@ function buildUpdatesTab(input) {
 			value: input.legacyCleaning ? isPt ? "limpando…" : "cleaning…" : audit && audit.total > 0 ? isPt ? `limpar ${audit.total} (${formatBytes(audit.totalBytes)})` : `remove ${audit.total} (${formatBytes(audit.totalBytes)})` : isPt ? "nada a remover" : "nothing to remove",
 			action: "legacy-clean",
 			note: isPt ? "migra memória/contexto/goals antes; preserva agentes/skills custom" : "migrates memory/context/goals first · preserves custom agents/skills"
+		},
+		{
+			id: "legacy.purge",
+			name: isPt ? "Apagar dados (.pantheon)" : "Purge Pantheon data",
+			value: input.confirmPurge ? isPt ? "CONFIRMAR: Enter apaga tudo" : "CONFIRM: Enter deletes stores" : isPt ? "resetar dados locais" : "reset local stores",
+			action: "legacy-purge",
+			note: input.confirmPurge ? isPt ? "pressione Enter de novo para apagar .pantheon (memória, goals, backups); mude de linha para cancelar" : "press Enter again to erase .pantheon (memory, goals, backups); move selection to cancel" : isPt ? "remove .pantheon/ (memória, goals, backups) + configs legadas; desinstale o plugin com `opencode plugin remove pantheon-opencode`" : "removes .pantheon/ (memory, goals, backups) + legacy configs; remove plugin via `opencode plugin remove pantheon-opencode`"
 		}
 	];
 	return {
@@ -5026,7 +5389,7 @@ async function readChangelogForBundle(bundleUrl) {
 }
 /** The ambient build-time version, or null outside a tsdown build. */
 function embeddedVersion() {
-	return "2.2.1";
+	return "2.2.2";
 }
 /**
 * Resolve the running Pantheon version for the what's-new window: the plugin
@@ -5268,7 +5631,7 @@ function persistUpdateCheckState(previous, latest) {
 	} catch {}
 }
 function resolveRunningVersion() {
-	return "2.2.1";
+	return "2.2.2";
 }
 const VALUE_WIDTH = 32;
 function SettingsWindow(props) {
@@ -5726,6 +6089,7 @@ function createWindowController(context, exit) {
 	const [legacyScanning, setLegacyScanning] = createSignal(false);
 	const [legacyCleaning, setLegacyCleaning] = createSignal(false);
 	const [legacyNotice, setLegacyNotice] = createSignal(void 0);
+	const [confirmPurge, setConfirmPurge] = createSignal(false);
 	const [changelogItems, setChangelogItems] = createSignal([]);
 	const [draft, setDraft] = createSignal({});
 	const [notice, setNotice] = createSignal(void 0);
@@ -5789,6 +6153,7 @@ function createWindowController(context, exit) {
 			legacyAudit: legacyAudit(),
 			legacyScanning: legacyScanning(),
 			legacyCleaning: legacyCleaning(),
+			confirmPurge: confirmPurge(),
 			...noticeMsg !== void 0 ? { legacyNotice: noticeMsg } : {},
 			nowMs: Date.now()
 		};
@@ -5841,6 +6206,7 @@ function createWindowController(context, exit) {
 	const rows = () => tabRows(tabs()[page()] ?? tabs()[0] ?? EMPTY_TAB);
 	const move = (delta) => {
 		if (confirmExit()) setConfirmExit(false);
+		if (confirmPurge()) setConfirmPurge(false);
 		const list = rows();
 		if (list.length === 0) return;
 		setSelected((current) => Math.min(Math.max(current + delta, 0), list.length - 1));
@@ -5980,6 +6346,41 @@ function createWindowController(context, exit) {
 			} catch {}
 		} catch {
 			setNotice(isPt ? "falha ao limpar arquivos legados" : "legacy cleanup failed");
+		} finally {
+			setLegacyCleaning(false);
+		}
+	};
+	const purgeLegacyNow = () => {
+		if (legacyCleaning() || legacyScanning()) return;
+		const isPt = resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
+		if (!confirmPurge()) {
+			setConfirmPurge(true);
+			setNotice(isPt ? "⚠️ Confirmação armada: pressione Enter de novo em \"Apagar dados (.pantheon)\" para confirmar" : "⚠️ Armed: press Enter again on \"Purge Pantheon data\" to erase local .pantheon stores");
+			return;
+		}
+		setConfirmPurge(false);
+		setLegacyCleaning(true);
+		try {
+			const auditOpts = {
+				workspaceDir,
+				runningVersion: currentVersion,
+				...activeBundlePath ? { activeBundlePath } : {}
+			};
+			const res = purgeAllPantheonData(auditOpts);
+			const after = scanLegacyArtifacts(auditOpts);
+			setLegacyAudit(after.summary);
+			setLoad(readOverridesLoad(workspaceDir));
+			const msg = isPt ? `purgados ${res.removed.length} item(ns) (${formatBytes(res.reclaimedBytes)}) — use \`opencode plugin remove pantheon-opencode\` para desinstalar` : `purged ${res.removed.length} item(s) (${formatBytes(res.reclaimedBytes)}) — run \`opencode plugin remove pantheon-opencode\` to uninstall`;
+			setLegacyNotice(msg);
+			setNotice(`[OK] ${msg}`);
+			try {
+				context.ui.toast?.show?.({
+					variant: res.errors.length > 0 ? "warning" : "info",
+					message: msg
+				});
+			} catch {}
+		} catch {
+			setNotice(isPt ? "falha ao apagar dados do Pantheon" : "Pantheon data purge failed");
 		} finally {
 			setLegacyCleaning(false);
 		}
@@ -6271,8 +6672,13 @@ function createWindowController(context, exit) {
 			const row = list[index];
 			if (row?.action === "update-check") checkUpdatesNow();
 			else if (row?.action === "update-run") runUpdateNow();
-			else if (row?.action === "legacy-scan") scanLegacyNow();
-			else if (row?.action === "legacy-clean") cleanLegacyNow();
+			else if (row?.action === "legacy-scan") {
+				setConfirmPurge(false);
+				scanLegacyNow();
+			} else if (row?.action === "legacy-clean") {
+				setConfirmPurge(false);
+				cleanLegacyNow();
+			} else if (row?.action === "legacy-purge") purgeLegacyNow();
 			else if (row) {
 				setNotice(void 0);
 				setDraft(stageValue(draft(), row, direction));
@@ -6296,8 +6702,13 @@ function createWindowController(context, exit) {
 				const row = rows()[selected()];
 				if (row?.action === "update-check") checkUpdatesNow();
 				else if (row?.action === "update-run") runUpdateNow();
-				else if (row?.action === "legacy-scan") scanLegacyNow();
-				else if (row?.action === "legacy-clean") cleanLegacyNow();
+				else if (row?.action === "legacy-scan") {
+					setConfirmPurge(false);
+					scanLegacyNow();
+				} else if (row?.action === "legacy-clean") {
+					setConfirmPurge(false);
+					cleanLegacyNow();
+				} else if (row?.action === "legacy-purge") purgeLegacyNow();
 				else step(1);
 			},
 			nextTab,
@@ -10322,7 +10733,7 @@ function updateCheckStateFile() {
 *  version via toast, and keeps the persistent Home/Sidebar badge updated. */
 async function checkForPantheonUpdate(context) {
 	const { statePath, readState } = updateCheckStateFile();
-	const currentVersion = "2.2.1";
+	const currentVersion = "2.2.2";
 	const initialState = readState();
 	setAvailableUpdateVersion(resolveCachedAvailableUpdate(currentVersion, initialState));
 	const nowMs = Date.now();
@@ -11179,7 +11590,7 @@ function Sidebar(props) {
 			setProp(_el$13, "paddingLeft", 1);
 			setProp(_el$13, "paddingRight", 1);
 			setProp(_el$14, "attributes", 1);
-			insert(_el$14, `Pantheon v2.2.1`);
+			insert(_el$14, `Pantheon v2.2.2`);
 			insert(_el$15, () => `Erro no painel: ${err?.message ?? "desconhecido"}`);
 			effect((_p$) => {
 				var _v$3 = text(), _v$4 = muted();
@@ -11233,9 +11644,9 @@ function SidebarInner(props) {
 	};
 	const failedSuffix = () => failedSuffixText(dispatchView()?.failures);
 	const header = () => tuiPrefs().sidebar.header;
-	const availableUpdate = useAvailableUpdate("2.2.1");
+	const availableUpdate = useAvailableUpdate("2.2.2");
 	const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
-	const updateBadge = () => formatUpdateBadge("2.2.1", availableUpdate(), { isPt: isPt() });
+	const updateBadge = () => formatUpdateBadge("2.2.2", availableUpdate(), { isPt: isPt() });
 	const artifacts = useWorkspaceArtifacts(context);
 	const activePlan = () => artifacts().find((entry) => entry.kind === "plan");
 	return (() => {
@@ -11255,7 +11666,7 @@ function SidebarInner(props) {
 			get children() {
 				var _el$18 = createElement("text");
 				setProp(_el$18, "attributes", 1);
-				insert(_el$18, `Pantheon v2.2.1`);
+				insert(_el$18, `Pantheon v2.2.2`);
 				effect((_$p) => setProp(_el$18, "fg", text(), _$p));
 				return _el$18;
 			}
@@ -12365,13 +12776,13 @@ function useWorkspaceArtifacts(context) {
 *  this keeps a compact Pantheon line visible on the home footer meanwhile. */
 function HomeStatus(props) {
 	const preset = useActivePreset(props.context).preset;
-	const availableUpdate = useAvailableUpdate("2.2.1");
+	const availableUpdate = useAvailableUpdate("2.2.2");
 	const artifacts = useWorkspaceArtifacts(props.context);
 	const activePlan = () => artifacts().find((entry) => entry.kind === "plan");
 	const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
 	const accent = () => resolveAccentColor(tuiDraftPreview()?.theme?.accent ?? tuiPrefs().theme?.accent, props.context.theme);
 	const muted = () => props.context.theme?.text?.muted ?? props.context.theme?.text?.base;
-	const updateBadge = () => formatUpdateBadge("2.2.1", availableUpdate(), {
+	const updateBadge = () => formatUpdateBadge("2.2.2", availableUpdate(), {
 		isPt: isPt(),
 		compact: true
 	});
@@ -12384,7 +12795,7 @@ function HomeStatus(props) {
 			insertNode(_el$128, _el$129);
 			insertNode(_el$128, _el$132);
 			setProp(_el$128, "flexDirection", "row");
-			insert(_el$129, () => `Pantheon v2.2.1${preset().name ? ` ▸ ${preset().name}` : ""}`);
+			insert(_el$129, () => `Pantheon v2.2.2${preset().name ? ` ▸ ${preset().name}` : ""}`);
 			insert(_el$128, createComponent(Show, {
 				get when() {
 					return updateBadge();
@@ -12535,7 +12946,7 @@ const plugin = Plugin.define({
 			append: "home.footer.status",
 			render: () => createComponent(HomeStatus, { context })
 		});
-		setAvailableUpdateVersion(resolveCachedAvailableUpdate("2.2.1", updateCheckStateFile().readState()));
+		setAvailableUpdateVersion(resolveCachedAvailableUpdate("2.2.2", updateCheckStateFile().readState()));
 		const updateNoticeTimer = setTimeout(() => {
 			checkForPantheonUpdate(context).catch(() => {});
 		}, 3e3);

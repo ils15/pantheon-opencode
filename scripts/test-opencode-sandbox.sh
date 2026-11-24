@@ -977,7 +977,7 @@ check_binary() { # label binary
 
 check_mcp() { # label binary project
   local label="$1" bin="$2" project="$3" out connected_count rc=0 list_file list_pid
-  local final_file final_pid final_rc final_count
+  local final_file final_pid final_rc final_count has_mcp_servers
   if ! command -v "$bin" >/dev/null 2>&1; then
     record_status "$label MCP" "FAIL" "MCP connectivity check failed"
     return 0
@@ -991,29 +991,36 @@ check_mcp() { # label binary project
     return 0
   fi
 
-  # `mcp list` is the operation that causes OpenCode V2 to launch the MCP
-  # subprocesses. Start it immediately after health, before waiting for the
-  # handshakes; waiting first deadlocks forever because those subprocesses are
-  # otherwise never loaded.
+  has_mcp_servers="$(CONFIG_PATH="${V2_CONFIG:-$project/opencode.json}" python3 - <<'PY' 2>/dev/null || printf '0'
+import json, os
+from pathlib import Path
+try:
+    doc = json.loads(Path(os.environ["CONFIG_PATH"]).read_text(encoding="utf-8"))
+    srv = (doc.get("mcp") or {}).get("servers") or {}
+    print("1" if len(srv) > 0 else "0")
+except Exception:
+    print("0")
+PY
+)"
   list_file="$(mktemp "$SANDBOX_DIR/v2-mcp-list.XXXXXX")"
   (cd "$project" && timeout --foreground "$V2_MCP_LIST_TIMEOUT" "$bin" mcp list) \
     >"$list_file" 2>&1 &
   list_pid=$!
-  if ! wait_for_v2_mcp_registrations "$project/.opencode" "$project/.venv/bin/python3"; then
-    kill "$list_pid" 2>/dev/null || true
-    wait "$list_pid" 2>/dev/null || true
-    rm -f "$list_file"
-    record_status "$label MCP" "FAIL" "MCP registration check failed"
-    return 0
-  fi
-  if wait_for_v2_handshakes; then
-    :
-  else
-    kill "$list_pid" 2>/dev/null || true
-    wait "$list_pid" 2>/dev/null || true
-    rm -f "$list_file"
-    record_status "$label MCP" "FAIL" "MCP connectivity check failed"
-    return 0
+  if [ "$has_mcp_servers" = "1" ]; then
+    if ! wait_for_v2_mcp_registrations "$project/.opencode" "$project/.venv/bin/python3"; then
+      kill "$list_pid" 2>/dev/null || true
+      wait "$list_pid" 2>/dev/null || true
+      rm -f "$list_file"
+      record_status "$label MCP" "FAIL" "MCP registration check failed"
+      return 0
+    fi
+    if ! wait_for_v2_handshakes; then
+      kill "$list_pid" 2>/dev/null || true
+      wait "$list_pid" 2>/dev/null || true
+      rm -f "$list_file"
+      record_status "$label MCP" "FAIL" "MCP connectivity check failed"
+      return 0
+    fi
   fi
   if wait "$list_pid"; then
     rc=0
@@ -1047,9 +1054,14 @@ check_mcp() { # label binary project
     record_status "$label MCP" "FAIL" "MCP connectivity check failed"
     return 0
   fi
+  if printf '%s' "$out" | grep -Eiq 'failed|✘|NotFound|ChildProcess\.spawn'; then
+    record_status "$label MCP" "FAIL" "MCP output reported errors"
+    return 0
+  fi
   connected_count="$(printf '%s' "$out" | grep -Eic '(^|[^[:alnum:]_])connected([^[:alnum:]_]|$)')" || connected_count=0
-  if [ "$connected_count" -eq 5 ] \
-    && ! printf '%s' "$out" | grep -Eiq 'failed|✘' \
+  if [ "$has_mcp_servers" != "1" ] && [ "$connected_count" -eq 0 ]; then
+    record_status "$label MCP" "PASS" "native plugin mode (0 external MCP spawns required)"
+  elif [ "$connected_count" -eq 5 ] \
     && printf '%s' "$out" | grep -Fq 'pantheon-code-mode' \
     && printf '%s' "$out" | grep -Fq 'pantheon-memory' \
     && printf '%s' "$out" | grep -Fq 'pantheon-persistence' \
@@ -1072,13 +1084,24 @@ npm rm -g pantheon-opencode 2>/dev/null || true
 npm install -g "$TGZ"
 if ! git -C "$REPO_DIR" ls-files --error-unmatch -- "$TGZ" >/dev/null 2>&1; then rm -f -- "$TGZ"; fi
 
-echo "--- Init (headless) ---"
-pantheon-opencode init --headless -y \
-  --components agents,skills,instructions,commands,plugins,runtime
-rewrite_v2_mcp_config
+INSTALL_DIR="$NPM_PREFIX/lib/node_modules/pantheon-opencode"
+PLUGIN_DIR="$INSTALL_DIR"
+
+echo "--- Native Plugin Config (Zero CLI Init / Zero Python .venv) ---"
+mkdir -p "$PANTHEON_GLOBAL" "$(dirname "$V2_CONFIG")"
+PLUGIN_DIR="$PLUGIN_DIR" GLOBAL_CFG="$PANTHEON_GLOBAL/opencode.json" PROJECT_CFG="$V2_CONFIG" \
+  python3 - <<'PY'
+import json, os
+from pathlib import Path
+doc = {"$schema": "https://opencode.ai/config.json", "plugins": [os.environ["PLUGIN_DIR"]]}
+for p in (Path(os.environ["GLOBAL_CFG"]), Path(os.environ["PROJECT_CFG"])):
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+PY
+
 if ! node "$REPO_DIR/scripts/validate-sandbox-install.mjs" \
   --repo "$REPO_DIR" \
-  --install "$NPM_PREFIX/lib/node_modules/pantheon-opencode" \
+  --install "$INSTALL_DIR" \
   --project-config "$V2_CONFIG" \
   --config "$PANTHEON_GLOBAL/opencode.json" \
   >/dev/null 2>&1; then
@@ -1089,10 +1112,74 @@ fi
 echo "--- MCP Validation ---"
 check_mcp "V2" opencode2 "$SANDBOX_DIR/project-v2"
 
-echo "--- Doctor ---"
-if command -v pantheon-opencode >/dev/null 2>&1; then
+echo "--- Legacy Upgrade Auto-Cleanup Verification ---"
+LEGACY_SANDBOX="$SANDBOX_DIR/legacy-upgrade-check"
+rm -rf "$LEGACY_SANDBOX"
+LEGACY_CFG="$LEGACY_SANDBOX/.config/opencode"
+mkdir -p "$LEGACY_CFG/plugins/pantheon-tui" "$LEGACY_CFG/agents" "$LEGACY_CFG/commands" "$LEGACY_CFG/skills/memory-bank" "$LEGACY_CFG/.venv/bin" "$LEGACY_CFG/scripts" "$LEGACY_CFG/.pantheon"
+printf '%s\n' '#!/bin/sh' > "$LEGACY_CFG/.venv/bin/python3"
+printf '%s\n' '# old script' > "$LEGACY_CFG/scripts/code_mode.py"
+printf '%s\n' '// v1 hook' > "$LEGACY_CFG/plugins/pantheon-hooks.ts"
+printf '%s\n' 'export default {}' > "$LEGACY_CFG/plugins/pantheon-tui/tui.js"
+printf '%s\n' '---\ntier: T1\n---\n# zeus pantheon' > "$LEGACY_CFG/agents/zeus.md"
+printf '%s\n' '---\ndescription: pantheon\n---' > "$LEGACY_CFG/commands/pantheon.md"
+printf '%s\n' '# memory-bank' > "$LEGACY_CFG/skills/memory-bank/SKILL.md"
+printf '%s\n' '{"schema_version":2}' > "$LEGACY_CFG/.pantheon/install-state.json"
+printf '%s\n' '{"plugin":["plugins/pantheon-tui"]}' > "$LEGACY_CFG/tui.json"
+LEGACY_CFG="$LEGACY_CFG" python3 - <<'PY'
+import json, os, sqlite3
+from pathlib import Path
+cfg = Path(os.environ["LEGACY_CFG"])
+(cfg / "opencode.json").write_text(json.dumps({
+    "plugin": ["pantheon-hooks.ts"],
+    "plugins": ["pantheon-opencode", {"package": "$SANDBOX_DIR/_npx/123/node_modules/pantheon-opencode/src/plugin.ts"}],
+    "mcp": {"servers": {
+        "pantheon-code-mode": {"type": "local", "command": ["$SANDBOX_DIR/.venv/bin/python3", "scripts/code_mode.py"]},
+        "context7": {"type": "local", "command": ["npx", "-y", "@upstash/context7-mcp"]}
+    }}
+}, indent=2), encoding="utf-8")
+(cfg / "opencode.jsonc").write_text('{\n  // user comment preserved\n  "mcp": {\n    "servers": {\n      "pantheon-code-mode": { "type": "local", "command": [".venv/bin/python3", "scripts/code_mode.py"] },\n      "context7": { "type": "local", "command": ["npx", "-y", "@upstash/context7-mcp"] }\n    }\n  }\n}\n', encoding="utf-8")
+conn = sqlite3.connect(str(cfg / ".pantheon" / "memory.db"))
+conn.execute("CREATE TABLE memories (id INTEGER PRIMARY KEY AUTOINCREMENT, namespace TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, created_at TEXT NOT NULL)")
+conn.execute("INSERT INTO memories (namespace, key, value, created_at) VALUES ('global', 'legacy-key', 'legacy-val', '2026-01-01T00:00:00Z')")
+conn.commit()
+conn.close()
+PY
+if [ "$(node -p "'ok'" 2>/dev/null || true)" = "ok" ] && [ -f "$INSTALL_DIR/scripts/postinstall.mjs" ]; then
+  if HOME="$LEGACY_SANDBOX" XDG_CONFIG_HOME="$LEGACY_SANDBOX/.config" node "$INSTALL_DIR/scripts/postinstall.mjs" >/dev/null 2>&1 \
+    && LEGACY_CFG="$LEGACY_CFG" python3 - <<'PY'
+import json, os
+from pathlib import Path
+cfg = Path(os.environ["LEGACY_CFG"])
+doc = json.loads((cfg / "opencode.json").read_text(encoding="utf-8"))
+assert "pantheon-code-mode" not in doc.get("mcp", {}).get("servers", {}), "pantheon-code-mode survived"
+assert "context7" in doc.get("mcp", {}).get("servers", {}), "context7 removed"
+assert doc.get("plugins") == ["pantheon-opencode"], f"unexpected plugins: {doc.get('plugins')}"
+assert "plugin" not in doc, "singular plugin survived"
+jsonc = (cfg / "opencode.jsonc").read_text(encoding="utf-8")
+assert "// user comment preserved" in jsonc and "pantheon-code-mode" not in jsonc and "context7" in jsonc
+assert not (cfg / "plugins" / "pantheon-tui").exists(), "old TUI copy survived"
+assert not (cfg / "plugins" / "pantheon-hooks.ts").exists(), "old hook survived"
+assert not (cfg / "tui.json").exists(), "empty tui.json survived"
+assert not (cfg / ".venv").exists(), "old config .venv survived"
+assert not (cfg / "scripts" / "code_mode.py").exists(), "old python script survived"
+assert not (cfg / "agents" / "zeus.md").exists(), "copied agent survived"
+assert not (cfg / "commands" / "pantheon.md").exists(), "copied command survived"
+assert not (cfg / "skills" / "memory-bank").exists(), "copied skill survived"
+assert not (cfg / ".pantheon" / "install-state.json").exists(), "install-state.json survived"
+assert (cfg / ".pantheon" / "memory" / "memory.db").is_file(), "migrated memory.db missing"
+PY
+  then
+    record_status "legacy-upgrade-cleanup" "PASS" "removed Python MCPs, old TUI, and copied assets cleanly"
+  else
+    record_status "legacy-upgrade-cleanup" "FAIL" "legacy upgrade cleanup verification failed"
+  fi
+fi
+
+echo "--- Host Check & Doctor ---"
+if [ -f "$INSTALL_DIR/scripts/doctor.mjs" ]; then
   set +e
-  DOCTOR_OUTPUT="$(pantheon-opencode doctor --target "$SANDBOX_DIR" 2>&1)"
+  DOCTOR_OUTPUT="$(node "$INSTALL_DIR/scripts/doctor.mjs" --target "$SANDBOX_DIR/project-v2" 2>&1)"
   DOCTOR_RC=$?
   set -e
   if [ "$DOCTOR_RC" -eq 0 ]; then
@@ -1101,37 +1188,17 @@ if command -v pantheon-opencode >/dev/null 2>&1; then
     record_status "doctor" "FAIL" "doctor exited $DOCTOR_RC"
   fi
 else
-  record_status "doctor" "FAIL" "pantheon-opencode is not installed in the sandbox prefix"
+  record_status "doctor" "FAIL" "doctor.mjs missing in installed package"
 fi
 
-echo "--- Gate (b): pantheon://agents CONTENT check ---"
-RESOURCES_SRV="$PANTHEON_GLOBAL/scripts/mcp_resources.py"
-if [ ! -f "$RESOURCES_SRV" ]; then
-  record_status "pantheon://agents resource" "FAIL" "resources server is unavailable"
+echo "--- Gate (b): pantheon roster CONTENT check ---"
+ROSTER_PATH="$INSTALL_DIR/src/agents/roster.json"
+if [ ! -f "$ROSTER_PATH" ]; then
+  record_status "pantheon://agents resource" "FAIL" "bundled roster.json missing"
+elif ROSTER_PATH="$ROSTER_PATH" node -e "const r = JSON.parse(require('fs').readFileSync(process.env.ROSTER_PATH,'utf8')); if (!r?.agents?.zeus || !r?.agents?.hermes) process.exit(1)" 2>/dev/null; then
+  record_status "pantheon://agents resource" "PASS" "bundled roster includes zeus and hermes"
 else
-  set +e
-  AGENTS_CONTENT="$("$SANDBOX_VENV/bin/python" - "$RESOURCES_SRV" <<'PYEOF'
-import asyncio, importlib.util, sys
-from pathlib import Path
-resource_path = Path(sys.argv[1]).resolve()
-sys.path.insert(0, str(resource_path.parent))
-spec = importlib.util.spec_from_file_location("mrs", sys.argv[1])
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-print(asyncio.run(mod.list_agents()))
-PYEOF
-)"
-  AGENTS_RC=$?
-  set -e
-  printf '%s\n' "$AGENTS_CONTENT" | head -8
-  if [ "$AGENTS_RC" -ne 0 ]; then
-    record_status "pantheon://agents resource" "FAIL" "resource probe exited $AGENTS_RC"
-  elif printf '%s\n' "$AGENTS_CONTENT" | grep -qi 'zeus' \
-    && printf '%s\n' "$AGENTS_CONTENT" | grep -qi 'hermes'; then
-    record_status "pantheon://agents resource" "PASS" "pantheon://agents content includes zeus and hermes"
-  else
-    record_status "pantheon://agents resource" "FAIL" "content missing zeus/hermes (connectivity alone is not enough)"
-  fi
+  record_status "pantheon://agents resource" "FAIL" "bundled roster missing zeus/hermes"
 fi
 echo ""
 echo "=== VALIDATION COMPLETE ==="
@@ -1461,15 +1528,23 @@ install_binaries() {
 }
 
 prepare_project() {
-  local dir pan
+  local dir pkg_root plugin_dir global_cfg
   dir="$(project_dir)"
   mkdir -p "$dir"
-  pan="$(sandbox_bin_for "pantheon-opencode")" \
+  pkg_root="$(installed_package_root)" \
     || die "pantheon-opencode not installed in sandbox prefix — run $0 --prepare first"
-  log "--- Regenerating config in $dir ---"
-  (cd "$dir" && "$pan" init --project --model "$PANTHEON_SANDBOX_MODEL" --components agents,skills,instructions,commands,plugins,runtime -y) \
-    || die "sandbox project initialization failed"
-  rewrite_v2_mcp_config
+  plugin_dir="$pkg_root"
+  global_cfg="$SANDBOX_HOME/.config/opencode/opencode.json"
+  log "--- Writing native plugin config in $dir (zero copied files / zero .venv) ---"
+  PLUGIN_DIR="$plugin_dir" GLOBAL_CFG="$global_cfg" PROJECT_CFG="$V2_CONFIG" \
+    python3 - <<'PY'
+import json, os
+from pathlib import Path
+doc = {"$schema": "https://opencode.ai/config.json", "plugins": [os.environ["PLUGIN_DIR"]]}
+for p in (Path(os.environ["GLOBAL_CFG"]), Path(os.environ["PROJECT_CFG"])):
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+PY
   validate_sandbox_install
 }
 
@@ -1578,18 +1653,12 @@ cmd_prepare() {
   pantheon_validate_sandbox_path "$NPM_PREFIX" || die "invalid sandbox path"
   write_run_test_sh
   install_binaries
-  local pan
-  pan="$(sandbox_bin_for "pantheon-opencode")" \
+  installed_package_root >/dev/null \
     || die "pantheon-opencode not found in sandbox prefix after install"
-  log "--- Headless init (default components + runtime) ---"
-  "$pan" init --headless -y \
-    --components agents,skills,instructions,commands,plugins,runtime \
-    --model "$PANTHEON_SANDBOX_MODEL" \
-    || die "pantheon-opencode init --headless failed"
   prepare_project
   write_extract_py
-  log "Prepare complete. Sandbox: $SANDBOX_ROOT"
-  log "Next: $0 --run v2 --prompts"
+  log "Prepare complete (100% native plugin-only sandbox). Sandbox: $SANDBOX_ROOT"
+  log "Next: $0 --run v2 --prompts   (or: bash $SANDBOX_ROOT/run-test.sh)"
 }
 
 # ── JSON text extraction (schema-agnostic) ────────────────────────────────────
@@ -1743,29 +1812,38 @@ check_mcp_list() { # v
     return 0
   fi
 
-  # Start the loader-triggering command before waiting for handshakes. The
-  # previous order waited on log lines that `mcp list` itself had to create.
+  has_mcp_servers="$(CONFIG_PATH="${V2_CONFIG:-$(project_dir)/opencode.json}" python3 - <<'PY' 2>/dev/null || printf '0'
+import json, os
+from pathlib import Path
+try:
+    doc = json.loads(Path(os.environ["CONFIG_PATH"]).read_text(encoding="utf-8"))
+    srv = (doc.get("mcp") or {}).get("servers") or {}
+    print("1" if len(srv) > 0 else "0")
+except Exception:
+    print("0")
+PY
+)"
   list_file="$(mktemp "$SANDBOX_ROOT/v2-mcp-list.XXXXXX")"
   (cd "$(project_dir)" && timeout --foreground "$V2_MCP_LIST_TIMEOUT" "$bin" mcp list) \
     >"$list_file" 2>&1 &
   list_pid=$!
-  if ! wait_for_v2_mcp_registrations "$(project_dir)/.opencode" "$(project_dir)/.venv/bin/python3"; then
-    kill "$list_pid" 2>/dev/null || true
-    wait "$list_pid" 2>/dev/null || true
-    rm -f "$list_file"
-    printf '%s\n' 'MCP registration check failed' >&2
-    record "$v" "mcp-list" "FAIL" "MCP registration check failed"
-    return 0
-  fi
-  if wait_for_v2_handshakes; then
-    :
-  else
-    kill "$list_pid" 2>/dev/null || true
-    wait "$list_pid" 2>/dev/null || true
-    rm -f "$list_file"
-    printf '%s\n' 'MCP connectivity check failed' >&2
-    record "$v" "mcp-list" "FAIL" "MCP connectivity check failed"
-    return 0
+  if [ "$has_mcp_servers" = "1" ]; then
+    if ! wait_for_v2_mcp_registrations "$(project_dir)/.opencode" "$(project_dir)/.venv/bin/python3"; then
+      kill "$list_pid" 2>/dev/null || true
+      wait "$list_pid" 2>/dev/null || true
+      rm -f "$list_file"
+      printf '%s\n' 'MCP registration check failed' >&2
+      record "$v" "mcp-list" "FAIL" "MCP registration check failed"
+      return 0
+    fi
+    if ! wait_for_v2_handshakes; then
+      kill "$list_pid" 2>/dev/null || true
+      wait "$list_pid" 2>/dev/null || true
+      rm -f "$list_file"
+      printf '%s\n' 'MCP connectivity check failed' >&2
+      record "$v" "mcp-list" "FAIL" "MCP connectivity check failed"
+      return 0
+    fi
   fi
   if wait "$list_pid"; then
     rc=0
@@ -1775,10 +1853,7 @@ check_mcp_list() { # v
   out="$(cat "$list_file" 2>/dev/null || true)"
   rm -f "$list_file"
   connected_count="$(printf '%s' "$out" | grep -Eic '(^|[^[:alnum:]_])connected([^[:alnum:]_]|$)' || true)"
-  if [ "$rc" -eq 0 ] && [ "$connected_count" -ne 5 ]; then
-    # The first beta `mcp list` call triggers loading and can return before the
-    # service catalog is populated. Re-query only after registrations and
-    # handshakes have proved the active five servers.
+  if [ "$has_mcp_servers" = "1" ] && [ "$rc" -eq 0 ] && [ "$connected_count" -ne 5 ]; then
     final_file="$(mktemp "$SANDBOX_ROOT/v2-mcp-list.XXXXXX")"
     (cd "$(project_dir)" && timeout --foreground "$V2_MCP_LIST_TIMEOUT" "$bin" mcp list) \
       >"$final_file" 2>&1 &
@@ -1795,17 +1870,21 @@ check_mcp_list() { # v
     fi
   fi
   out="$(printf '%s' "$out" | sed -E $'s/\x1B\\[[0-?]*[ -/]*[@-~]//g')"
-  connected_count="$(printf '%s' "$out" | grep -Eic '(^|[^[:alnum:]_])connected([^[:alnum:]_]|$)' || true)"
-  if [ "$rc" -eq 0 ] \
-    && [ "$connected_count" -eq 5 ] \
-    && ! printf '%s' "$out" | grep -Eiq 'failed|✘' \
-    && printf '%s' "$out" | grep -Fq 'pantheon-code-mode' \
-    && printf '%s' "$out" | grep -Fq 'pantheon-memory' \
-    && printf '%s' "$out" | grep -Fq 'pantheon-persistence' \
-    && printf '%s' "$out" | grep -Fq 'pantheon-resources' \
-    && printf '%s' "$out" | grep -Fq 'pantheon-vision'; then
-    record "$v" "mcp-list" "PASS" "exactly 5 connected MCPs"
-    return 0
+  if [ "$rc" -eq 0 ] && ! printf '%s' "$out" | grep -Eiq 'failed|✘|NotFound|ChildProcess\.spawn'; then
+    if [ "$has_mcp_servers" != "1" ]; then
+      record "$v" "mcp-list" "PASS" "native plugin mode (0 external MCP spawns required)"
+      return 0
+    fi
+    connected_count="$(printf '%s' "$out" | grep -Eic '(^|[^[:alnum:]_])connected([^[:alnum:]_]|$)' || true)"
+    if [ "$connected_count" -eq 5 ] \
+      && printf '%s' "$out" | grep -Fq 'pantheon-code-mode' \
+      && printf '%s' "$out" | grep -Fq 'pantheon-memory' \
+      && printf '%s' "$out" | grep -Fq 'pantheon-persistence' \
+      && printf '%s' "$out" | grep -Fq 'pantheon-resources' \
+      && printf '%s' "$out" | grep -Fq 'pantheon-vision'; then
+      record "$v" "mcp-list" "PASS" "exactly 5 connected MCPs"
+      return 0
+    fi
   fi
 
   printf '%s\n' 'MCP connectivity check failed' >&2
@@ -1814,12 +1893,12 @@ check_mcp_list() { # v
 }
 
 check_doctor() { # v
-  local v="$1" pan rc=0 doctor_output=''
-  if ! pan="$(sandbox_bin_for "pantheon-opencode")"; then
+  local v="$1" pkg_root rc=0 doctor_output=''
+  if ! pkg_root="$(installed_package_root)"; then
     record "$v" "doctor" "FAIL" "pantheon-opencode not installed in sandbox prefix"
     return 0
   fi
-  if doctor_output="$(cd "$(project_dir)" && "$pan" doctor --target "$(project_dir)" 2>&1)"; then
+  if doctor_output="$(cd "$(project_dir)" && node "$pkg_root/scripts/doctor.mjs" --target "$(project_dir)" 2>&1)"; then
     rc=0
   else
     rc=$?
@@ -1834,13 +1913,12 @@ check_doctor() { # v
 }
 
 installed_package_root() {
-  local pan resolved
-  if ! pan="$(sandbox_bin_for "pantheon-opencode")"; then
-    return 1
+  local pkg_dir="$NPM_PREFIX/lib/node_modules/pantheon-opencode"
+  if [ -d "$pkg_dir" ]; then
+    printf '%s\n' "$pkg_dir"
+    return 0
   fi
-  resolved="$(readlink -f "$pan" 2>/dev/null || true)"
-  [ -n "$resolved" ] || return 1
-  dirname "$(dirname "$resolved")"
+  return 1
 }
 
 run_cost_probe() { # v

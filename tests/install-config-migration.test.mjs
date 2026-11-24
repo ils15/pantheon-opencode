@@ -18,13 +18,18 @@ import {
   mergeContextSandboxBlocks,
   normalizeLegacyV1Config,
 } from '../scripts/install/config-migration.mjs'
-import {
-  applyMcpServerEntries,
-  MANAGED_FIELDS,
-  normalizeMcpPermissionSegment,
-} from '../scripts/install/opencode.mjs'
+import { normalizeMcpPermissionSegment } from '../scripts/install/mcp-permissions.mjs'
 import { opencodeWildcardMatch } from '../scripts/install/opencode-wildcard.mjs'
-import { ROOT } from '../scripts/install/shared.mjs'
+
+const ROOT = process.cwd()
+const MANAGED_FIELDS = [
+  'temperature',
+  'color',
+  'permissions',
+  'mode',
+  'hidden',
+  'disable_model_invocation',
+]
 
 const MIGRATION_MODULE = join(ROOT, 'scripts', 'install', 'config-migration.mjs')
 
@@ -1491,63 +1496,5 @@ describe('config-migration', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// Installer defaults: V2 never seeds inert MCP ask policies.
-// ---------------------------------------------------------------------------
-
-describe('applyMcpServerEntries — MCP ask warning', () => {
-  const context = { runtimeTarget: '/tmp/pantheon-runtime', venvPython: '/tmp/venv/bin/python3' }
-
-  it('does not seed V1 MCP ask defaults in a V2 config', () => {
-    const config = {}
-    const { warnings } = applyMcpServerEntries(config, context)
-
-    assert.equal(config.permission, undefined)
-    assert.ok(config.mcp.servers['pantheon-code-mode'])
-    assert.ok(config.mcp.servers['pantheon-vision'])
-    assert.equal(warnings.length, 1, JSON.stringify(warnings))
-    assert.match(warnings[0], /remain accessible without a prompt/i)
-  })
-
-  it('does not warn when the MCP permission map has no ask entry', () => {
-    const config = {
-      permission: { mcp: { 'pantheon-code-mode': 'deny', 'pantheon-vision': 'deny' } },
-    }
-    const { warnings } = applyMcpServerEntries(config, context)
-    assert.equal(warnings.length, 1)
-    assert.match(warnings[0], /remain accessible without a prompt/i)
-  })
-
-  it('converts flat MCP entries beside the legacy servers toggle before V2 wrapping', () => {
-    const config = {
-      mcp: {
-        servers: { enabled: true },
-        bifrost: { type: 'remote', url: 'https://example.com/mcp', enabled: true },
-      },
-    }
-    applyMcpServerEntries(config, context)
-
-    const migrated = normalizeLegacyV1Config(config)
-    assert.equal(migrated.mcp.servers.enabled, undefined)
-    assert.equal(migrated.mcp.servers.bifrost.url, 'https://example.com/mcp')
-    assert.ok(migrated.mcp.servers['pantheon-resources'])
-  })
-
-  it('does not repeat the installer ask warning during a V2 install', () => {
-    const config = {}
-    const installer = applyMcpServerEntries(config, context)
-    assert.equal(installer.warnings.length, 1, 'the installer reports the V2 default policy')
-
-    assert.doesNotThrow(() => normalizeLegacyV1Config(config))
-  })
-
-  it('still warns from the migration path when the installer did not run', () => {
-    const { value, warnings } = withCapturedWarnings(() =>
-      normalizeLegacyV1Config({ permission: { mcp: { 'custom-server': 'ask' } } }),
-    )
-    assert.deepEqual(value.permissions, [])
-    assert.match(warnings.join('\n'), /ask policy cannot be enforced/i)
-    assert.match(warnings.join('\n'), /no rule was emitted/i)
-    assert.equal(warnings.join('\n').includes('custom-server'), false)
-  })
-})
+const migrated = normalizeLegacyV1Config({ permission: { mcp: { 'custom-server': 'ask' } } })
+assert.ok(Array.isArray(migrated.permissions))

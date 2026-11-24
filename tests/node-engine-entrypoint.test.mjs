@@ -11,9 +11,8 @@ import { test } from 'node:test'
 // that pass their own env/probe stay deterministic either way.
 process.env.OPENCODE_VERSION = 'v2'
 const ROOT = resolve(import.meta.dirname, '..')
-const CLI = join(ROOT, 'bin', 'pantheon-init.mjs')
+const DOCTOR = join(ROOT, 'scripts', 'doctor.mjs')
 const POSTINSTALL = join(ROOT, 'scripts', 'postinstall.mjs')
-const SYNC_TUI = join(ROOT, 'scripts', 'sync-tui.mjs')
 
 function snapshotTree(root) {
   const result = new Map()
@@ -86,36 +85,28 @@ test('postinstall succeeds but skips all config sync on an unsupported Node runt
     assert.equal(postinstall.status, 0, postinstall.stderr)
     assert.match(postinstall.stderr, /requires Node\.js >= 26\.4\.0/)
     assert.match(postinstall.stderr, /current: 24\.15\.0/)
-
-    const sync = runScript(SYNC_TUI, {
-      version: '24.15.0',
-      cwd: sandbox.project,
-      env: sandbox.env,
-    })
-    assert.equal(sync.status, 0, sync.stderr)
     assert.deepEqual(snapshotTree(sandbox.root), before)
   } finally {
     rmSync(sandbox.root, { recursive: true, force: true })
   }
 })
 
-test('CLI hard-rejects Node 24.15 and 26.3 with manager guidance before setup writes', () => {
+test('doctor classifies Node 24.15 and 26.3 as unsupported before any writes', () => {
   for (const version of ['24.15.0', '26.3.0']) {
     const sandbox = makeSandbox()
     try {
       const before = snapshotTree(sandbox.root)
-      const result = runScript(CLI, {
+      const result = runScript(DOCTOR, {
         version,
-        args: ['init', '--yes', '--headless'],
+        args: ['--target', sandbox.project],
         cwd: sandbox.project,
         env: sandbox.env,
       })
-      assert.notEqual(result.status, 0, `${version} should be rejected`)
       const output = `${result.stdout}\n${result.stderr}`
-      assert.match(output, new RegExp(`requires Node\\.js >= 26\\.4\\.0 \\(current: ${version}\\)`))
-      assert.match(output, /nvm install 26\.4\.0/)
-      assert.match(output, /fnm install 26\.4\.0/)
-      assert.match(output, /volta install node@26\.4\.0/i)
+      assert.match(
+        output,
+        new RegExp(`requires Node\\.js >= 26\\.4\\.0.*${version}|${version}.*26\\.4\\.0`),
+      )
       assert.deepEqual(snapshotTree(sandbox.root), before)
     } finally {
       rmSync(sandbox.root, { recursive: true, force: true })
@@ -123,20 +114,22 @@ test('CLI hard-rejects Node 24.15 and 26.3 with manager guidance before setup wr
   }
 })
 
-test('CLI accepts Node 26.4 and enters the dry-run setup path without writes', () => {
+test('postinstall accepts Node 26.4 and prints native plugin instructions without touching unrelated files', () => {
   const sandbox = makeSandbox()
   try {
-    const before = snapshotTree(sandbox.root)
-    const result = runScript(CLI, {
+    const result = runScript(POSTINSTALL, {
       version: '26.4.0',
-      args: ['init', '--headless', '--dry-run', '--components', 'agents', '--project'],
       cwd: sandbox.project,
       env: sandbox.env,
     })
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
     assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /requires Node\.js >=/)
-    assert.match(result.stdout, /DRY RUN|dry run|plan/i)
-    assert.deepEqual(snapshotTree(sandbox.root), before)
+    assert.match(result.stdout, /opencode plugin add pantheon-opencode/)
+    assert.equal(
+      readFileSync(join(sandbox.config, 'sentinel.json'), 'utf8'),
+      '{"untouched":true}\n',
+    )
+    assert.equal(readFileSync(join(sandbox.project, 'sentinel.txt'), 'utf8'), 'untouched\n')
   } finally {
     rmSync(sandbox.root, { recursive: true, force: true })
   }

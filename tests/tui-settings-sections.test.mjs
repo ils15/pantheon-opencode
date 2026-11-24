@@ -54,7 +54,7 @@ describe('updates section rows', () => {
       .filter((row) => row.id.startsWith('legacy.'))
     assert.deepEqual(
       legacyRows.map((r) => r.id),
-      ['legacy.status', 'legacy.scan', 'legacy.clean'],
+      ['legacy.status', 'legacy.scan', 'legacy.clean', 'legacy.purge'],
     )
     assert.equal(legacyRows.find((r) => r.id === 'legacy.clean')?.action, 'legacy-clean')
   })

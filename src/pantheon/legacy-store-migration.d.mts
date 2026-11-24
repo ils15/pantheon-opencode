@@ -9,8 +9,27 @@ export interface MigrationReport {
 
 export interface MigrateLegacyStoresOptions {
   readonly globalConfigDir?: string
+  readonly env?: NodeJS.ProcessEnv
   readonly dryRun?: boolean
+  readonly isGlobalConfig?: boolean
+  readonly preserveWorkingPythonMcp?: boolean
+  readonly cleanCopiedInstallArtifacts?: boolean
 }
+
+export interface CleanLegacyConfigsResult {
+  readonly hasWorkingPythonMcp: boolean
+  readonly hasNpmNativePlugin: boolean
+  readonly cleanedConfigTags: string[]
+}
+
+export function cleanLegacyOpenCodeConfigs(
+  root: string,
+  options?: {
+    readonly dryRun?: boolean
+    readonly isGlobalConfig?: boolean
+    readonly preserveWorkingPythonMcp?: boolean
+  },
+): CleanLegacyConfigsResult
 
 export function resolveSafeGlobalConfigDir(env?: NodeJS.ProcessEnv): string | undefined
 
@@ -78,3 +97,18 @@ export function scanLegacyArtifacts(options?: ScanLegacyArtifactsOptions): Legac
 export function cleanLegacyArtifacts(
   options?: CleanLegacyArtifactsOptions,
 ): CleanLegacyArtifactsResult
+
+export interface PurgeAllPantheonDataResult {
+  readonly removed: string[]
+  readonly reclaimedBytes: number
+  readonly errors: ReadonlyArray<{ readonly path: string; readonly reason: string }>
+}
+
+export function purgeAllPantheonData(options?: {
+  readonly workspaceDir?: string
+  readonly globalConfigDir?: string
+  readonly env?: NodeJS.ProcessEnv
+  readonly scope?: 'all' | LegacyArtifactScope
+  readonly dryRun?: boolean
+  readonly includeDecisionRouter?: boolean
+}): PurgeAllPantheonDataResult
