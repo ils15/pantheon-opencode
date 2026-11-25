@@ -178,6 +178,7 @@ agents:
     - artifact-management
     - auto-continue
     - codemap
+    - council-agora
     - prompt-refinery
     - instruction-forge
     - context-compression

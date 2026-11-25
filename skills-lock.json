@@ -1,5 +1,5 @@
 {
-  "src/skills/agent-coordination/SKILL.md": "0b002b322c2b35bf11bc3beb56de37a9614311d3883f0fa399f6dcbc5c8758af",
+  "src/skills/agent-coordination/SKILL.md": "75e072223159b49719da78873cb45e07d0be193717d9594dd45678df68f0e940",
   "src/skills/agent-forge/SKILL.md": "cbe09946a59fa45b471828d9de6e7bc5c4b2fa29e0ce48e21d188593ece6c046",
   "src/skills/artifact-management/references/artifact-templates.md": "5ed2154cf3f939bb4330fabeaa2b0f4d40ef1089cf86f3703fcae79dcb702696",
   "src/skills/artifact-management/SKILL.md": "e59982d1c4b74617a6cd4f7882f1f26e70a52e98d9c3244aba4d4de725387d81",
@@ -10,6 +10,7 @@
   "src/skills/code-review-checklist/SKILL.md": "b34c95ae935c2e57b302b68a42606e52d43d078276ad1dbaf0af15ad9ef6d2f8",
   "src/skills/codemap/SKILL.md": "d21b3fa66b931b29dcf1ec0f0fcf1ec28514642a9f33f96e4b2901a0be74c72d",
   "src/skills/context-compression/SKILL.md": "4d8368309ec72fefac69ad5cddd43650647d0bc684b6f8bf3cacc004edb56ef5",
+  "src/skills/council-agora/SKILL.md": "98d7cd1d04e0428b29b2a94769407881797a004833dce19abcbd23ac79ac9a66",
   "src/skills/fast-path-execution/SKILL.md": "040bb97ac5d930dcee47d5d0e2fc1ef637a4762998990475d876ec7f17977c69",
   "src/skills/git-workflow-and-versioning/SKILL.md": "685a94041f1b4ce2a430301f517b89102055696267c369a7e8fb191606659276",
   "src/skills/incremental-implementation/SKILL.md": "28157b3cbb728055d4298ed54e02b7e9c93f13da7bd39ec0bb8806eb96803e03",

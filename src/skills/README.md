@@ -4,7 +4,7 @@
 
 Skills are reference modules loaded on demand by agents. Each skill provides domain-specific knowledge — architecture patterns, security checklists, optimization strategies, and implementation guides. Agents load skills when their task matches the skill's description, keeping context focused and token-efficient.
 
-There are **25 skills** divided into **6 domains**.
+There are **26 skills** divided into **6 domains**.
 
 ## Skills by Domain
 
@@ -12,6 +12,10 @@ There are **25 skills** divided into **6 domains**.
 
 1. **agent-coordination** — `agent-coordination/SKILL.md`
    - Multi-agent orchestration with model routing, category delegation, and sprint management.
+   - Used by: Zeus
+
+2. **council-agora** — `council-agora/SKILL.md`
+   - Structured `#seq` council synthesis, targeted rebuttals, and swarm board handoffs.
    - Used by: Zeus
 
 2. **fast-path-execution** — `fast-path-execution/SKILL.md`
@@ -170,6 +174,7 @@ agent grants, and skill inventory.
 | 23 | agent-forge | Meta | Zeus |
 | 24 | prompt-refinery | Meta | Zeus |
 | 25 | instruction-forge | Meta | Zeus, Athena |
+| 26 | council-agora | Orchestration & Workflow | Zeus |
 
 ---
 

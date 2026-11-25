@@ -35,3 +35,9 @@ For long-running or multi-phase tasks expected to run > 5 turns only:
 Use checkpoints only for long-running or multi-phase work when `context_save` and `context_get` are available. Never add persistence calls for a bounded task.
 Save once at a meaningful boundary using `content=JSON.stringify(state)` and an explicit session ID; `state` must be an object with object-valued `phase`/`goal`/`delegations`/`heartbeat` fields and an array `tail`, and omit an unset `goal`. A successful save needs no immediate read. Checkpoints expire after 4h.
 Read a checkpoint only when resuming a workflow with a known session ID. Do not retrieve it after every dispatch; carry ordinary handoffs in the task context.
+
+## Plugin Stall Watchdog, Peer Handoffs & Ephemeral Workers
+
+- **Watchdog Alerts (`swarm:stall:detected`):** The runtime Plugin Stall Watchdog monitors `PantheonBus` and `BackgroundJobBoard` (`no_progress`, `unreconciled_terminal`, `quota_exhausted`) and appends `[alert]` `BoardMessage` entries (`from: "watchdog"`). Check `pantheon_board(action="status")` or `pantheon_board(action="read", tag="alert")` before re-dispatching stalled jobs.
+- **Peer Verifier Handoffs:** Cite the preceding `#seq` via `replyToSeq` on `pantheon_board` and `@mention` only the next peer (e.g. implementer -> `@themis` verifier); escalate to `@zeus` only on `[done]` or `[blocker]`.
+- **Ephemeral Operation Workers:** For isolated short-lived slice work, use `pantheon_step_ledger(action="spawn_ephemeral")` (claims a `#seq` slot, provisions disposable `.pantheon-worktrees/`, and auto-cleans sub-session/worktree in `finally`).

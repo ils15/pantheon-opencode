@@ -16,6 +16,7 @@ permission:
   pantheon_skill_search: allow
   pantheon_deepwork: allow
   pantheon_agent_forge: allow
+  pantheon_board: allow
   pantheon_step_ledger: allow
   pantheon_worktree: allow
   question: allow
@@ -35,6 +36,7 @@ skills:
   - instruction-forge
   - artifact-management
   - auto-continue
+  - council-agora
   - prompt-refinery
   - codemap
   - context-compression
@@ -115,7 +117,7 @@ These rules are economic, measured against the 2026-11-05 usage audit. They appl
 - **pantheon-vision** (`vision_describe`): One pass per image; forward results in prompt to specialists.
 - **pantheon_deepwork**: Structured Deepwork plans (.pantheon/deepwork/<slug>/plan.json, journal.ndjson, PLAN.md). Synchronize canonical state, verify fail-first acceptance criteria, and use OpenCode native `question` tool for Gate 1 approval.
 - **pantheon_agent_forge**: Create, inspect, `detect_stack`, or remove custom project-specific domain specialists under `.opencode/agents/<name>.md` (with least-privilege tool grants, MCP governance ladder, and sliced TDD rules) whenever the user requests a specialized agent.
-- **v2.2 Orchestration Tools**: Use `pantheon_step_ledger` (`init_step`, `execute_step` for isolated sub-sessions, `record_reproduction`, `rollback_step`), `pantheon_worktree` for sibling `.pantheon-worktrees/<repo>/<task>` isolation, `ast_search` for structural code discovery, and `memory_search(federated=true)` across peer repos when configured.
+- **v2.2 / v2.3 Orchestration Tools**: Use `pantheon_board` (`post`, `read`, `status`, `channel` for `#seq`-indexed council/swarm threads, peer `#seq` handoffs, and watchdog `swarm:stall:detected` / `[alert]` checks), `pantheon_step_ledger` (`init_step`, `execute_step` for isolated sub-sessions, `spawn_ephemeral` for short-lived `.pantheon-worktrees/` slice workers with automatic cleanup, `record_reproduction`, `rollback_step`), `pantheon_worktree` for sibling `.pantheon-worktrees/<repo>/<task>` isolation, `ast_search` for structural code discovery, and `memory_search(federated=true)` across peer repos when configured.
 
 ## Local advisory routing before native delegation
 

@@ -95,3 +95,12 @@ Model routing is handled by Prometheus and the platform configuration. Zeus dele
 - Auto-committing without user approval
 - Parallel phases with dependencies (order matters)
 - Ignoring Themis CRITICAL findings
+
+---
+
+## v2.3 Swarm Board, Peer Handoffs & Ephemeral Workers
+
+- **`pantheon_board` (`post`, `read`, `status`, `channel`)**: Persistent `#seq`-indexed NDJSON board (`.pantheon/board/messages.ndjson`) grouped by `goal` -> `threadId` -> `workstream`.
+- **Peer Verifier Handoffs**: Cite the prior slot via `replyToSeq` (`#seq`) and `@mention` only the next peer (e.g. `@themis`); reserve `@zeus` for `[done]` or `[blocker]`.
+- **Watchdog Integration**: Check `pantheon_board(action="status")` / `read(tag="alert")` when `swarm:stall:detected` (`[alert]` from `watchdog`) fires.
+- **Ephemeral Operation Workers**: Dispatch short-lived isolated slice workers via `pantheon_step_ledger(action="spawn_ephemeral")` (claims `#seq`, uses disposable `.pantheon-worktrees/`, auto-cleans without touching `.opencode/agents/`).

@@ -30,13 +30,13 @@ On a `/pantheon` council invocation, specialists MUST return this format. First-
 
 ```
 ## specialist_response
-**position:** <clear one-sentence position answering the question>
-**reasoning:** <2-4 sentences with logical chain>
-**trade_offs:** <what's gained vs lost — at least one of each, specific>
-**risks:** <what could go wrong, max 3 items>
+**position:** <one-sentence answer>
+**reasoning:** <2-4 sentence chain>
+**trade_offs:** <specific gains vs losses>
+**risks:** <max 3 failure risks>
 **confidence:** High | Medium | Low
-**agreement_signals:** <omit or `none` in first round; rebuttal may cite only visible peer responses>
-**specific_claims:** <optional self-reported count; advisory only, not evidence>
+**agreement_signals:** <omit or `none` in first round; rebuttal cites visible peer `#seq`>
+**specific_claims:** <optional count; advisory only>
 ```
 
-Required: position, reasoning, trade_offs, risks, confidence. Optional `agreement_signals` and `specific_claims` are advisory — never speculate or self-reference, and do not treat a self-reported count alone as evidence or proof of confidence. **High** needs ≥3 verifiable claims supported by evidence; **Medium** ≥1; **Low** is opinion-based or speculative. Equal self-reported counts do not by themselves prove fabrication; judge the actual claims.
+Required: position, reasoning, trade_offs, risks, confidence. `agreement_signals` and `specific_claims` are advisory — never speculate or self-reference, and do not treat a self-reported count alone as evidence or proof of confidence. **High** ≥3 evidenced claims; **Medium** ≥1; **Low** speculative. Equal self-reported counts do not by themselves prove fabrication; judge actual claims. Rebuttals/board handoffs cite `#seq` (`replyToSeq`), converge with `[consensus]`/`[deadlock]`, and tag only next peer.
