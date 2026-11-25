@@ -1,0 +1,3417 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multi-agent orchestration framework for OpenCode — 8 canonical agents, on-demand ephemeral workers, and 26 skills">
+      
+      
+      
+        <link rel="canonical" href="https://ils15.github.io/pantheon-opencode/v2.3.0/guides/cookbook/">
+      
+      
+        <link rel="prev" href="../vision/">
+      
+      
+        <link rel="next" href="../execution-modes/">
+      
+      
+        
+          <link rel="alternate" href="/pantheon-opencode/latest/" hreflang="en">
+        
+          <link rel="alternate" href="/pantheon-opencode/latest/pt-BR/" hreflang="pt">
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
+    
+    
+      
+        <title>Practical Cookbook - Pantheon</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#pantheon-cookbook-everyday-practical-recipes" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Pantheon" class="md-header__button md-logo" aria-label="Pantheon" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Pantheon
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Practical Cookbook
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="Select language">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="/pantheon-opencode/latest/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="/pantheon-opencode/latest/pt-BR/" hreflang="pt" class="md-select__link">
+              Português (Brasil)
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ils15/pantheon-opencode" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../OVERVIEW/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Overview
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../INSTALLATION/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../first-project/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Guides & Tutorials
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../COMPATIBILITY/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Compatibility
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../SETTINGS/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Settings & TUI
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../ARCHITECTURE/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Architecture
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../agents/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Agents & Skills
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../PERMISSIONS-QUALITY-DELEGATION/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Permissions, Gates & Delegation
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../opencode/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  OpenCode 2.x
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../MCP/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  MCP
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../mcp-tools/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  MCP Tools
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../MEMORY/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Memory
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../PLATFORMS/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Platforms
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/local-decision-router/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../RELEASING/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Release Process
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../BRANCH-PROTECTION/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Branch Protection
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../pt-BR/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Documentação (Português)
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="https://github.com/ils15/pantheon-opencode/blob/main/CONTRIBUTING.md" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Contributing
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Pantheon" class="md-nav__button md-logo" aria-label="Pantheon" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Pantheon
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ils15/pantheon-opencode" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../OVERVIEW/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../INSTALLATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../QUICKSTART/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../UPGRADING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Upgrading
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../UPGRADING.pt-BR/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Upgrading (Português)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides & Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides & Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../first-project/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Project (End-to-End)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli-tool/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fast CLI Utility (@talos)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../AGENT-CAPABILITY-MATRIX/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Capability Matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deepwork/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deepwork Blueprint
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vision/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pantheon Vision
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Practical Cookbook
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Practical Cookbook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-0-zero-init-setup-safe-updates-opencode-2x" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 0: Zero-Init Setup &amp; Safe Updates (OpenCode 2.x)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-1-full-stack-feature-with-tdd-quality-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 1: Full-Stack Feature with TDD &amp; Quality Gates
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-2-express-1-turn-fix-hermes-spawn_ephemeral-hotfix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 2: Express 1-Turn Fix (@hermes / spawn_ephemeral hotfix)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-3-bugfix-tdd-with-mechanical-red-gate-auto-rollback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 3: Bugfix TDD with Mechanical RED Gate &amp; Auto-Rollback
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-4-structural-ast-search-refactoring-ast_search-ast_rewrite" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 4: Structural AST Search &amp; Refactoring (ast_search / ast_rewrite)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-5-database-migrations-query-optimization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 5: Database Migrations &amp; Query Optimization
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-6-visual-refactoring-multimodal-diagnostics-pantheon-vision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 6: Visual Refactoring &amp; Multimodal Diagnostics (/pantheon-vision)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-7-safe-read-only-exploration-apollo" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 7: Safe Read-Only Exploration (@apollo)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-8-security-audit-typed-verdict-remediation-pantheon-audit-themis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 8: Security Audit &amp; Typed Verdict Remediation (/pantheon-audit + @themis)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-9-ephemeral-archetypes-ai-pipeline-infra-ci-observability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 9: Ephemeral Archetypes (ai-pipeline, infra-ci, observability)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-10-council-arbitration-strategic-deepwork-pantheon-pantheon-deepwork-pantheon_worktree" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 10: Council Arbitration &amp; Strategic Deepwork (/pantheon, /pantheon-deepwork, pantheon_worktree)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-11-persistent-memory-focus-cross-repo-federation-pantheon-focus-pantheon-consolidate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 11: Persistent Memory, Focus &amp; Cross-Repo Federation (/pantheon-focus, /pantheon-consolidate)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-12-custom-stack-specialists-model-overrides-pruning-pantheon-forge-pantheon-model-pantheon-optimize" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 12: Custom Stack Specialists, Model Overrides &amp; Pruning (/pantheon-forge, /pantheon-model, /pantheon-optimize)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-13-real-time-terminal-mission-control-pantheon-cockpit-pantheon-artifacts-pantheon-whats-new" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 13: Real-Time Terminal Mission Control (/pantheon-cockpit, /pantheon-artifacts, /pantheon-whats-new)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-14-configuration-legacy-cache-cleanup-health-checks-pantheon-settings-pantheon-updates-doctor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 14: Configuration, Legacy Cache Cleanup &amp; Health Checks (/pantheon-settings, /pantheon-updates, doctor)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quick-reference-all-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick Reference: All Commands
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../execution-modes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execution Modes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../COMPATIBILITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../SETTINGS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Settings & TUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents & Skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../PERMISSIONS-QUALITY-DELEGATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Permissions, Gates & Delegation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../opencode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenCode 2.x
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../MCP/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mcp-tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP Tools
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../MEMORY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../PLATFORMS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Platforms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_15" >
+        
+          
+          <label class="md-nav__link" for="__nav_15" id="__nav_15_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_15_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_15">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/local-decision-router/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Decision Router
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/native-decisions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native Decisions (Jev)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/offline-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Offline Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/skill-search-design/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Skill Search Design
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/env-vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/code-mode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code Mode
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_16" >
+        
+          
+          <label class="md-nav__link" for="__nav_16" id="__nav_16_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Process
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_16_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_16">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Release Process
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../RELEASING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Process
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/highlights/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Highlights
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../BRANCH-PROTECTION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Branch Protection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_18" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../pt-BR/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentação (Português)
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_18" id="__nav_18_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_18_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_18">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Documentação (Português)
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_18_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_18_2" id="__nav_18_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Começando
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_18_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_18_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Começando
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/QUICKSTART/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Início Rápido
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/INSTALLATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Instalação
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../UPGRADING.pt-BR/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Upgrading (Português)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_18_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_18_3" id="__nav_18_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guias & Tutoriais
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_18_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_18_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guias & Tutoriais
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/guides/first-project/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Primeiro Projeto (Ponta a Ponta)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/guides/cli-tool/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Utilitário CLI (@talos)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/AGENT-CAPABILITY-MATRIX/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Matriz de Agentes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/guides/deepwork/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blueprint Deepwork
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/guides/vision/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visão Multimodal
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/guides/cookbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Livro de Receitas (Cookbook)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_18_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_18_4" id="__nav_18_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sistema & Ferramentas
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_18_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_18_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Sistema & Ferramentas
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Arquitetura
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/COMPATIBILITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibilidade
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/MCP/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Servidores MCP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/MEMORY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memória
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_18_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_18_5" id="__nav_18_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Governança & Release
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_18_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_18_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Governança & Release
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/RELEASING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Processo de Release
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/BRANCH-PROTECTION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Proteção da Branch main
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://github.com/ils15/pantheon-opencode/blob/main/CONTRIBUTING.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-0-zero-init-setup-safe-updates-opencode-2x" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 0: Zero-Init Setup &amp; Safe Updates (OpenCode 2.x)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-1-full-stack-feature-with-tdd-quality-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 1: Full-Stack Feature with TDD &amp; Quality Gates
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-2-express-1-turn-fix-hermes-spawn_ephemeral-hotfix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 2: Express 1-Turn Fix (@hermes / spawn_ephemeral hotfix)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-3-bugfix-tdd-with-mechanical-red-gate-auto-rollback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 3: Bugfix TDD with Mechanical RED Gate &amp; Auto-Rollback
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-4-structural-ast-search-refactoring-ast_search-ast_rewrite" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 4: Structural AST Search &amp; Refactoring (ast_search / ast_rewrite)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-5-database-migrations-query-optimization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 5: Database Migrations &amp; Query Optimization
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-6-visual-refactoring-multimodal-diagnostics-pantheon-vision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 6: Visual Refactoring &amp; Multimodal Diagnostics (/pantheon-vision)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-7-safe-read-only-exploration-apollo" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 7: Safe Read-Only Exploration (@apollo)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-8-security-audit-typed-verdict-remediation-pantheon-audit-themis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 8: Security Audit &amp; Typed Verdict Remediation (/pantheon-audit + @themis)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-9-ephemeral-archetypes-ai-pipeline-infra-ci-observability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 9: Ephemeral Archetypes (ai-pipeline, infra-ci, observability)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-10-council-arbitration-strategic-deepwork-pantheon-pantheon-deepwork-pantheon_worktree" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 10: Council Arbitration &amp; Strategic Deepwork (/pantheon, /pantheon-deepwork, pantheon_worktree)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-11-persistent-memory-focus-cross-repo-federation-pantheon-focus-pantheon-consolidate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 11: Persistent Memory, Focus &amp; Cross-Repo Federation (/pantheon-focus, /pantheon-consolidate)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-12-custom-stack-specialists-model-overrides-pruning-pantheon-forge-pantheon-model-pantheon-optimize" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 12: Custom Stack Specialists, Model Overrides &amp; Pruning (/pantheon-forge, /pantheon-model, /pantheon-optimize)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-13-real-time-terminal-mission-control-pantheon-cockpit-pantheon-artifacts-pantheon-whats-new" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 13: Real-Time Terminal Mission Control (/pantheon-cockpit, /pantheon-artifacts, /pantheon-whats-new)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-14-configuration-legacy-cache-cleanup-health-checks-pantheon-settings-pantheon-updates-doctor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 14: Configuration, Legacy Cache Cleanup &amp; Health Checks (/pantheon-settings, /pantheon-updates, doctor)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quick-reference-all-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick Reference: All Commands
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/ils15/pantheon-opencode/edit/main/docs/guides/cookbook.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<!-- pantheon:cookbook-version v2.3 -->
+<h1 id="pantheon-cookbook-everyday-practical-recipes">Pantheon Cookbook: Everyday Practical Recipes<a class="headerlink" href="#pantheon-cookbook-everyday-practical-recipes" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>🇧🇷 <strong>Versão em Português disponível:</strong> <a href="../../pt-BR/guides/cookbook/">Leia em Português</a></p>
+</blockquote>
+<p>This practical cookbook gathers copy-paste recipes for everyday development in <strong>Pantheon <code>v2.3.0</code> (<code>OpenCode 2.x</code> native)</strong> — covering zero-init setup, the <strong>8 canonical agents</strong> (+ <code>spawn_ephemeral</code> slice workers), <strong>31 native in-process tools</strong>, <strong>9 server commands</strong>, and <strong>5 interactive TUI surfaces</strong>.</p>
+<hr />
+<h2 id="recipe-0-zero-init-setup-safe-updates-opencode-2x">Recipe 0: Zero-Init Setup &amp; Safe Updates (<code>OpenCode 2.x</code>)<a class="headerlink" href="#recipe-0-zero-init-setup-safe-updates-opencode-2x" title="Permanent link">&para;</a></h2>
+<p><strong>Scenario:</strong> Enable Pantheon across any project or git worktree without committing extra framework files to git.</p>
+<p><strong>Command:</strong>
+<div class="highlight"><pre><span></span><code>opencode<span class="w"> </span>plugin<span class="w"> </span>add<span class="w"> </span>pantheon-opencode@2.2.0
+<span class="c1"># or update later:</span>
+opencode<span class="w"> </span>plugin<span class="w"> </span>update<span class="w"> </span>pantheon-opencode
+</code></pre></div></p>
+<p><strong>Why this works:</strong>
+- All <strong>8 canonical agents</strong>, <strong>9 server commands</strong>, global instructions, and <strong>31 native TypeScript tools</strong> load directly in memory.
+- Inside the TUI, run <code>/pantheon-updates</code> to check registry updates or clean stale npm plugin caches cleanly.</p>
+<hr />
+<h2 id="recipe-1-full-stack-feature-with-tdd-quality-gates">Recipe 1: Full-Stack Feature with TDD &amp; Quality Gates<a class="headerlink" href="#recipe-1-full-stack-feature-with-tdd-quality-gates" title="Permanent link">&para;</a></h2>
+<p><strong>Scenario:</strong> Implement a complete feature (e.g., CSV export endpoint with schema validation and tests).</p>
+<p><strong>Prompt:</strong>
+<div class="highlight"><pre><span></span><code>@zeus Add CSV export support to /reports with unit tests and schema validation.
+</code></pre></div></p>
+<p><strong>Workflow:</strong>
+1. <code>@zeus</code> analyzes scope, optionally runs <code>detect_stack</code>, and delegates planning to <code>@athena</code>.
+2. <code>@athena</code> defines phases and acceptance criteria; ambiguities use OpenCode's native <code>question</code> dialog.
+3. <code>@hermes</code> executes steps tracked in <code>pantheon_step_ledger</code> (including isolated <code>execute_step</code> sub-sessions when appropriate) — RED tests first, then GREEN implementation with post-edit LSP diagnostics (<code>tsc</code> / <code>pyright</code> / stdio / pooled TCP).
+4. <code>@themis</code> runs linters, security scans, and emits a structured verdict via <code>pantheon_review_verdict</code>.</p>
+<hr />
+<h2 id="recipe-2-express-1-turn-fix-hermes-spawn_ephemeral-hotfix">Recipe 2: Express 1-Turn Fix (<code>@hermes</code> / <code>spawn_ephemeral</code> <code>hotfix</code>)<a class="headerlink" href="#recipe-2-express-1-turn-fix-hermes-spawn_ephemeral-hotfix" title="Permanent link">&para;</a></h2>
+<p><strong>Scenario:</strong> Fix a CSS styling bug, a typo, or a missing import without planning ceremony.</p>
+<p><strong>Prompt:</strong>
+<div class="highlight"><pre><span></span><code>@hermes Update the login submit button background from blue to emerald green in login.css using hashline_edit
+</code></pre></div></p>
+<p><strong>Why use <code>@hermes</code> or <code>spawn_ephemeral</code>?</strong>
+Bounded edits go straight to <code>@hermes</code> (or <code>@zeus</code> via <code>pantheon_step_ledger(action="spawn_ephemeral", role="hotfix")</code> for isolated worktree execution) using <code>hashline_edit</code> and immediate verification.</p>
+<hr />
+<h2 id="recipe-3-bugfix-tdd-with-mechanical-red-gate-auto-rollback">Recipe 3: Bugfix TDD with Mechanical <code>RED</code> Gate &amp; Auto-Rollback<a class="headerlink" href="#recipe-3-bugfix-tdd-with-mechanical-red-gate-auto-rollback" title="Permanent link">&para;</a></h2>
+<p><strong>Scenario:</strong> Fix a verified production regression without letting agents skip failure reproduction or leave a broken tree behind.</p>
+<p><strong>Prompt:</strong>
+<div class="highlight"><pre><span></span><code>@zeus Fix the off-by-one tax rounding bug in src/billing/calc.ts. Enforce a failing reproduction test first before editing production code.
+</code></pre></div></p>
+<p><strong>Workflow (<code>pantheon_step_ledger</code>):</strong>
+1. <code>@zeus</code> initializes a <code>bugfix</code> step (<code>init_step</code>) capturing a non-invasive <code>GIT_INDEX_FILE</code> <code>baselineTree</code> snapshot without touching <code>.git/index</code>.
+2. <code>tool.execute.before</code> blocks edits (<code>edit</code>, <code>write</code>, <code>hashline_edit</code>, <code>ast_rewrite</code>) on production files by <code>@hermes</code> while allowing edits to test files.
+3. Once a failing test is recorded via <code>record_reproduction</code> (<code>exitCode !== 0</code>), production edits unlock automatically.
+4. If verification fails repeatedly and <code>ThemisReflexController</code> escalates, <code>pantheon_step_ledger</code> rolls back cleanly to <code>baselineTree</code> (<code>rollback_step</code> is also available manually).</p>
+<hr />
+<h2 id="recipe-4-structural-ast-search-refactoring-ast_search-ast_rewrite">Recipe 4: Structural AST Search &amp; Refactoring (<code>ast_search</code> / <code>ast_rewrite</code>)<a class="headerlink" href="#recipe-4-structural-ast-search-refactoring-ast_search-ast_rewrite" title="Permanent link">&para;</a></h2>
+<p><strong>Scenario:</strong> Rename or migrate a function call pattern safely across dozens of TypeScript/JavaScript files without matching string literals or comments.</p>
+<p><strong>Prompt:</strong>
+<div class="highlight"><pre><span></span><code>@hermes Use ast_search to find all calls to legacyFetch($URL, $$$ARGS) across src/ and preview an ast_rewrite with dryRun=true before applying.
+</code></pre></div></p>
+<p><strong>Why use <code>ast_search</code> / <code>ast_rewrite</code>?</strong>
+- Ignores comments and strings automatically, supporting <code>$VAR</code> single-node and <code>$$$ARGS</code> variadic captures.
+- Enforces strict workspace symlink confinement and post-write LSP + diff-scoped lint diagnostics (<code>[LSP-Diagnostics]</code>) in the exact same turn.</p>
+<hr />
+<h2 id="recipe-5-database-migrations-query-optimization">Recipe 5: Database Migrations &amp; Query Optimization<a class="headerlink" href="#recipe-5-database-migrations-query-optimization" title="Permanent link">&para;</a></h2>
+<p><strong>Scenario:</strong> Add a new table or column with proper indexing and foreign key constraints without N+1 query pitfalls.</p>
+<p><strong>Prompt:</strong>
+<div class="highlight"><pre><span></span><code>@demeter Create an Alembic migration adding the 'user_preferences' table with a foreign key to 'users' and an index on 'created_at'.
+</code></pre></div></p>
+<p><strong>Why use @demeter?</strong>
+<code>@demeter</code> enforces SQLAlchemy, Prisma, Alembic, and PostgreSQL best practices, referential integrity, and index coverage.</p>
+<hr />
+<h2 id="recipe-6-visual-refactoring-multimodal-diagnostics-pantheon-vision">Recipe 6: Visual Refactoring &amp; Multimodal Diagnostics (<code>/pantheon-vision</code>)<a class="headerlink" href="#recipe-6-visual-refactoring-multimodal-diagnostics-pantheon-vision" title="Permanent link">&para;</a></h2>
+<p><strong>Scenario:</strong> Rebuild or inspect UI components from a screenshot or verify multimodal vision status.</p>
+<p><strong>Prompt:</strong>
+<em>(Paste screenshot with Ctrl+V / Cmd+V into chat, or run <code>/pantheon-vision</code> to check vision configuration)</em>
+<div class="highlight"><pre><span></span><code>@aphrodite Refactor this metrics card component to match the spacing, typography, and contrast in the pasted screenshot.
+</code></pre></div></p>
+<p><strong>Workflow:</strong>
+1. <code>/pantheon-vision</code> shows configured multimodal vision providers and gateway status.
+2. Pantheon Vision extracts structured visual tokens once via <code>vision_describe</code> / <code>session.context</code>, avoiding repeated image bytes in prompts.
+3. <code>@aphrodite</code> updates the UI components with WCAG AA contrast compliance.</p>
+<hr />
+<h2 id="recipe-7-safe-read-only-exploration-apollo">Recipe 7: Safe Read-Only Exploration (<code>@apollo</code>)<a class="headerlink" href="#recipe-7-safe-read-only-exploration-apollo" title="Permanent link">&para;</a></h2>
+<p><strong>Scenario:</strong> Trace authentication, data flows, or symbol callers across files with zero risk of edits.</p>
+<p><strong>Prompt:</strong>
+<div class="highlight"><pre><span></span><code>@apollo Map where incoming WebSocket tokens are validated using code_index, code_query, and code_neighbors.
+</code></pre></div></p>
+<p><strong>Why use @apollo?</strong>
+<code>@apollo</code> is strictly read-only (<code>edit: deny</code>, <code>bash: deny</code>, <code>ast_rewrite: deny</code>). Combining <code>code_index</code>, <code>code_query</code>, and <code>code_neighbors</code> avoids broad recursive globs and auto-prunes deleted files.</p>
+<hr />
+<h2 id="recipe-8-security-audit-typed-verdict-remediation-pantheon-audit-themis">Recipe 8: Security Audit &amp; Typed Verdict Remediation (<code>/pantheon-audit</code> + <code>@themis</code>)<a class="headerlink" href="#recipe-8-security-audit-typed-verdict-remediation-pantheon-audit-themis" title="Permanent link">&para;</a></h2>
+<p><strong>Scenario:</strong> Audit branch changes before merging and auto-trigger fixes on blocker findings.</p>
+<p><strong>Prompts:</strong>
+<div class="highlight"><pre><span></span><code>/pantheon-audit
+</code></pre></div>
+or directly:
+<div class="highlight"><pre><span></span><code>@themis Audit changes on this branch against OWASP Top 10, verify tests/lint, and record the final pantheon_review_verdict.
+</code></pre></div></p>
+<p><strong>Workflow:</strong>
+- <code>/pantheon-audit</code> runs zero-token static heuristics followed by <code>@themis</code>'s 3-layer review.
+- <code>@themis</code> calls <code>pantheon_review_verdict</code> with structured verdicts: <code>APPROVE</code>, <code>APPROVE_WITH_NOTES</code>, or <code>BLOCK</code>.
+- When <code>BLOCK</code> is emitted, Pantheon automatically dispatches up to 2 remediation turns into the parent orchestration session with actionable findings.</p>
+<hr />
+<h2 id="recipe-9-ephemeral-archetypes-ai-pipeline-infra-ci-observability">Recipe 9: Ephemeral Archetypes (<code>ai-pipeline</code>, <code>infra-ci</code>, <code>observability</code>)<a class="headerlink" href="#recipe-9-ephemeral-archetypes-ai-pipeline-infra-ci-observability" title="Permanent link">&para;</a></h2>
+<p><strong>Scenarios:</strong> Build vector RAG retrieval pipelines or multi-stage container builds &amp; GitHub Actions workflows via isolated <code>spawn_ephemeral</code> workers.</p>
+<p><strong>Prompts:</strong>
+<div class="highlight"><pre><span></span><code>@zeus Run spawn_ephemeral(role="ai-pipeline") to implement a vector search pipeline using embeddings and pgvector with batched ingestion.
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>@zeus Run spawn_ephemeral(role="infra-ci") to create a multi-stage Dockerfile for this service and a GitHub Actions PR workflow.
+</code></pre></div></p>
+<hr />
+<h2 id="recipe-10-council-arbitration-strategic-deepwork-pantheon-pantheon-deepwork-pantheon_worktree">Recipe 10: Council Arbitration &amp; Strategic Deepwork (<code>/pantheon</code>, <code>/pantheon-deepwork</code>, <code>pantheon_worktree</code>)<a class="headerlink" href="#recipe-10-council-arbitration-strategic-deepwork-pantheon-pantheon-deepwork-pantheon_worktree" title="Permanent link">&para;</a></h2>
+<p><strong>Scenarios:</strong> Arbitrate high-stakes design trade-offs or execute multi-phase refactors safely in isolated git worktrees.</p>
+<p><strong>Council prompt:</strong>
+<div class="highlight"><pre><span></span><code>/pantheon Should we use Server-Sent Events (SSE) or WebSockets for live status updates in our dashboard?
+</code></pre></div></p>
+<p><strong>Deepwork + Worktree prompt:</strong>
+<div class="highlight"><pre><span></span><code>/pantheon-deepwork Migrate session authentication to rotating refresh tokens using pantheon_worktree isolation and Deepwork checkpoints.
+</code></pre></div></p>
+<p><strong>How it runs:</strong>
+- Parallel tasks isolate cleanly inside <code>&lt;project-parent&gt;/.pantheon-worktrees/&lt;repo&gt;/&lt;task&gt;</code> via <code>pantheon_worktree</code> and <code>ctx.worktree.transform</code>.
+- Linked git worktrees automatically share the primary repository's <code>.pantheon/</code> knowledge store (<code>PANTHEON_ISOLATE_WORKTREE_MEMORY=1</code> opts out).
+- Plan artifacts save to <code>.pantheon/deepwork/&lt;slug&gt;/PLAN.md</code> and remain clickable directly from the Home/Sidebar links.</p>
+<hr />
+<h2 id="recipe-11-persistent-memory-focus-cross-repo-federation-pantheon-focus-pantheon-consolidate">Recipe 11: Persistent Memory, Focus &amp; Cross-Repo Federation (<code>/pantheon-focus</code>, <code>/pantheon-consolidate</code>)<a class="headerlink" href="#recipe-11-persistent-memory-focus-cross-repo-federation-pantheon-focus-pantheon-consolidate" title="Permanent link">&para;</a></h2>
+<p><strong>Scenario:</strong> Keep goals sharp across compactions and search architectural decisions stored in peer repositories.</p>
+<p><strong>Commands &amp; Tools:</strong>
+- <strong><code>/pantheon-focus</code></strong> — inspect or update durable session goals (<code>goal_create</code>, <code>goal_get</code>, <code>goal_update</code>, <code>goal_done</code>).
+- <strong><code>/pantheon-consolidate</code></strong> — compact, deduplicate, and merge local <code>node:sqlite</code> FTS5 memory entries.
+- <strong><code>memory_search</code> with federation</strong> — set <code>PANTHEON_FEDERATED_REPOS</code> or <code>~/.pantheon/federation.json</code> so <code>memory_search(federated=true)</code> queries peer <code>.pantheon/memory/memory.db</code> stores strictly read-only.</p>
+<hr />
+<h2 id="recipe-12-custom-stack-specialists-model-overrides-pruning-pantheon-forge-pantheon-model-pantheon-optimize">Recipe 12: Custom Stack Specialists, Model Overrides &amp; Pruning (<code>/pantheon-forge</code>, <code>/pantheon-model</code>, <code>/pantheon-optimize</code>)<a class="headerlink" href="#recipe-12-custom-stack-specialists-model-overrides-pruning-pantheon-forge-pantheon-model-pantheon-optimize" title="Permanent link">&para;</a></h2>
+<p><strong>Scenario:</strong> Tailor project agents to your exact stack (<code>Node</code>, <code>Python</code>, <code>Rust</code>, <code>Go</code>), tune per-agent models, or prune stale artifacts.</p>
+<p><strong>Commands:</strong>
+- <strong><code>/pantheon-forge</code></strong> — runs <code>detect_stack</code> (<code>package.json</code>, <code>pyproject.toml</code>, <code>requirements.txt</code>, <code>Cargo.toml</code>, <code>go.mod</code>) and scaffolds specialized agents into <code>.opencode/agents/</code> via <code>pantheon_agent_forge</code>.
+- <strong><code>/pantheon-model</code></strong> — inspect or configure per-agent model overrides cleanly in <code>active-preset.json</code>.
+- <strong><code>/pantheon-optimize</code></strong> — analyze and prune stale Deepwork artifacts, leftover worktrees, and context overhead.</p>
+<hr />
+<h2 id="recipe-13-real-time-terminal-mission-control-pantheon-cockpit-pantheon-artifacts-pantheon-whats-new">Recipe 13: Real-Time Terminal Mission Control (<code>/pantheon-cockpit</code>, <code>/pantheon-artifacts</code>, <code>/pantheon-whats-new</code>)<a class="headerlink" href="#recipe-13-real-time-terminal-mission-control-pantheon-cockpit-pantheon-artifacts-pantheon-whats-new" title="Permanent link">&para;</a></h2>
+<p><strong>Scenario:</strong> Monitor active subagents, gates, Step-Ledger state, Mermaid plans, and release updates without leaving OpenCode.</p>
+<p><img alt="Pantheon Mission Control Cockpit Flightdeck tab" src="../../assets/tui/cockpit-flightdeck.png" /></p>
+<ul>
+<li><strong><code>/pantheon-cockpit</code></strong> (or <code>/cockpit</code>) — opens the 3-tab Mission Control dashboard:</li>
+<li><code>1 Overview</code>: token velocity, context meter, runtime health (<code>Native Tools (31)</code>), and topology map.</li>
+<li><code>2 Swarm</code>: subagent concurrency Gantt timeline, per-agent cost breakdown, <strong>Goal -&gt; Threads -&gt; Workstreams</strong> grouping from <code>pantheon_board</code> (<code>#seq</code> refs and ephemeral worker badges), and the ranked <strong>Attention Queue</strong> (<code>decision &gt; failure &gt; review &gt; stuck &gt; quota</code>).</li>
+<li><code>3 Flightdeck</code>: <code>GATE</code> safety/guardrail matrix, <code>Step-Ledger</code> states (<code>spawn_ephemeral</code> + <code>pantheon_board</code> watchdog alerts), live cross-process event stream, and <strong><code>x</code> Export Replay Trace</strong> to <code>.pantheon/reports/</code>.</li>
+<li><strong><code>/pantheon-artifacts</code></strong> (or <code>/artifacts</code>) — browse project plans/reports and inspect <code>flowchart</code>, <code>sequenceDiagram</code>, and <code>stateDiagram</code> Mermaid diagrams rendered natively as Unicode terminal boxes.</li>
+<li><strong><code>/pantheon-whats-new</code></strong> — review curated release highlights cleanly inside OpenCode.</li>
+</ul>
+<hr />
+<h2 id="recipe-14-configuration-legacy-cache-cleanup-health-checks-pantheon-settings-pantheon-updates-doctor">Recipe 14: Configuration, Legacy Cache Cleanup &amp; Health Checks (<code>/pantheon-settings</code>, <code>/pantheon-updates</code>, <code>doctor</code>)<a class="headerlink" href="#recipe-14-configuration-legacy-cache-cleanup-health-checks-pantheon-settings-pantheon-updates-doctor" title="Permanent link">&para;</a></h2>
+<p><strong>Scenario:</strong> Inspect active gates/autonomy presets, purge outdated plugin caches, or diagnose host integration issues.</p>
+<ul>
+<li><strong><code>/pantheon-settings</code></strong> — opens the interactive 10-tab configuration panel (<code>Gates</code>, <code>Decision</code>, <code>Preset</code>, <code>TUI</code>, <code>Autonomy</code>, <code>J1 Safety</code>, <code>Updates</code>, <code>Changelog</code>, <code>Doctor</code>, <code>About</code>).</li>
+<li><strong><code>/pantheon-updates</code></strong> — opens directly on <strong>Updates &amp; Cleanup</strong>, checking npm for newer Pantheon releases and removing stale coexisting <code>~/.cache/opencode/npm/pantheon-opencode*</code> caches.</li>
+<li><strong>CLI diagnostics:</strong>
+  <div class="highlight"><pre><span></span><code>npx<span class="w"> </span>pantheon-opencode<span class="w"> </span>doctor
+</code></pre></div></li>
+</ul>
+<hr />
+<h2 id="quick-reference-all-commands">Quick Reference: All Commands<a class="headerlink" href="#quick-reference-all-commands" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Surface</th>
+<th>Commands</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Server Commands</strong></td>
+<td><code>/pantheon</code>, <code>/pantheon-deepwork</code>, <code>/pantheon-audit</code>, <code>/pantheon-consolidate</code>, <code>/pantheon-focus</code>, <code>/pantheon-forge</code>, <code>/pantheon-model</code>, <code>/pantheon-optimize</code>, <code>/pantheon-vision</code></td>
+</tr>
+<tr>
+<td><strong>TUI Commands</strong></td>
+<td><code>/pantheon-cockpit</code>, <code>/pantheon-artifacts</code>, <code>/pantheon-settings</code>, <code>/pantheon-updates</code>, <code>/pantheon-whats-new</code></td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+  
+    
+  
+  
+    
+  
+
+
+  <aside class="md-source-file">
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Last update">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="November 25, 2026 15:07:29 UTC">November 25, 2026</span>
+  </span>
+
+    
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Created">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M14.47 15.08 11 13V7h1.5v5.25l3.08 1.83c-.41.28-.79.62-1.11 1m-1.39 4.84c-.36.05-.71.08-1.08.08-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8c0 .37-.03.72-.08 1.08.69.1 1.33.32 1.92.64.1-.56.16-1.13.16-1.72 0-5.5-4.5-10-10-10S2 6.5 2 12s4.47 10 10 10c.59 0 1.16-.06 1.72-.16-.32-.59-.54-1.23-.64-1.92M18 15v3h-3v2h3v3h2v-3h3v-2h-3v-3z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="November 13, 2026 13:55:59 UTC">November 13, 2026</span>
+  </span>
+
+    
+    
+    
+  </aside>
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/ils15/pantheon-opencode" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "navigation.top", "search.highlight", "content.action.edit"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>
