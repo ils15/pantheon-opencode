@@ -1,9 +1,9 @@
-<!-- pantheon:cookbook-version v2.2 -->
+<!-- pantheon:cookbook-version v2.3 -->
 # Pantheon Cookbook: Everyday Practical Recipes
 
 > 🇧🇷 **Versão em Português disponível:** [Leia em Português](../pt-BR/guides/cookbook.md)
 
-This practical cookbook gathers copy-paste recipes for everyday development in **Pantheon `v2.2.0` (`OpenCode 2.x` native)** — covering zero-init setup, the **14 specialist agents**, **30 native in-process tools**, **9 server commands**, and **5 interactive TUI surfaces**.
+This practical cookbook gathers copy-paste recipes for everyday development in **Pantheon `v2.3.0` (`OpenCode 2.x` native)** — covering zero-init setup, the **14 specialist agents**, **31 native in-process tools**, **9 server commands**, and **5 interactive TUI surfaces**.
 
 ---
 
@@ -216,9 +216,9 @@ or directly:
 ![Pantheon Mission Control Cockpit Flightdeck tab](../assets/tui/cockpit-flightdeck.png)
 
 - **`/pantheon-cockpit`** (or `/cockpit`) — opens the 3-tab Mission Control dashboard:
-  - `1 Overview`: token velocity, context meter, runtime health (`Native Tools (30)`), and topology map.
-  - `2 Swarm`: subagent concurrency Gantt timeline and per-agent cost breakdown.
-  - `3 Flightdeck`: `GATE` safety/guardrail matrix, `Step-Ledger` states, live cross-process event stream, and **`x` Export Replay Trace** to `.pantheon/reports/`.
+  - `1 Overview`: token velocity, context meter, runtime health (`Native Tools (31)`), and topology map.
+  - `2 Swarm`: subagent concurrency Gantt timeline, per-agent cost breakdown, **Goal -> Threads -> Workstreams** grouping from `pantheon_board` (`#seq` refs and ephemeral worker badges), and the ranked **Attention Queue** (`decision > failure > review > stuck > quota`).
+  - `3 Flightdeck`: `GATE` safety/guardrail matrix, `Step-Ledger` states (`spawn_ephemeral` + `pantheon_board` watchdog alerts), live cross-process event stream, and **`x` Export Replay Trace** to `.pantheon/reports/`.
 - **`/pantheon-artifacts`** (or `/artifacts`) — browse project plans/reports and inspect `flowchart`, `sequenceDiagram`, and `stateDiagram` Mermaid diagrams rendered natively as Unicode terminal boxes.
 - **`/pantheon-whats-new`** — review curated release highlights cleanly inside OpenCode.
 

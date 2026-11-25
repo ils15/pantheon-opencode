@@ -20,7 +20,7 @@ Ensure your environment satisfies the following requirements:
 
 ### Native OpenCode Plugin Install (Only Supported Flow in v2.2.2+)
 
-One command registers the 14 agents, 25 skills, 9 slash commands, 30 native TypeScript tools, and TUI in-process with zero copied files on disk (and automatically cleans legacy Python MCPs and old TUI/CLI copies):
+One command registers the 14 agents, 26 skills, 9 slash commands, 31 native TypeScript tools, and TUI in-process with zero copied files on disk (and automatically cleans legacy Python MCPs and old TUI/CLI copies):
 
 ```bash
 opencode plugin add pantheon-opencode

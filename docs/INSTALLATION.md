@@ -8,7 +8,7 @@ entirely; 1.7.x was the last line with V1 support).
 **Native plugin install (`opencode plugin add`):** in v2.2.2+, loading Pantheon directly
 through OpenCode's native plugin manager is the **only** installation method — the
 legacy `npx pantheon-opencode` CLI installer was retired. OpenCode loads all
-**14 agents, 25 skills, 9 slash commands, 30 native TypeScript tools, and TUI**
+**14 agents, 26 skills, 9 slash commands, 31 native TypeScript tools, and TUI**
 in-process with zero copied files on disk, works in **any directory** (git repos,
 worktrees, or empty folders), and automatically cleans legacy Python MCPs,
 copied TUI folders, and `.venv`/`.py` artifacts during `postinstall` and startup.

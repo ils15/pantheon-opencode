@@ -1,9 +1,9 @@
-<!-- pantheon:cookbook-version v2.2 -->
+<!-- pantheon:cookbook-version v2.3 -->
 # Livro de Receitas do Pantheon: Fluxos Práticos do Dia a Dia
 
 > 🇺🇸 **English version available:** [Read in English](../../guides/cookbook.md)
 
-Este livro de receitas reúne fluxos práticos prontos para copiar e colar no **Pantheon `v2.2.0` (`OpenCode 2.x` nativo)** — cobrindo onboarding Zero-Init, os **14 agentes especialistas**, as **30 ferramentas TypeScript nativas**, os **9 comandos de servidor** e as **5 superfícies interativas de TUI**.
+Este livro de receitas reúne fluxos práticos prontos para copiar e colar no **Pantheon `v2.3.0` (`OpenCode 2.x` nativo)** — cobrindo onboarding Zero-Init, os **14 agentes especialistas**, as **31 ferramentas TypeScript nativas**, os **9 comandos de servidor** e as **5 superfícies interativas de TUI**.
 
 ---
 
@@ -216,9 +216,9 @@ ou diretamente:
 ![Aba Flightdeck do Pantheon Mission Control Cockpit](../../assets/tui/cockpit-flightdeck.png)
 
 - **`/pantheon-cockpit`** (ou `/cockpit`) — abre o Mission Control Cockpit em 3 abas:
-  - `1 Overview`: velocidade de tokens, medidor de contexto, saúde das superfícies (`Native Tools (30)`) e mapa de topologia.
-  - `2 Swarm`: linha do tempo Gantt concorrente e custo por subagente.
-  - `3 Flightdeck`: matriz `GATE`, estados do `Step-Ledger`, stream de eventos cross-process e atalho **`x` (`Export Replay Trace`)** para `.pantheon/reports/`.
+  - `1 Overview`: velocidade de tokens, medidor de contexto, saúde das superfícies (`Native Tools (31)`) e mapa de topologia.
+  - `2 Swarm`: linha do tempo Gantt concorrente, custo por subagente, agrupamento **Goal -> Threads -> Workstreams** do `pantheon_board` (referências `#seq` e badges de workers efêmeros) e fila ranqueada de atenção (`decision > failure > review > stuck > quota`).
+  - `3 Flightdeck`: matriz `GATE`, estados do `Step-Ledger` (`spawn_ephemeral` e alertas do watchdog no `pantheon_board`), stream de eventos cross-process e atalho **`x` (`Export Replay Trace`)** para `.pantheon/reports/`.
 - **`/pantheon-artifacts`** (ou `/artifacts`) — navegue por planos/relatórios e visualize diagramas `flowchart`, `sequenceDiagram` e `stateDiagram` renderizados em caixas Unicode no terminal.
 - **`/pantheon-whats-new`** — visualize o resumo curado de novidades da versão instalada.
 

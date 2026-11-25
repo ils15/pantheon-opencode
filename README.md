@@ -62,9 +62,9 @@ You approve each gate and you run every commit.
 
 The OpenCode 2.x TUI surfaces live native-tool domain counters (`mem`, `ctx`, `code`, `edit`,
 `shell`), live child activity and attention badges (`?` / `!`) in `Dispatch` and `/dispatch`,
-the interactive **Mission Control Cockpit** (`/pantheon-cockpit` · `Overview`, `Swarm`,
+the interactive **Mission Control Cockpit** (`/pantheon-cockpit` · `Overview`, `Swarm` threads & ranked attention queue,
 `Flightdeck`), `/pantheon-artifacts` for plans/reports/ADRs, interactive `/pantheon-forge` stack
-detection, and the full **30-tool native inventory** in `/pantheon-settings` → **About** (including
+detection, `pantheon_board` `#seq` swarm/council coordination, `spawn_ephemeral` slice workers, and the full **31-tool native inventory** in `/pantheon-settings` → **About** (including
 post-edit LSP diagnostics, `ast_search`/`ast_rewrite`, `pantheon_review_verdict`, bugfix `RED`
 reproduction gates, and `ctx.worktree.transform` sibling worktrees). Git worktrees automatically
 share the main repository's `.pantheon/memory`, checkpoints, and goals store (set
@@ -75,7 +75,7 @@ share the main repository's `.pantheon/memory`, checkpoints, and goals store (se
 ```
 src/agents/       14 canonical polyglot agent definitions (roster.json + build-roster)
 src/pantheon/     native TypeScript tools, Agent Forge, Step-Ledger, FTS5 memory, codemap, receipts
-src/skills/       25 skills loaded on demand
+src/skills/       26 skills loaded on demand
 src/mcp/          native Node.js MCP bridge (pantheon-mcp-server.mjs)
 src/plugins/      OpenCode plugin + high-density TUI sidebar & settings
 scripts/          installer, doctor, test-slice, release tooling

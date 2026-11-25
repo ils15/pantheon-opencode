@@ -2,7 +2,7 @@
 
 > 🇺🇸 **English version available:** [Read in English](../index.md)
 
-O **Pantheon** é um framework de orquestração multi-agente para o **OpenCode**: 14 agentes especializados, 25 skills prontas e um fluxo de trabalho guiado do planejamento à entrega revisada. Esta página é o mapa principal da documentação.
+O **Pantheon** é um framework de orquestração multi-agente para o **OpenCode**: 14 agentes especializados, 26 skills prontas e um fluxo de trabalho guiado do planejamento à entrega revisada. Esta página é o mapa principal da documentação.
 
 ---
 

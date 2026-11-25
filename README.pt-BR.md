@@ -66,8 +66,8 @@ sob demanda. Você aprova cada gate e executa cada commit.
 A TUI do OpenCode 2.x exibe contadores ao vivo por domínio de ferramentas nativas (`mem`,
 `ctx`, `code`, `edit`, `shell`), atividade ao vivo e badges de atenção (`?` / `!`) no
 `Dispatch` e `/dispatch`, o **Mission Control Cockpit** (`/pantheon-cockpit` · `Overview`,
-`Swarm`, `Flightdeck`), `/pantheon-artifacts` para planos/relatórios/ADRs, o assistente
-`/pantheon-forge` com detecção de stack e o inventário completo de **30 tools nativas** em
+`Swarm` com threads e fila ranqueada de atenção, `Flightdeck`), `/pantheon-artifacts` para planos/relatórios/ADRs, o assistente
+`/pantheon-forge` com detecção de stack, coordenação `#seq` via `pantheon_board`, workers efêmeros `spawn_ephemeral` e o inventário completo de **31 tools nativas** em
 `/pantheon-settings` → **Sobre** (incluindo diagnósticos LSP pós-edição,
 `ast_search`/`ast_rewrite`, `pantheon_review_verdict`, gate de reprodução `RED` para bugfix e
 worktrees nativas via `ctx.worktree.transform`). Worktrees Git compartilham automaticamente o
@@ -79,7 +79,7 @@ repositório principal para `.pantheon/memory`, checkpoints e metas (defina
 ```
 src/agents/       14 definições canônicas de agentes poliglotas (roster.json + build-roster)
 src/pantheon/     tools nativas TypeScript, Agent Forge, Step-Ledger, memória FTS5, codemap, receipts
-src/skills/       25 skills carregadas sob demanda
+src/skills/       26 skills carregadas sob demanda
 src/mcp/          ponte MCP nativa em Node.js (pantheon-mcp-server.mjs)
 src/plugins/      plugin do OpenCode + TUI de alta densidade e configurações
 scripts/          instalador, doctor, test-slice, ferramental de release

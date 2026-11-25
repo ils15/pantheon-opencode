@@ -13,6 +13,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+### 🆕 What's New
+
+- **Swarm Board & Peer Handoffs (`pantheon_board`)**: Append-only `#seq` board for peer handoffs and `council-agora` debates.
+- **Deterministic Plugin Watchdog**: Detects stalled, unreconciled, or quota-blocked jobs via `PantheonBus` with backoff alerts.
+- **Ephemeral Operation Workers & Step-Runner**: Disposable `spawn_ephemeral` worktree sub-sessions, schema finish checks, and `fork`.
+- **Cockpit Threads & Ranked Attention Queue**: Groups `2 Swarm` by Goal/Threads/Workstreams and ranks `decision` to `quota` alerts.
+
+### Added
+
+- **board** — added `pantheon_board` (`post`, `read`, `status`, `channel`) backed by `messages.ndjson` and `threads.json`.
+- **watchdog** — added `SwarmWatchdog` (`swarm-watchdog.ts`) on `PantheonBus` emitting `swarm:stall:detected` and `[alert]` messages.
+- **ephemeral** — added `spawnEphemeralWorker` and `pantheon_step_ledger(action="spawn_ephemeral")` with auto-cleaned sibling worktrees.
+- **council** — added `src/skills/council-agora/SKILL.md` and `#seq`-cited targeted rebuttals with `[consensus]` / `[deadlock]` gates.
+- **tui** — added `Goal -> Threads -> Workstreams` grouping and ranked Attention Queue to `/pantheon-cockpit` (`2 Swarm`).
+
+### Changed
+
+- **step-runner** — added `validateStepFinishPayload`, `reuseSessionID` multi-turn reuse, and `forkStepContext` helper.
+- **cockpit-events** — extended `PersistedCockpitEvent` with optional `seq`, `threadId`, `stepKey`, and `attentionCategory` fields.
+- **zeus** — updated `roster.json`, `zeus.md`, `agent-coordination`, and anti-stall instructions for `pantheon_board` and watchdog.
+
 ## [v2.2.2] - 2026-11-24
 
 ### 🆕 What's New

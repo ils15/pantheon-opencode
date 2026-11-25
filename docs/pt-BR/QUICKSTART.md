@@ -20,7 +20,7 @@ Certifique-se de que seu ambiente atende aos seguintes requisitos:
 
 ### Instalação Nativa como Plugin do OpenCode (Fluxo Único na v2.2.2+)
 
-Um único comando registra em memória os 14 agentes especialistas, 25 skills, 9 comandos, 30 tools nativas em TypeScript e a interface TUI, sem copiar arquivos redundantes para o disco (e limpando automaticamente MCPs Python legados e cópias antigas da TUI/CLI):
+Um único comando registra em memória os 14 agentes especialistas, 26 skills, 9 comandos, 31 tools nativas em TypeScript e a interface TUI, sem copiar arquivos redundantes para o disco (e limpando automaticamente MCPs Python legados e cópias antigas da TUI/CLI):
 
 ```bash
 opencode plugin add pantheon-opencode
