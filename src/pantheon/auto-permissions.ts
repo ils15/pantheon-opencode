@@ -47,27 +47,19 @@ export interface AutoPermissionResult {
 }
 
 /** Agents strictly forbidden from mutating workspace files or executing arbitrary shell commands. */
-const READ_ONLY_AGENTS: ReadonlySet<string> = new Set(['zeus', 'athena', 'apollo', 'gaia'])
+const READ_ONLY_AGENTS: ReadonlySet<string> = new Set(['zeus', 'athena', 'apollo'])
 
 /** Agents forbidden from editing source files directly (reviewers, git/release ops, memory). */
 export const NON_EDIT_AGENTS: ReadonlySet<string> = new Set([
   'zeus',
   'athena',
   'apollo',
-  'gaia',
   'themis',
-  'nyx',
   'iris',
 ])
 
 /** Agents forbidden from executing arbitrary shell commands. */
-export const NON_SHELL_AGENTS: ReadonlySet<string> = new Set([
-  'zeus',
-  'athena',
-  'apollo',
-  'gaia',
-  'mnemosyne',
-])
+export const NON_SHELL_AGENTS: ReadonlySet<string> = new Set(['zeus', 'athena', 'apollo'])
 
 /** Allowed binary names for routine workspace development. */
 const SAFE_DEV_BINARIES: ReadonlySet<string> = new Set([

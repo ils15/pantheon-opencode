@@ -6,7 +6,10 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { readBoardMessages } from '../../src/pantheon/board-messages.ts'
 import { type EphemeralWorkerEventPayload, getSharedBus } from '../../src/pantheon/bus.ts'
-import { spawnEphemeralWorker } from '../../src/pantheon/ephemeral-worker.ts'
+import {
+  resolveEphemeralArchetype,
+  spawnEphemeralWorker,
+} from '../../src/pantheon/ephemeral-worker.ts'
 import { createStepLedgerTool } from '../../src/pantheon/step-ledger.ts'
 
 function initGitRepo(dir: string): void {
@@ -157,6 +160,60 @@ test('pantheon_step_ledger spawn_ephemeral rejects invalid role slug and support
     ) as { ok: boolean; baseAgent: string; claimSeq?: number }
     assert.equal(roOut.baseAgent, 'apollo')
     assert.equal(roOut.claimSeq, 1)
+  } finally {
+    rmSync(parent, { recursive: true, force: true })
+  }
+})
+
+test('resolveEphemeralArchetype maps retired v2.2 agents and v2.3 archetypes with explicit override support', async () => {
+  const gaiaAlias = resolveEphemeralArchetype('gaia')
+  assert.equal(gaiaAlias?.role, 'geospatial')
+  assert.equal(gaiaAlias?.baseAgent, 'apollo')
+  assert.equal(gaiaAlias?.readOnly, true)
+
+  const mnemAlias = resolveEphemeralArchetype('mnemosyne')
+  assert.equal(mnemAlias?.role, 'memory-adr')
+  assert.equal(mnemAlias?.baseAgent, 'iris')
+  assert.equal(mnemAlias?.readOnly, false)
+
+  const parent = mkdtempSync(join(tmpdir(), 'pantheon-eph-alias-'))
+  const repoDir = join(parent, 'repo')
+  try {
+    initGitRepo(repoDir)
+    const createdAgents: string[] = []
+    const sessionDomain = {
+      create: async (opts?: { agent?: string }) => {
+        if (opts?.agent) createdAgents.push(opts.agent)
+        return { id: `ses-${createdAgents.length}` }
+      },
+      prompt: async () => ({ ok: true }),
+      wait: async () => ({ status: 'completed' }),
+      remove: async () => {},
+    }
+
+    const fromAlias = await spawnEphemeralWorker({
+      sessionDomain,
+      cwd: repoDir,
+      stepKey: 'alias-1',
+      role: 'mnemosyne',
+      objective: 'Consolidate memory entries',
+      isolateWorktree: false,
+    })
+    assert.equal(fromAlias.role, 'memory-adr')
+    assert.equal(fromAlias.baseAgent, 'iris')
+
+    const explicitOverride = await spawnEphemeralWorker({
+      sessionDomain,
+      cwd: repoDir,
+      stepKey: 'alias-2',
+      role: 'geospatial',
+      baseAgent: 'demeter',
+      objective: 'Load spatial SQL table',
+      isolateWorktree: false,
+    })
+    assert.equal(explicitOverride.role, 'geospatial')
+    assert.equal(explicitOverride.baseAgent, 'demeter')
+    assert.deepEqual(createdAgents, ['iris', 'demeter'])
   } finally {
     rmSync(parent, { recursive: true, force: true })
   }

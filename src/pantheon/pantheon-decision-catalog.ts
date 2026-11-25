@@ -70,25 +70,22 @@ export const PANTHEON_SKILL_CATALOG: readonly DecisionCatalogEntry[] = Object.fr
 export const PANTHEON_AGENT_CATALOG: readonly DecisionCatalogEntry[] = Object.freeze([
   { id: 'zeus', description: 'Central orchestrator; never implements.' },
   { id: 'athena', description: 'Plan-only architect and strategic planner.' },
-  { id: 'apollo', description: 'Read-only investigation and discovery scout.' },
-  { id: 'hermes', description: 'Backend specialist: FastAPI, Python, async.' },
+  {
+    id: 'apollo',
+    description: 'Read-only investigation, geospatial/domain discovery scout.',
+  },
+  {
+    id: 'hermes',
+    description:
+      'Backend (FastAPI, Python), infrastructure, AI pipeline, observability, and hotfix specialist.',
+  },
   { id: 'aphrodite', description: 'Frontend specialist: React, TypeScript, WCAG.' },
   { id: 'demeter', description: 'Database specialist: SQLAlchemy, migrations, queries.' },
   { id: 'themis', description: 'Quality and security review gate.' },
   {
-    id: 'prometheus',
-    description: 'Infrastructure, Docker, CI, model providers and cloud costs.',
+    id: 'iris',
+    description: 'GitHub branches, PRs, releases, and memory-bank/ADR consolidation.',
   },
-  { id: 'hephaestus', description: 'AI pipelines: LangChain, RAG, vector stores.' },
-  {
-    id: 'nyx',
-    description:
-      'Observability and cost analytics: tracing, per-agent metrics; chaos and fuzz testing.',
-  },
-  { id: 'gaia', description: 'Remote sensing and geospatial analysis.' },
-  { id: 'iris', description: 'GitHub branches, pull requests, issues, releases.' },
-  { id: 'mnemosyne', description: 'Memory bank and ADR authoring on request.' },
-  { id: 'talos', description: 'Small hotfixes, typos, and CSS fixes.' },
 ])
 
 const SKILL_IDS = new Set(PANTHEON_SKILL_CATALOG.map((entry) => entry.id))

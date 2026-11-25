@@ -12,7 +12,7 @@ import { getSharedBus } from './bus.ts'
 import { readStepLedger, type StepLedgerEntry } from './step-ledger.ts'
 
 const MUTATING_TOOLS = new Set(['edit', 'write', 'hashline_edit', 'ast_rewrite', 'patch'])
-const BUGFIX_GATED_AGENTS = new Set(['hermes', 'talos'])
+const BUGFIX_GATED_AGENTS = new Set(['hermes'])
 
 export interface ReproductionGateVerdict {
   readonly allowed: boolean

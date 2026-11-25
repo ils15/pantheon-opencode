@@ -133,7 +133,7 @@ async function main() {
     async () => {
       readOnlyRegistry.clear()
       readOnlyRegistry.register('ses_a', { agent: 'apollo' })
-      readOnlyRegistry.register('ses_b', { agent: 'gaia' })
+      readOnlyRegistry.register('ses_b', { agent: 'apollo' })
       assert.equal(readOnlyRegistry.has('ses_a'), true)
       assert.equal(readOnlyRegistry.sessionIDs().size, 2)
 
@@ -474,7 +474,7 @@ async function main() {
   // ═══════════════════════════════════════════════════════════════════════
 
   await testAsync(
-    'production population: syncReadOnlySession(apollo|gaia) registers the session and every blocked tool is denied (incl. hashline_edit)',
+    'production population: syncReadOnlySession(apollo) registers the session and every blocked tool is denied (incl. hashline_edit)',
     async () => {
       const registry = new ReadOnlySessionRegistry()
       const guard = createEnforcementGuard({
@@ -498,7 +498,7 @@ async function main() {
           'tools the guard must add (all are write/execution surfaces)',
       )
 
-      for (const agent of ['apollo', 'gaia']) {
+      for (const agent of ['apollo']) {
         const sid = `ses_prod_${agent}`
         assert.equal(syncReadOnlySession(registry, sid, agent), true, `${agent} must register`)
         assert.equal(registry.has(sid), true)

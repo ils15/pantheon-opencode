@@ -82,7 +82,7 @@ async function main(): Promise<void> {
   assert.equal(validateModelRef('/missing-provider'), false)
   assert.equal(validateModelRef('provider/'), false)
   assert.equal(validateModelRef('provider/model with spaces'), false)
-  assert.equal(KNOWN_AGENTS.length, 14)
+  assert.equal(KNOWN_AGENTS.length, 8)
 
   // V2 mutation reads open nonblocking and validate the opened descriptor
   // before reading, so a raced-in FIFO cannot stall a set/reset operation.
@@ -287,7 +287,7 @@ async function main(): Promise<void> {
       const visionResult = await tool.execute(
         {
           action: 'set',
-          agent: 'gaia',
+          agent: 'demeter',
           model: 'opencode-go/deepseek-v4-flash',
           effort: 'medium',
           scope: 'project',
@@ -902,15 +902,15 @@ async function main(): Promise<void> {
       let asked: unknown[] | undefined
       const ask = async (questions: unknown[]) => {
         asked = questions
-        return { agent: 'nyx', model: 'openai/gpt-5.6-luna', effort: 'low', scope: 'project' }
+        return { agent: 'demeter', model: 'openai/gpt-5.6-luna', effort: 'low', scope: 'project' }
       }
       const tool = command(scope, { ask: ask as never })
       const result = await tool.execute({} as never, { sessionID: 'root', agent: 'zeus' })
       assert.ok(asked && asked.length >= 3, 'wizard should ask at least 3 questions')
-      assert.match(result, /nyx.*openai\/gpt-5\.6-luna/i)
+      assert.match(result, /demeter.*openai\/gpt-5\.6-luna/i)
       const after = JSON.parse(readFileSync(projectActive(scope), 'utf8'))
-      assert.equal(after.overrides.agents.nyx.model, 'openai/gpt-5.6-luna')
-      assert.equal(after.overrides.agents.nyx.variant, 'low')
+      assert.equal(after.overrides.agents.demeter.model, 'openai/gpt-5.6-luna')
+      assert.equal(after.overrides.agents.demeter.variant, 'low')
       // never writes .env
       assert.equal(existsSync(join(scope.project, '.env')), false)
       // never injects top-level model/small_model

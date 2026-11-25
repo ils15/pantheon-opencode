@@ -61,7 +61,7 @@ async function main(): Promise<void> {
         overrides: {
           agents: {
             hermes: { model: 'deepseek/deepseek-v4-pro', variant: 'high' },
-            gaia: { model: 'openai/gpt-5.6', variant: 'low' },
+            demeter: { model: 'openai/gpt-5.6', variant: 'low' },
           },
         },
       }),
@@ -91,7 +91,7 @@ async function main(): Promise<void> {
       model: 'deepseek/deepseek-v4-pro',
       variant: 'high',
     })
-    assert.equal(merged.overrides.gaia, undefined)
+    assert.equal(merged.overrides.demeter, undefined)
 
     writeFileSync(
       projectFile,
@@ -99,7 +99,7 @@ async function main(): Promise<void> {
         overrides: {
           agents: {
             hermes: { model: 'openai/gpt-5.6', variant: 'low' },
-            gaia: { model: 'openai/gpt-5.6', variant: 'medium' },
+            demeter: { model: 'openai/gpt-5.6', variant: 'medium' },
             athena: { model: 'deepseek/deepseek-v4-pro', variant: 'high' },
             apollo: { model: 'openai/gpt-5.6', reasoning_effort: 'medium' },
           },
@@ -109,7 +109,7 @@ async function main(): Promise<void> {
     const variants = readModelConfiguration({ candidates: [projectFile], env: {} })
     assert.deepEqual(variants.overrides, {
       hermes: { model: 'openai/gpt-5.6', variant: 'low' },
-      gaia: { model: 'openai/gpt-5.6', variant: 'medium' },
+      demeter: { model: 'openai/gpt-5.6', variant: 'medium' },
       athena: { model: 'deepseek/deepseek-v4-pro', variant: 'high' },
       apollo: { model: 'openai/gpt-5.6', variant: 'medium' },
     })
@@ -122,7 +122,7 @@ async function main(): Promise<void> {
     }
     const agents = new Map<string, Record<string, unknown>>([
       ['hermes', { id: 'hermes', model: originalModel, request: { body: { keep: true } } }],
-      ['gaia', { id: 'gaia', model: { providerID: 'host-provider', id: 'gaia-default' } }],
+      ['demeter', { id: 'demeter', model: { providerID: 'host-provider', id: 'demeter-default' } }],
       [
         'unsupported-secret-agent',
         {
@@ -154,8 +154,8 @@ async function main(): Promise<void> {
     })
     assert.deepEqual(hermes.request, { body: { keep: true } }, 'other host settings stay intact')
     assert.deepEqual(
-      agents.get('gaia')?.model,
-      { providerID: 'host-provider', id: 'gaia-default' },
+      agents.get('demeter')?.model,
+      { providerID: 'host-provider', id: 'demeter-default' },
       'an agent without a manual override keeps its host model unchanged',
     )
     assert.deepEqual(
@@ -195,7 +195,7 @@ async function main(): Promise<void> {
       id: 'host-default',
       variant: 'host-variant',
     }
-    const noOverrideAgent = { id: 'gaia', model: unchangedModel }
+    const noOverrideAgent = { id: 'demeter', model: unchangedModel }
     const noOverrideDraft: AgentDraftLike = {
       list: () => [noOverrideAgent],
       update: (_id, update) => update(noOverrideAgent),
@@ -256,7 +256,7 @@ async function main(): Promise<void> {
     writeFileSync(projectFile, JSON.stringify({ overrides: { agents: [] } }))
     writeFileSync(
       globalFile,
-      JSON.stringify({ overrides: { agents: { gaia: { model: 'openai/gpt-5.6' } } } }),
+      JSON.stringify({ overrides: { agents: { demeter: { model: 'openai/gpt-5.6' } } } }),
     )
     const invalidRoot = readModelConfiguration({ candidates: [projectFile, globalFile], env: {} })
     assert.deepEqual(invalidRoot.overrides, {})
@@ -275,7 +275,7 @@ async function main(): Promise<void> {
               variant: null,
               reasoning_effort: 'high',
             },
-            gaia: { model: 'openai/gpt-5.6' },
+            demeter: { model: 'openai/gpt-5.6' },
             'unsupported-secret-agent': { model: 'openai/gpt-5.6' },
             apollo: { model: 'opencode/deepseek-v4-flash-free', variant: 'high' },
           },
@@ -283,7 +283,7 @@ async function main(): Promise<void> {
       }),
     )
     const invalidEntries = readModelConfiguration({ candidates: [projectFile], env: {} })
-    assert.deepEqual(invalidEntries.overrides, { gaia: { model: 'openai/gpt-5.6' } })
+    assert.deepEqual(invalidEntries.overrides, { demeter: { model: 'openai/gpt-5.6' } })
     assert.equal(invalidEntries.warnings.length, 3)
     assert.ok(invalidEntries.warnings.some((warning) => /unsupported agent/i.test(warning)))
     assert.ok(
@@ -328,7 +328,7 @@ async function main(): Promise<void> {
         combined.warnings.some((warning) => /could not be read/i.test(warning)),
         false,
       )
-      assert.deepEqual(combined.overrides, { gaia: { model: 'openai/gpt-5.6' } })
+      assert.deepEqual(combined.overrides, { demeter: { model: 'openai/gpt-5.6' } })
     }
 
     // /proc/self/mem is a regular file whose read fails on Linux, exercising

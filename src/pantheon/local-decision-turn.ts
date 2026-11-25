@@ -74,13 +74,7 @@ const AGENT_SKILL_FALLBACK: Readonly<Record<string, readonly string[]>> = Object
   hermes: ['incremental-implementation', 'tdd-with-agents'],
   aphrodite: ['incremental-implementation', 'visual-review-pipeline'],
   demeter: ['incremental-implementation', 'tdd-with-agents'],
-  prometheus: ['git-workflow-and-versioning'],
-  hephaestus: ['tdd-with-agents'],
-  nyx: ['auto-continue'],
-  gaia: ['auto-continue'],
-  iris: ['artifact-management', 'git-workflow-and-versioning'],
-  mnemosyne: ['memory-bank', 'context-compression'],
-  talos: ['incremental-implementation'],
+  iris: ['artifact-management', 'git-workflow-and-versioning', 'memory-bank'],
 })
 
 /** Pure decision core exposed for offline tests (D3 contract).

@@ -13,23 +13,15 @@ import { fileURLToPath as fileURLToPath5 } from "node:url";
 import { define } from "@opencode-ai/plugin/v2/promise";
 
 // src/pantheon/auto-permissions.ts
-var READ_ONLY_AGENTS = /* @__PURE__ */ new Set(["zeus", "athena", "apollo", "gaia"]);
+var READ_ONLY_AGENTS = /* @__PURE__ */ new Set(["zeus", "athena", "apollo"]);
 var NON_EDIT_AGENTS = /* @__PURE__ */ new Set([
   "zeus",
   "athena",
   "apollo",
-  "gaia",
   "themis",
-  "nyx",
   "iris"
 ]);
-var NON_SHELL_AGENTS = /* @__PURE__ */ new Set([
-  "zeus",
-  "athena",
-  "apollo",
-  "gaia",
-  "mnemosyne"
-]);
+var NON_SHELL_AGENTS = /* @__PURE__ */ new Set(["zeus", "athena", "apollo"]);
 var SAFE_DEV_BINARIES = /* @__PURE__ */ new Set([
   "git",
   "npm",
@@ -2956,13 +2948,7 @@ var PANTHEON_AGENTS = /* @__PURE__ */ new Set([
   "aphrodite",
   "demeter",
   "themis",
-  "prometheus",
-  "hephaestus",
-  "nyx",
-  "gaia",
-  "iris",
-  "mnemosyne",
-  "talos"
+  "iris"
 ]);
 var ORIGIN_TTL_MS2 = 6e4;
 var MAX_PENDING_ORIGINS = 256;
@@ -3134,24 +3120,21 @@ var PANTHEON_SKILL_CATALOG = Object.freeze([
 var PANTHEON_AGENT_CATALOG = Object.freeze([
   { id: "zeus", description: "Central orchestrator; never implements." },
   { id: "athena", description: "Plan-only architect and strategic planner." },
-  { id: "apollo", description: "Read-only investigation and discovery scout." },
-  { id: "hermes", description: "Backend specialist: FastAPI, Python, async." },
+  {
+    id: "apollo",
+    description: "Read-only investigation, geospatial/domain discovery scout."
+  },
+  {
+    id: "hermes",
+    description: "Backend (FastAPI, Python), infrastructure, AI pipeline, observability, and hotfix specialist."
+  },
   { id: "aphrodite", description: "Frontend specialist: React, TypeScript, WCAG." },
   { id: "demeter", description: "Database specialist: SQLAlchemy, migrations, queries." },
   { id: "themis", description: "Quality and security review gate." },
   {
-    id: "prometheus",
-    description: "Infrastructure, Docker, CI, model providers and cloud costs."
-  },
-  { id: "hephaestus", description: "AI pipelines: LangChain, RAG, vector stores." },
-  {
-    id: "nyx",
-    description: "Observability and cost analytics: tracing, per-agent metrics; chaos and fuzz testing."
-  },
-  { id: "gaia", description: "Remote sensing and geospatial analysis." },
-  { id: "iris", description: "GitHub branches, pull requests, issues, releases." },
-  { id: "mnemosyne", description: "Memory bank and ADR authoring on request." },
-  { id: "talos", description: "Small hotfixes, typos, and CSS fixes." }
+    id: "iris",
+    description: "GitHub branches, PRs, releases, and memory-bank/ADR consolidation."
+  }
 ]);
 var SKILL_IDS = new Set(PANTHEON_SKILL_CATALOG.map((entry) => entry.id));
 var AGENT_IDS = new Set(PANTHEON_AGENT_CATALOG.map((entry) => entry.id));
@@ -3219,8 +3202,58 @@ var ACTION_TOKENS = /* @__PURE__ */ new Set([
 ]);
 var AGENT_KEYWORDS = Object.freeze({
   athena: ["plan", "planning", "architecture", "architect", "strategy", "spec", "requirements"],
-  apollo: ["investigate", "investigation", "research", "discovery", "explore", "find", "search"],
-  hermes: ["api", "backend", "fastapi", "python", "endpoint", "async", "server", "pytest"],
+  apollo: [
+    "investigate",
+    "investigation",
+    "research",
+    "discovery",
+    "explore",
+    "find",
+    "search",
+    "satellite",
+    "spectral",
+    "sar",
+    "geospatial",
+    "imagery",
+    "remote",
+    "sensing"
+  ],
+  hermes: [
+    "api",
+    "backend",
+    "fastapi",
+    "python",
+    "endpoint",
+    "async",
+    "server",
+    "pytest",
+    "docker",
+    "ci",
+    "pipeline",
+    "deploy",
+    "infrastructure",
+    "provider",
+    "container",
+    "langchain",
+    "langgraph",
+    "rag",
+    "vector",
+    "embedding",
+    "llm",
+    "ai",
+    "observability",
+    "telemetry",
+    "opentelemetry",
+    "tracing",
+    "metrics",
+    "langsmith",
+    "cost",
+    "typo",
+    "hotfix",
+    "small",
+    "quick",
+    "minor"
+  ],
   aphrodite: [
     "frontend",
     "react",
@@ -3234,13 +3267,21 @@ var AGENT_KEYWORDS = Object.freeze({
   ],
   demeter: ["database", "sql", "schema", "migration", "alembic", "sqlalchemy", "query", "index"],
   themis: ["security", "owasp", "audit", "lint", "coverage", "quality", "vulnerability", "cve"],
-  prometheus: ["docker", "ci", "pipeline", "deploy", "infrastructure", "provider", "container"],
-  hephaestus: ["langchain", "langgraph", "rag", "vector", "embedding", "llm", "pipeline", "ai"],
-  nyx: ["observability", "telemetry", "opentelemetry", "tracing", "metrics", "langsmith", "cost"],
-  gaia: ["satellite", "spectral", "sar", "geospatial", "imagery", "remote", "sensing"],
-  iris: ["github", "pull", "request", "issue", "branch", "release", "tag", "pr"],
-  mnemosyne: ["memory", "adr", "documentation", "knowledge", "persistent"],
-  talos: ["typo", "hotfix", "small", "quick", "minor", "css"]
+  iris: [
+    "github",
+    "pull",
+    "request",
+    "issue",
+    "branch",
+    "release",
+    "tag",
+    "pr",
+    "memory",
+    "adr",
+    "documentation",
+    "knowledge",
+    "persistent"
+  ]
 });
 function normalize(value) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
@@ -3745,13 +3786,7 @@ var AGENT_SKILL_FALLBACK = Object.freeze({
   hermes: ["incremental-implementation", "tdd-with-agents"],
   aphrodite: ["incremental-implementation", "visual-review-pipeline"],
   demeter: ["incremental-implementation", "tdd-with-agents"],
-  prometheus: ["git-workflow-and-versioning"],
-  hephaestus: ["tdd-with-agents"],
-  nyx: ["auto-continue"],
-  gaia: ["auto-continue"],
-  iris: ["artifact-management", "git-workflow-and-versioning"],
-  mnemosyne: ["memory-bank", "context-compression"],
-  talos: ["incremental-implementation"]
+  iris: ["artifact-management", "git-workflow-and-versioning", "memory-bank"]
 });
 function localDecisionForTest(request, policy, reasonCode) {
   const selection = selectPantheonSkills(request);
@@ -4393,7 +4428,7 @@ var ReadOnlySessionRegistry = class {
   }
 };
 var readOnlyRegistry = new ReadOnlySessionRegistry();
-var READ_ONLY_AGENTS2 = /* @__PURE__ */ new Set(["apollo", "gaia"]);
+var READ_ONLY_AGENTS2 = /* @__PURE__ */ new Set(["apollo"]);
 function syncReadOnlySession(registry, sessionID, agent, readOnlyAgents = READ_ONLY_AGENTS2) {
   const normalized = normalizeDelegationAgent(agent);
   if (normalized === void 0 || !readOnlyAgents.has(normalized)) {
@@ -8901,14 +8936,16 @@ var KNOWN_AGENTS = [
   "aphrodite",
   "demeter",
   "themis",
-  "prometheus",
-  "hephaestus",
-  "nyx",
-  "gaia",
-  "iris",
-  "mnemosyne",
-  "talos"
+  "iris"
 ];
+var RETIRED_AGENT_ALIASES = Object.freeze({
+  talos: { role: "hotfix", baseAgent: "hermes", readOnly: false },
+  prometheus: { role: "infra-ci", baseAgent: "hermes", readOnly: false },
+  hephaestus: { role: "ai-pipeline", baseAgent: "hermes", readOnly: false },
+  nyx: { role: "observability", baseAgent: "hermes", readOnly: false },
+  gaia: { role: "geospatial", baseAgent: "apollo", readOnly: true },
+  mnemosyne: { role: "memory-adr", baseAgent: "iris", readOnly: false }
+});
 
 // src/pantheon/presets.mjs
 import { readFileSync as readFileSync7 } from "node:fs";
@@ -11096,6 +11133,7 @@ var CANONICAL_SKILL_IDS = Object.freeze([
   "code-review-checklist",
   "codemap",
   "context-compression",
+  "council-agora",
   "fast-path-execution",
   "git-workflow-and-versioning",
   "incremental-implementation",
@@ -12289,14 +12327,9 @@ var AGENT_PREFIXES = {
   aphrodite: "aph",
   demeter: "dem",
   themis: "the",
-  prometheus: "pro",
-  hephaestus: "hep",
-  nyx: "nyx",
   athena: "ath",
-  gaia: "gai",
   iris: "iri",
-  mnemosyne: "mne",
-  talos: "tal"
+  zeus: "zeu"
 };
 function getAgentPrefix(agent) {
   return AGENT_PREFIXES[agent.toLowerCase()] ?? "job";
@@ -13981,21 +14014,87 @@ function createWorktreeTool(fallbackDir) {
 }
 
 // src/pantheon/ephemeral-worker.ts
+var EPHEMERAL_ARCHETYPES = Object.freeze(
+  {
+    hotfix: {
+      role: "hotfix",
+      baseAgent: "hermes",
+      readOnly: false,
+      description: "Bounded hotfixes, typos, and surgical style fixes."
+    },
+    "infra-ci": {
+      role: "infra-ci",
+      baseAgent: "hermes",
+      readOnly: false,
+      description: "Docker, CI pipelines, deployment, and infra configuration."
+    },
+    "ai-pipeline": {
+      role: "ai-pipeline",
+      baseAgent: "hermes",
+      readOnly: false,
+      description: "AI pipelines, RAG, embeddings, and vector store integration."
+    },
+    observability: {
+      role: "observability",
+      baseAgent: "hermes",
+      readOnly: false,
+      description: "Tracing, telemetry, metrics, and cost/latency instrumentation."
+    },
+    geospatial: {
+      role: "geospatial",
+      baseAgent: "apollo",
+      readOnly: true,
+      description: "Read-only geospatial, satellite, and remote-sensing analysis."
+    },
+    "memory-adr": {
+      role: "memory-adr",
+      baseAgent: "iris",
+      readOnly: false,
+      description: "Memory-bank curation and Architecture Decision Record authoring."
+    },
+    "memory-consolidate": {
+      role: "memory-consolidate",
+      baseAgent: "iris",
+      readOnly: false,
+      description: "Memory-bank consolidation, deduplication, and archival."
+    }
+  }
+);
+function resolveEphemeralArchetype(roleOrAlias) {
+  const key = roleOrAlias.trim().replace(/^@/, "").toLowerCase();
+  if (!key) return void 0;
+  if (Object.hasOwn(EPHEMERAL_ARCHETYPES, key)) {
+    return EPHEMERAL_ARCHETYPES[key];
+  }
+  const alias = Object.hasOwn(RETIRED_AGENT_ALIASES, key) ? RETIRED_AGENT_ALIASES[key] : void 0;
+  if (alias) {
+    return EPHEMERAL_ARCHETYPES[alias.role] ?? {
+      role: alias.role,
+      baseAgent: alias.baseAgent,
+      readOnly: alias.readOnly,
+      description: `Ephemeral ${alias.role} worker`
+    };
+  }
+  return void 0;
+}
 var SAFE_EPHEMERAL_ROLE_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 async function spawnEphemeralWorker(input) {
-  const role = typeof input.role === "string" ? input.role.trim().toLowerCase() : "";
-  if (!SAFE_EPHEMERAL_ROLE_RE.test(role)) {
+  const rawRole = typeof input.role === "string" ? input.role.trim().toLowerCase() : "";
+  if (!SAFE_EPHEMERAL_ROLE_RE.test(rawRole)) {
     return {
       ok: false,
       workerId: `eph-${input.stepKey}`,
-      role,
+      role: rawRole,
       baseAgent: input.readOnly === true ? "apollo" : "hermes",
       stepKey: input.stepKey,
       worktreeCleaned: false,
       error: "role must match ^[a-z0-9][a-z0-9-]{0,31}$"
     };
   }
-  const defaultBase = input.readOnly === true ? "apollo" : "hermes";
+  const archetype = resolveEphemeralArchetype(rawRole);
+  const role = archetype?.role ?? rawRole;
+  const effectiveReadOnly = input.readOnly ?? archetype?.readOnly ?? false;
+  const defaultBase = input.readOnly !== void 0 ? input.readOnly ? "apollo" : "hermes" : archetype?.baseAgent ?? (effectiveReadOnly ? "apollo" : "hermes");
   const baseAgent = typeof input.baseAgent === "string" && input.baseAgent.trim() ? input.baseAgent.trim().replace(/^@/, "").toLowerCase() : defaultBase;
   if (!PANTHEON_AGENTS.has(baseAgent)) {
     return {
@@ -14068,8 +14167,10 @@ async function spawnEphemeralWorker(input) {
       `[EPHEMERAL OPERATION WORKER]`,
       `role: ${role}`,
       `baseAgent: ${baseAgent}`,
+      `readOnly: ${effectiveReadOnly}`,
       `worktree: ${effectiveCwd}`,
       `boardSeq: #${claimSeq}`,
+      ...archetype ? [`archetype: ${archetype.description}`] : [],
       ...input.extraContext?.trim() ? ["", input.extraContext.trim()] : []
     ];
     const runRes = await runAtomicStepSubSession({
@@ -14689,7 +14790,7 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
 
 // src/pantheon/reproduction-gate.ts
 var MUTATING_TOOLS = /* @__PURE__ */ new Set(["edit", "write", "hashline_edit", "ast_rewrite", "patch"]);
-var BUGFIX_GATED_AGENTS = /* @__PURE__ */ new Set(["hermes", "talos"]);
+var BUGFIX_GATED_AGENTS = /* @__PURE__ */ new Set(["hermes"]);
 function isTestOrReproFile(filePath) {
   const norm = filePath.replace(/\\/g, "/").toLowerCase();
   if (!norm) return false;
@@ -19246,7 +19347,7 @@ var SAFE_PRESET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 var KNOWN_AGENTS_SET2 = new Set(KNOWN_AGENTS);
 var modelArgs = {
   action: z5.enum(["status", "show", "set", "reset"]).optional().describe("Operation: status/show, set, or reset. No args runs wizard."),
-  agent: z5.string().optional().describe("Agent name (one of 14 canonical agents)."),
+  agent: z5.string().optional().describe("Agent name (one of 8 canonical agents)."),
   model: z5.string().optional().describe("Model in provider/model-id format; used by set."),
   effort: z5.enum(["low", "medium", "high"]).optional().describe("Reasoning effort (variant), clamped to model capability."),
   scope: z5.enum(["project", "global"]).optional().describe("Configuration scope for active-preset.json (default project)."),
@@ -19841,7 +19942,7 @@ function buildWizardQuestions() {
   return [
     {
       header: "Agent",
-      question: "Choose the agent to configure (one of the 14 canonical agents)",
+      question: "Choose the agent to configure (one of the 8 canonical agents)",
       options: KNOWN_AGENTS.map((a) => ({ label: a, description: `Agent ${a}` })),
       multiSelect: false
     },
@@ -21632,7 +21733,7 @@ var MODEL_INPUT = {
       enum: ["status", "show", "set", "reset"],
       description: "Operation to perform. Defaults to status when agent/model are absent."
     },
-    agent: { type: "string", description: "Agent name (one of the 14 canonical agents)." },
+    agent: { type: "string", description: "Agent name (one of the 8 canonical agents)." },
     model: { type: "string", description: "Model in provider/model-id format; used by set." },
     effort: {
       type: "string",

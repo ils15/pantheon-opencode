@@ -3,7 +3,7 @@
  *
  * Operates exclusively on `active-preset.json` `overrides.agents[agent]`
  * (never on top-level `model`/`small_model`, never on `.env`). Supports:
- * - status/show: lists 14 canonical agents with model, effort, origin
+ * - status/show: lists 8 canonical agents with model, effort, origin
  *   (preset|override|env|none) without secrets, validated via routing.yml.
  * - set --agent X --model Y --effort Z --scope project|global: validates
  *   via CAPABILITY_TABLE/hasVision and persists atomically with .bak + lock.
@@ -50,7 +50,7 @@ const modelArgs = {
     .enum(['status', 'show', 'set', 'reset'])
     .optional()
     .describe('Operation: status/show, set, or reset. No args runs wizard.'),
-  agent: z.string().optional().describe('Agent name (one of 14 canonical agents).'),
+  agent: z.string().optional().describe('Agent name (one of 8 canonical agents).'),
   model: z.string().optional().describe('Model in provider/model-id format; used by set.'),
   effort: z
     .enum(['low', 'medium', 'high'])
@@ -893,7 +893,7 @@ export function buildWizardQuestions(): unknown[] {
   return [
     {
       header: 'Agent',
-      question: 'Choose the agent to configure (one of the 14 canonical agents)',
+      question: 'Choose the agent to configure (one of the 8 canonical agents)',
       options: KNOWN_AGENTS.map((a) => ({ label: a, description: `Agent ${a}` })),
       multiSelect: false,
     },

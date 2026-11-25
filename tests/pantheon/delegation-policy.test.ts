@@ -4,22 +4,7 @@ import {
   V2SubagentOriginRegistry,
 } from '../../src/pantheon/delegation-policy.ts'
 
-const agents = [
-  'zeus',
-  'athena',
-  'apollo',
-  'hermes',
-  'aphrodite',
-  'demeter',
-  'themis',
-  'prometheus',
-  'hephaestus',
-  'nyx',
-  'gaia',
-  'iris',
-  'mnemosyne',
-  'talos',
-]
+const agents = ['zeus', 'athena', 'apollo', 'hermes', 'aphrodite', 'demeter', 'themis', 'iris']
 
 function event(sessionID: string, target: string, callerAgent?: string) {
   return {

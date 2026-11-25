@@ -408,7 +408,7 @@ const MODEL_INPUT: Record<string, unknown> = {
       enum: ['status', 'show', 'set', 'reset'],
       description: 'Operation to perform. Defaults to status when agent/model are absent.',
     },
-    agent: { type: 'string', description: 'Agent name (one of the 14 canonical agents).' },
+    agent: { type: 'string', description: 'Agent name (one of the 8 canonical agents).' },
     model: { type: 'string', description: 'Model in provider/model-id format; used by set.' },
     effort: {
       type: 'string',

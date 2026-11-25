@@ -58,13 +58,7 @@ const EXPECTED_MODE = {
   aphrodite: 'all',
   demeter: 'all',
   apollo: 'subagent',
-  gaia: 'subagent',
-  prometheus: 'all',
-  hephaestus: 'all',
-  nyx: 'all',
   iris: 'all',
-  talos: 'all',
-  mnemosyne: 'all',
 }
 
 const EXPECTED_TASK_PERMISSIONS = {
@@ -75,13 +69,7 @@ const EXPECTED_TASK_PERMISSIONS = {
   aphrodite: { '*': 'deny' },
   demeter: { '*': 'deny' },
   apollo: { '*': 'deny' },
-  gaia: { '*': 'deny' },
-  prometheus: { '*': 'deny' },
-  hephaestus: { '*': 'deny' },
-  nyx: { '*': 'deny' },
   iris: { '*': 'deny' },
-  talos: { '*': 'deny' },
-  mnemosyne: { '*': 'deny' },
 }
 
 const EXPECTED_CAN_DELEGATE = {
@@ -92,42 +80,17 @@ const EXPECTED_CAN_DELEGATE = {
   aphrodite: false,
   demeter: false,
   apollo: false,
-  gaia: false,
-  prometheus: false,
-  hephaestus: false,
-  nyx: false,
   iris: false,
-  talos: false,
-  mnemosyne: false,
 }
 
 const EXPECTED_SUBAGENT_CAN_DELEGATE_TO = {
-  zeus: [
-    'athena',
-    'apollo',
-    'hermes',
-    'aphrodite',
-    'demeter',
-    'themis',
-    'prometheus',
-    'hephaestus',
-    'nyx',
-    'iris',
-    'mnemosyne',
-    'talos',
-  ],
+  zeus: ['athena', 'apollo', 'hermes', 'aphrodite', 'demeter', 'themis', 'iris'],
   athena: ['apollo'],
   hermes: ['apollo'],
   apollo: [],
-  mnemosyne: [],
-  talos: [],
   themis: [],
   aphrodite: [],
   demeter: [],
-  prometheus: [],
-  hephaestus: [],
-  nyx: [],
-  gaia: [],
   iris: [],
 }
 
@@ -137,11 +100,11 @@ const agentNames = getAgentNames()
 const routing = loadRouting()
 const routingAgentNames = Object.keys(routing.agents || {})
 
-test('all 14 agents have canonical .md files', () => {
-  assert.equal(agentNames.length, 14, `Expected 14 agents, got ${agentNames.length}: ${agentNames}`)
+test('all 8 agents have canonical .md files', () => {
+  assert.equal(agentNames.length, 8, `Expected 8 agents, got ${agentNames.length}: ${agentNames}`)
 })
 
-test('all 14 agents are in routing.yml', () => {
+test('all 8 agents are in routing.yml', () => {
   for (const name of agentNames) {
     assert.ok(routingAgentNames.includes(name), `Agent "${name}" missing from routing.yml`)
   }
@@ -274,8 +237,7 @@ test('hermes can only delegate to apollo (read-only exception)', () => {
 
 // ─── background_delegation.read_only_agents ───────────────────────────
 
-test('read_only_agents includes apollo and gaia', () => {
+test('read_only_agents includes apollo', () => {
   const roa = routing.background_delegation?.read_only_agents || []
   assert.ok(roa.includes('apollo'), 'read_only_agents must include apollo')
-  assert.ok(roa.includes('gaia'), 'read_only_agents must include gaia')
 })

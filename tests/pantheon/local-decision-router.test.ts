@@ -203,7 +203,7 @@ function samplePolicy(): LocalDecisionPolicy {
   return {
     agents: {
       zeus: {
-        canDelegateTo: ['hermes', 'aphrodite', 'gaia'],
+        canDelegateTo: ['hermes', 'aphrodite', 'demeter'],
         skills: ['agent-coordination'],
         capabilities: ['memory_recall'],
         canReceiveDelegation: true,
@@ -220,14 +220,14 @@ function samplePolicy(): LocalDecisionPolicy {
         capabilities: [],
         canReceiveDelegation: true,
       },
-      gaia: {
+      demeter: {
         canDelegateTo: [],
         skills: [],
         capabilities: [],
         canReceiveDelegation: true,
       },
     },
-    permissionTask: { '*': 'allow', gaia: 'deny' },
+    permissionTask: { '*': 'allow', demeter: 'deny' },
   }
 }
 
@@ -282,7 +282,7 @@ function testOrchestrationAbstainsWhenCandidatesAreNotUniquelyResolved(): void {
   const unknownDomain = recommendLocalOrchestration(
     sampleOrchestrationInput({
       candidateAgents: ['hermes', 'aphrodite'],
-      domain: 'gaia',
+      domain: 'demeter',
     }),
     'zeus',
     policy,
@@ -301,7 +301,7 @@ function testOrchestrationAbstainsWhenCandidatesAreNotUniquelyResolved(): void {
 
 function testOrchestrationFiltersRoutingGrantsAndRequiresZeus(): void {
   const blockedOnly = recommendLocalOrchestration(
-    sampleOrchestrationInput({ candidateAgents: ['gaia'] }),
+    sampleOrchestrationInput({ candidateAgents: ['demeter'] }),
     'zeus',
     samplePolicy(),
   )

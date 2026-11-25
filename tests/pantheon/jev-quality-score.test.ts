@@ -152,7 +152,7 @@ function testBuildRequestBoundedShape(): void {
 
 function testBuildRequestExactTemplate(): void {
   const built = buildQualityScoreRequest({
-    delegateId: 'talos',
+    delegateId: 'hermes',
     resultSummaryKind: 'error',
     resultMetrics: { outputChars: 0, taskDurationMs: null },
     criteria: ['the task goal is met'],
@@ -166,7 +166,7 @@ function testBuildRequestExactTemplate(): void {
   assert.equal(
     state,
     'Advisory quality review of one delegated result. ' +
-      'delegate: talos. result_kind: error. output_chars: 0. task_duration_ms: na. ' +
+      'delegate: hermes. result_kind: error. output_chars: 0. task_duration_ms: na. ' +
       'criteria_count: 1. ' +
       'The result content never leaves this machine; the criteria are listed in the quality ' +
       'question; judge from the structural fields and the criteria alone.',
@@ -346,7 +346,7 @@ function testDelegateIdValidation(): void {
     resultMetrics: { outputChars: 10, taskDurationMs: null },
     criteria: BENIGN_CRITERIA,
   }
-  for (const delegateId of ['apollo', 'talos', 'prometheus', 'nyx', 'hephaestus']) {
+  for (const delegateId of ['apollo', 'hermes', 'themis', 'demeter', 'iris']) {
     assert.ok(buildQualityScoreRequest({ ...base, delegateId }).ok, delegateId)
   }
   const hostile = [

@@ -2641,7 +2641,7 @@ async function main(): Promise<void> {
     // `{ sessionID, info }`. Both spellings must drop the entry — reading only
     // one would reintroduce the leak under the other payload.
     const sessionID = 'ses-v2-deleted-infoid'
-    syncReadOnlySession(readOnlyRegistry, sessionID, 'gaia')
+    syncReadOnlySession(readOnlyRegistry, sessionID, 'apollo')
     assert.equal(readOnlyRegistry.has(sessionID), true)
 
     let handled!: () => void
@@ -3693,7 +3693,7 @@ async function main(): Promise<void> {
     assert.match(denial, /pantheon_model/)
   })
 
-  test('every registered V2 mutating tool is denied for gaia (both read-only agents)', async () => {
+  test('every registered V2 mutating tool is denied for apollo (read-only agent)', async () => {
     const registeredNames = new Set(apolloCaptured.tools.map((t) => t.name))
     const v2WriteTools = [...DEFAULT_BLOCKED_TOOLS].filter((tool) => registeredNames.has(tool))
     assert.deepEqual(
@@ -3704,10 +3704,10 @@ async function main(): Promise<void> {
     for (const tool of v2WriteTools) {
       const denial = await denyMessage(apolloCaptured.before as (e: unknown) => Promise<void>, {
         tool,
-        sessionID: `ses_v2_gaia_${tool}`,
-        agent: 'gaia',
+        sessionID: `ses_v2_apollo_${tool}`,
+        agent: 'apollo',
       })
-      assert.ok(denial !== null, `${tool} must be denied for gaia`)
+      assert.ok(denial !== null, `${tool} must be denied for apollo`)
       assert.match(denial, /READ-ONLY/)
     }
   })
@@ -3842,7 +3842,7 @@ async function main(): Promise<void> {
   })
 
   test('the read guard is scoped to Zeus, not a blanket block on reads', async () => {
-    for (const agent of ['apollo', 'demeter', 'hermes', 'talos']) {
+    for (const agent of ['apollo', 'demeter', 'hermes', 'iris']) {
       const denial = await readGuardDenial(apolloCaptured.before as (e: unknown) => Promise<void>, {
         tool: 'read',
         agent,

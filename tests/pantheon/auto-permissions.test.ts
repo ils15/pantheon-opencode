@@ -112,7 +112,7 @@ test('evaluateAutoPermission: auto-allows safe workspace dev bash commands for i
   const execEvent = {
     action: 'execute',
     resources: ['git status'],
-    agent: 'talos',
+    agent: 'hermes',
     effect: 'ask',
   }
   const execResult = evaluateAutoPermission(execEvent, { cwd: '/workspace' })
@@ -180,7 +180,7 @@ test('evaluateAutoPermission: read-only agents are denied mutating actions', () 
   assert.equal(event.effect, 'deny')
   // execute (Code Mode) is allowed for orchestrator and read-only agents
   // so they can invoke todowrite, memory, deepwork, and skill tools via Code Mode
-  for (const roAgent of ['zeus', 'athena', 'apollo', 'gaia']) {
+  for (const roAgent of ['zeus', 'athena', 'apollo']) {
     const roExecEvent = {
       action: 'execute',
       resources: ['await tools.todowrite({ todos: [] })'],

@@ -153,14 +153,9 @@ const AGENT_PREFIXES: Record<string, string> = {
   aphrodite: 'aph',
   demeter: 'dem',
   themis: 'the',
-  prometheus: 'pro',
-  hephaestus: 'hep',
-  nyx: 'nyx',
   athena: 'ath',
-  gaia: 'gai',
   iris: 'iri',
-  mnemosyne: 'mne',
-  talos: 'tal',
+  zeus: 'zeu',
 }
 
 function getAgentPrefix(agent: string): string {
