@@ -6072,7 +6072,7 @@ async function readChangelogForBundle(bundleUrl) {
 }
 /** The ambient build-time version, or null outside a tsdown build. */
 function embeddedVersion() {
-	return "2.2.2";
+	return "2.3.0";
 }
 /**
 * Resolve the running Pantheon version for the what's-new window: the plugin
@@ -6314,7 +6314,7 @@ function persistUpdateCheckState(previous, latest) {
 	} catch {}
 }
 function resolveRunningVersion() {
-	return "2.2.2";
+	return "2.3.0";
 }
 const VALUE_WIDTH = 32;
 function SettingsWindow(props) {
@@ -11417,7 +11417,7 @@ function updateCheckStateFile() {
 *  version via toast, and keeps the persistent Home/Sidebar badge updated. */
 async function checkForPantheonUpdate(context) {
 	const { statePath, readState } = updateCheckStateFile();
-	const currentVersion = "2.2.2";
+	const currentVersion = "2.3.0";
 	const initialState = readState();
 	setAvailableUpdateVersion(resolveCachedAvailableUpdate(currentVersion, initialState));
 	const nowMs = Date.now();
@@ -12274,7 +12274,7 @@ function Sidebar(props) {
 			setProp(_el$13, "paddingLeft", 1);
 			setProp(_el$13, "paddingRight", 1);
 			setProp(_el$14, "attributes", 1);
-			insert(_el$14, `Pantheon v2.2.2`);
+			insert(_el$14, `Pantheon v2.3.0`);
 			insert(_el$15, () => `Erro no painel: ${err?.message ?? "desconhecido"}`);
 			effect((_p$) => {
 				var _v$3 = text(), _v$4 = muted();
@@ -12328,9 +12328,9 @@ function SidebarInner(props) {
 	};
 	const failedSuffix = () => failedSuffixText(dispatchView()?.failures);
 	const header = () => tuiPrefs().sidebar.header;
-	const availableUpdate = useAvailableUpdate("2.2.2");
+	const availableUpdate = useAvailableUpdate("2.3.0");
 	const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
-	const updateBadge = () => formatUpdateBadge("2.2.2", availableUpdate(), { isPt: isPt() });
+	const updateBadge = () => formatUpdateBadge("2.3.0", availableUpdate(), { isPt: isPt() });
 	const artifacts = useWorkspaceArtifacts(context);
 	const activePlan = () => artifacts().find((entry) => entry.kind === "plan");
 	return (() => {
@@ -12350,7 +12350,7 @@ function SidebarInner(props) {
 			get children() {
 				var _el$18 = createElement("text");
 				setProp(_el$18, "attributes", 1);
-				insert(_el$18, `Pantheon v2.2.2`);
+				insert(_el$18, `Pantheon v2.3.0`);
 				effect((_$p) => setProp(_el$18, "fg", text(), _$p));
 				return _el$18;
 			}
@@ -13460,13 +13460,13 @@ function useWorkspaceArtifacts(context) {
 *  this keeps a compact Pantheon line visible on the home footer meanwhile. */
 function HomeStatus(props) {
 	const preset = useActivePreset(props.context).preset;
-	const availableUpdate = useAvailableUpdate("2.2.2");
+	const availableUpdate = useAvailableUpdate("2.3.0");
 	const artifacts = useWorkspaceArtifacts(props.context);
 	const activePlan = () => artifacts().find((entry) => entry.kind === "plan");
 	const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
 	const accent = () => resolveAccentColor(tuiDraftPreview()?.theme?.accent ?? tuiPrefs().theme?.accent, props.context.theme);
 	const muted = () => props.context.theme?.text?.muted ?? props.context.theme?.text?.base;
-	const updateBadge = () => formatUpdateBadge("2.2.2", availableUpdate(), {
+	const updateBadge = () => formatUpdateBadge("2.3.0", availableUpdate(), {
 		isPt: isPt(),
 		compact: true
 	});
@@ -13479,7 +13479,7 @@ function HomeStatus(props) {
 			insertNode(_el$128, _el$129);
 			insertNode(_el$128, _el$132);
 			setProp(_el$128, "flexDirection", "row");
-			insert(_el$129, () => `Pantheon v2.2.2${preset().name ? ` ▸ ${preset().name}` : ""}`);
+			insert(_el$129, () => `Pantheon v2.3.0${preset().name ? ` ▸ ${preset().name}` : ""}`);
 			insert(_el$128, createComponent(Show, {
 				get when() {
 					return updateBadge();
@@ -13630,7 +13630,7 @@ const plugin = Plugin.define({
 			append: "home.footer.status",
 			render: () => createComponent(HomeStatus, { context })
 		});
-		setAvailableUpdateVersion(resolveCachedAvailableUpdate("2.2.2", updateCheckStateFile().readState()));
+		setAvailableUpdateVersion(resolveCachedAvailableUpdate("2.3.0", updateCheckStateFile().readState()));
 		const updateNoticeTimer = setTimeout(() => {
 			checkForPantheonUpdate(context).catch(() => {});
 		}, 3e3);
