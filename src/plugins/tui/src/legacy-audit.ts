@@ -262,6 +262,66 @@ function isLegacyOrBrokenPantheonMcp(
   return { remove: isPython || isBrokenLocal, isPython }
 }
 
+const MIN_SUPPORTED_AUDIT_VERSION: readonly [number, number, number] = [2, 3, 0]
+
+function isBelowMinAuditVersion(spec: unknown): boolean {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)/.exec(String(spec ?? '').trim())
+  if (!match) return false
+  const parts = [Number(match[1]), Number(match[2]), Number(match[3])] as const
+  for (let i = 0; i < 3; i += 1) {
+    const a = parts[i] ?? 0
+    const b = MIN_SUPPORTED_AUDIT_VERSION[i] ?? 0
+    if (a !== b) {
+      return a < b
+    }
+  }
+  return false
+}
+
+function stripAuditNegation(ref: string): string {
+  return ref.startsWith('!') ? ref.slice(1).trim() : ref.trim()
+}
+
+function parseAuditPantheonSpec(ref: string): {
+  kind: 'package' | 'legacy-tui' | 'npx' | 'copied-tui'
+  base: string
+  spec: string | null
+} | null {
+  const norm = stripAuditNegation(ref).replaceAll('\\', '/')
+  const pkgMatch = /^(pantheon-opencode(?:\/(plugin|tui))?)(?:@([^\s/]+))?$/i.exec(norm)
+  if (pkgMatch) {
+    return {
+      kind: 'package',
+      base: (pkgMatch[1] ?? '').toLowerCase(),
+      spec: pkgMatch[3] ?? null,
+    }
+  }
+  const tuiMatch = /^(pantheon-tui)(?:@([^\s/]+))?$/i.exec(norm)
+  if (tuiMatch) {
+    return { kind: 'legacy-tui', base: 'pantheon-tui', spec: tuiMatch[2] ?? null }
+  }
+  if (
+    /^npx(?:\s+-y)?\s+pantheon-(?:tui|opencode)(?:@\S+)?$/i.test(norm) ||
+    /^npx:pantheon-(?:tui|opencode)(?:@\S+)?$/i.test(norm) ||
+    /(?:^|\/)\.npm\/_npx\/[^/]+\/node_modules\/pantheon-(?:tui|opencode)(?:\/|$)/i.test(norm)
+  ) {
+    return { kind: 'npx', base: norm, spec: null }
+  }
+  if (
+    /^plugins\/pantheon-tui(?:\/.*)?$/i.test(norm) ||
+    /(?:^|\/)plugins\/pantheon-tui(?:\/dist\/tui\.(?:js|tsx))?$/i.test(norm)
+  ) {
+    return { kind: 'copied-tui', base: norm, spec: null }
+  }
+  return null
+}
+
+function isStaleAuditSpec(spec: string | null): boolean {
+  if (!spec) return false
+  const normalized = spec.trim().toLowerCase()
+  return normalized === 'next' || isBelowMinAuditVersion(normalized)
+}
+
 function getAuditPluginRef(entry: unknown): string | null {
   if (typeof entry === 'string') return entry
   if (isPlainRecord(entry) && typeof entry.package === 'string') return entry.package
@@ -270,47 +330,80 @@ function getAuditPluginRef(entry: unknown): string | null {
 
 function isAuditPantheonPluginRef(ref: string | null): boolean {
   if (!ref) return false
-  const norm = ref.replaceAll('\\', '/')
+  if (parseAuditPantheonSpec(ref)) return true
+  const norm = stripAuditNegation(ref).replaceAll('\\', '/')
   return (
-    /^pantheon-opencode(?:\/.*)?$/i.test(norm) ||
-    /^pantheon-tui$/i.test(norm) ||
-    /^plugins\/pantheon-tui$/i.test(norm) ||
     /pantheon-hooks(?:\.(?:ts|js|mjs))?$/i.test(norm) ||
     /(?:^|\/)src\/plugin\.ts$/i.test(norm) ||
-    /(?:^|\/)pantheon-opencode\/src\/plugin$/i.test(norm) ||
-    /(?:^|\/)plugins\/pantheon-tui$/i.test(norm)
+    /(?:^|\/)pantheon-opencode\/src\/plugin$/i.test(norm)
   )
 }
 
-function isAuditLegacyPluginEntry(
+interface AuditPluginEntryAction {
+  key: 'plugin' | 'plugins'
+  index: number
+  action: 'remove' | 'replace'
+  replacement?: string
+}
+
+function classifyAuditPluginEntry(
   entry: unknown,
   configDir: string,
   singularKey: boolean,
   hasNpmNativePlugin: boolean,
-): boolean {
+  unpinnedBases: ReadonlySet<string>,
+  plannedReplacements: Set<string>,
+): Omit<AuditPluginEntryAction, 'key' | 'index'> | null {
   const ref = getAuditPluginRef(entry)
-  if (!ref || !isAuditPantheonPluginRef(ref)) return false
-  if (singularKey) return true
-  const norm = ref.replaceAll('\\', '/')
-  if (/pantheon-hooks(?:\.(?:ts|js|mjs))?$/i.test(norm)) return true
-  if (/(?:^|\/)src\/plugin\.ts$/i.test(norm)) return true
-  if (
-    hasNpmNativePlugin &&
-    (/^pantheon-tui$/i.test(norm) ||
-      /^plugins\/pantheon-tui$/i.test(norm) ||
-      /(?:^|\/)plugins\/pantheon-tui$/i.test(norm))
-  ) {
-    return true
+  if (!ref || !isAuditPantheonPluginRef(ref)) return null
+  if (singularKey) return { action: 'remove' }
+  const norm = stripAuditNegation(ref).replaceAll('\\', '/')
+  if (/pantheon-hooks(?:\.(?:ts|js|mjs))?$/i.test(norm)) return { action: 'remove' }
+  if (/(?:^|\/)src\/plugin\.ts$/i.test(norm)) return { action: 'remove' }
+
+  const parsed = parseAuditPantheonSpec(ref)
+  if (parsed?.kind === 'npx' || parsed?.kind === 'legacy-tui' || parsed?.kind === 'copied-tui') {
+    return { action: 'remove' }
   }
-  const isPackageSubpath =
-    norm === 'pantheon-opencode' ||
-    norm === 'pantheon-opencode/plugin' ||
-    norm === 'pantheon-opencode/tui'
-  if (!isPackageSubpath && (norm.startsWith('/') || norm.startsWith('.') || norm.includes('/'))) {
+  if (parsed?.kind === 'package') {
+    if (isStaleAuditSpec(parsed.spec)) {
+      const targetBase =
+        parsed.base === 'pantheon-opencode/tui' ? 'pantheon-opencode/tui' : 'pantheon-opencode'
+      if (
+        unpinnedBases.has(targetBase) ||
+        (targetBase === 'pantheon-opencode' && unpinnedBases.has('pantheon-opencode/plugin')) ||
+        plannedReplacements.has(targetBase)
+      ) {
+        return { action: 'remove' }
+      }
+      plannedReplacements.add(targetBase)
+      return { action: 'replace', replacement: targetBase }
+    }
+    return null
+  }
+  if (norm.startsWith('/') || norm.startsWith('.') || norm.includes('/')) {
     const targetPath = isAbsolute(ref) ? ref : resolve(configDir, ref)
-    if (!existsSync(targetPath)) return true
+    if (!existsSync(targetPath)) return { action: 'remove' }
+    if (norm.includes('/_npx/')) {
+      if (
+        hasNpmNativePlugin ||
+        unpinnedBases.has('pantheon-opencode') ||
+        unpinnedBases.has('pantheon-opencode/plugin') ||
+        plannedReplacements.has('pantheon-opencode')
+      ) {
+        return { action: 'remove' }
+      }
+      plannedReplacements.add('pantheon-opencode')
+      return { action: 'replace', replacement: 'pantheon-opencode' }
+    }
+    if (
+      (hasNpmNativePlugin || plannedReplacements.has('pantheon-opencode')) &&
+      norm.endsWith('/src/plugin')
+    ) {
+      return { action: 'remove' }
+    }
   }
-  return false
+  return null
 }
 
 function inspectAuditConfigFile(filePath: string, configDir: string) {
@@ -343,23 +436,71 @@ function inspectAuditConfigFile(filePath: string, configDir: string) {
     }
 
     const plural = Array.isArray(parsed.plugins) ? parsed.plugins : []
-    const hasNpmNativePlugin = plural.some((e) => {
-      const ref = getAuditPluginRef(e)?.trim()
-      return ref === 'pantheon-opencode' || ref === 'pantheon-opencode/plugin'
-    })
-    const legacyPlugins: Array<{ key: 'plugin' | 'plugins'; index: number }> = []
+    const unpinnedBases = new Set<string>()
+    for (const entry of plural) {
+      const parsedRef = parseAuditPantheonSpec(getAuditPluginRef(entry) ?? '')
+      if (parsedRef?.kind === 'package' && !isStaleAuditSpec(parsedRef.spec)) {
+        unpinnedBases.add(parsedRef.base)
+      }
+    }
+    const hasNpmNativePlugin =
+      unpinnedBases.has('pantheon-opencode') || unpinnedBases.has('pantheon-opencode/plugin')
+    const isTuiCfg = basename(filePath) === 'tui.json' || basename(filePath) === 'cli.json'
+    const legacyPlugins: AuditPluginEntryAction[] = []
+    const plannedReplacements = new Set<string>()
+    const classifyTui = (entry: unknown): Omit<AuditPluginEntryAction, 'key' | 'index'> | null => {
+      const ref = getAuditPluginRef(entry)
+      if (!ref) return null
+      const cleanRef = stripAuditNegation(ref)
+      if (!isAuditPantheonPluginRef(cleanRef)) return null
+      const parsedRef = parseAuditPantheonSpec(cleanRef)
+      if (
+        parsedRef?.kind === 'copied-tui' ||
+        parsedRef?.kind === 'legacy-tui' ||
+        parsedRef?.kind === 'npx'
+      ) {
+        return { action: 'remove' }
+      }
+      if (parsedRef?.kind === 'package' && isStaleAuditSpec(parsedRef.spec)) {
+        if (hasNpmNativePlugin || unpinnedBases.has('pantheon-opencode/tui')) {
+          return { action: 'remove' }
+        }
+        return { action: 'replace', replacement: 'pantheon-opencode/tui' }
+      }
+      if (hasNpmNativePlugin || ref.startsWith('!') || !existsSync(resolve(configDir, cleanRef))) {
+        return { action: 'remove' }
+      }
+      return null
+    }
+
     if (Array.isArray(parsed.plugin)) {
       parsed.plugin.forEach((entry, index) => {
-        if (isAuditLegacyPluginEntry(entry, configDir, true, hasNpmNativePlugin)) {
-          legacyPlugins.push({ key: 'plugin', index })
-        }
+        const verdict = isTuiCfg
+          ? classifyTui(entry)
+          : classifyAuditPluginEntry(
+              entry,
+              configDir,
+              true,
+              hasNpmNativePlugin,
+              unpinnedBases,
+              plannedReplacements,
+            )
+        if (verdict) legacyPlugins.push({ key: 'plugin', index, ...verdict })
       })
     }
     if (Array.isArray(parsed.plugins)) {
       parsed.plugins.forEach((entry, index) => {
-        if (isAuditLegacyPluginEntry(entry, configDir, false, hasNpmNativePlugin)) {
-          legacyPlugins.push({ key: 'plugins', index })
-        }
+        const verdict = isTuiCfg
+          ? classifyTui(entry)
+          : classifyAuditPluginEntry(
+              entry,
+              configDir,
+              false,
+              hasNpmNativePlugin,
+              unpinnedBases,
+              plannedReplacements,
+            )
+        if (verdict) legacyPlugins.push({ key: 'plugins', index, ...verdict })
       })
     }
     return { filePath, raw, parsed, legacyMcps, legacyPlugins }
@@ -390,9 +531,24 @@ function cleanAuditConfigFile(filePath: string, configDir: string, backupScopeRo
   }
   for (const key of ['plugin', 'plugins'] as const) {
     if (!Array.isArray(cfg[key])) continue
-    const drop = new Set(inspected.legacyPlugins.filter((p) => p.key === key).map((p) => p.index))
-    if (drop.size === 0) continue
-    cfg[key] = (cfg[key] as unknown[]).filter((_, i) => !drop.has(i))
+    const actions = new Map(
+      inspected.legacyPlugins.filter((p) => p.key === key).map((p) => [p.index, p]),
+    )
+    if (actions.size === 0) continue
+    const updated: unknown[] = []
+    ;(cfg[key] as unknown[]).forEach((entry, i) => {
+      const verdict = actions.get(i)
+      if (!verdict) {
+        updated.push(entry)
+        return
+      }
+      if (verdict.action === 'replace' && verdict.replacement) {
+        updated.push(
+          isPlainRecord(entry) ? { ...entry, package: verdict.replacement } : verdict.replacement,
+        )
+      }
+    })
+    cfg[key] = updated
     if (
       (cfg[key] as unknown[]).length === 0 &&
       (key === 'plugin' || basename(filePath) === 'tui.json' || basename(filePath) === 'cli.json')
@@ -504,6 +660,15 @@ function collectCacheAudit(cacheNpmDir: string, options: LegacyAuditOptions): Le
     if (runningIsStable && entry.name === 'pantheon-opencode@beta') {
       pushCacheItem(channelDir, 'Stale @beta plugin cache coexisting with stable install')
       continue
+    }
+
+    // Flag stale @next or below-minimum pinned channel caches (e.g. @1.5.2) when not active.
+    if (entry.name.startsWith('pantheon-opencode@')) {
+      const spec = entry.name.slice('pantheon-opencode@'.length).trim().toLowerCase()
+      if (spec === 'next' || isBelowMinAuditVersion(spec)) {
+        pushCacheItem(channelDir, `Stale legacy plugin cache (${entry.name})`)
+        continue
+      }
     }
 
     // Keep only the active (or newest) timestamp/version revision inside a channel directory.
@@ -826,6 +991,67 @@ function collectScopeAudit(
         'redundantAsset',
         'Legacy instruction file superseded by AGENTS.global.md',
       )
+    }
+
+    const isRepoSource =
+      existsSync(join(configRoot, 'src', 'mcp', 'code_mode.py')) &&
+      existsSync(join(configRoot, 'package.json'))
+    if (!isRepoSource) {
+      const globalAgentsCopy = join(configRoot, 'AGENTS.global.md')
+      if (existsSync(globalAgentsCopy)) {
+        try {
+          const st = lstatSync(globalAgentsCopy)
+          if (
+            !st.isSymbolicLink() &&
+            st.isFile() &&
+            /<!--\s*pantheon:generated:begin|Pantheon Agent System/i.test(
+              readFileSync(globalAgentsCopy, 'utf8'),
+            )
+          ) {
+            addItem(
+              globalAgentsCopy,
+              'redundantAsset',
+              'Copied AGENTS.global.md superseded by native reference transform',
+            )
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+      const agentsCopy = join(configRoot, 'AGENTS.md')
+      if (existsSync(agentsCopy)) {
+        try {
+          const st = lstatSync(agentsCopy)
+          if (!st.isSymbolicLink() && st.isFile()) {
+            const content = readFileSync(agentsCopy, 'utf8')
+            if (/<!--\s*pantheon:generated:begin/i.test(content)) {
+              const stripped = content
+                .replace(
+                  /<!--\s*pantheon:generated:begin[\s\S]*?<!--\s*pantheon:generated:end[^\n]*-->\r?\n?/gi,
+                  '',
+                )
+                .trim()
+              if (stripped === '') {
+                addItem(
+                  agentsCopy,
+                  'redundantAsset',
+                  'Copied global AGENTS.md superseded by native reference transform',
+                )
+              } else if (stripped !== content.trim()) {
+                items.push({
+                  path: `${agentsCopy}#pantheon-managed`,
+                  scope,
+                  category: 'redundantAsset',
+                  reason: 'Stale Pantheon managed region inside AGENTS.md',
+                  bytes: 0,
+                })
+              }
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+      }
     }
 
     for (const skillId of CANONICAL_SKILL_IDS) {
@@ -1215,6 +1441,39 @@ export function cleanLegacyArtifacts(
     if (scopeFilter && item.scope !== scopeFilter) continue
     if (item.path.endsWith('#legacy-vec')) {
       removed.push(item.path)
+      continue
+    }
+    if (item.path.endsWith('#pantheon-managed')) {
+      const agentsPath = item.path.slice(0, -'#pantheon-managed'.length)
+      const scopeRoot = item.scope === 'global' ? globalConfigDir : workspaceDir
+      if (!agentsPath || !scopeRoot || !isConfinedWithin(scopeRoot, agentsPath)) {
+        errors.push({ path: item.path, reason: 'Path escapes target scope root' })
+        continue
+      }
+      try {
+        if (existsSync(agentsPath)) {
+          const raw = readFileSync(agentsPath, 'utf8')
+          const stripped = raw
+            .replace(
+              /<!--\s*pantheon:generated:begin[\s\S]*?<!--\s*pantheon:generated:end[^\n]*-->\r?\n?/gi,
+              '',
+            )
+            .trim()
+          const st = lstatSync(agentsPath)
+          const tmp = `${agentsPath}.tmp-${process.pid}`
+          writeFileSync(tmp, stripped === '' ? '' : `${stripped}\n`, {
+            encoding: 'utf8',
+            mode: st.mode & 0o777,
+          })
+          renameSync(tmp, agentsPath)
+        }
+        removed.push(item.path)
+      } catch (err) {
+        errors.push({
+          path: item.path,
+          reason: err instanceof Error ? err.message : String(err),
+        })
+      }
       continue
     }
     if (item.path.includes('#legacy-mcp:') || item.path.endsWith('#legacy-plugin')) {

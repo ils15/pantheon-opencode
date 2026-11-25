@@ -351,15 +351,15 @@ async function main(): Promise<void> {
     // anonymous casts it replaced do not come back.
     assert.match(pluginSource, /interface HostPluginContext extends PluginContext/)
     assert.match(pluginSource, /function hostDomains\(context: PluginContext\): HostPluginContext/)
-    // Nine call sites: installV2TodoEnforcer, registerV2Tools, subscribeV2Events,
+    // Ten call sites: installV2TodoEnforcer, registerV2Tools, subscribeV2Events,
     // registerV2SessionHooks, registerV2ToolHooks, registerV2PermissionHook,
-    // bounded-read preparation, Phase 7's compaction hook, and the setup
+    // bounded-read preparation, Phase 7's compaction hook, the setup
     // flow's one-shot Jev runtime build (Phase 5, threaded to the tool
-    // registration and the J1 observer). New host-domain reads must continue
-    // to use this declaration.
+    // registration and the J1 observer), and the install guard's host-version
+    // probe. New host-domain reads must continue to use this declaration.
     assert.equal(
       (pluginSource.match(/hostDomains\(context\)/g) ?? []).length,
-      9,
+      10,
       'every host-domain read must go through hostDomains(context)',
     )
     assert.doesNotMatch(
@@ -4881,6 +4881,124 @@ async function main(): Promise<void> {
     await after({})
     await after({ tool: 'read', status: 'error', error: { message: 'x' } })
     await after({ tool: 'read', status: 'completed', result: 7 })
+  })
+
+  test('setup returns a hot-reload cleanup that disposes registrations and silences stale hooks', async () => {
+    let disposedRegs = 0
+    let beforeHandler: ((event: unknown) => void | Promise<void>) | undefined
+    let permissionHandler: ((event: unknown) => void | Promise<void>) | undefined
+
+    const cleanup = (await plugin.setup(
+      makeBaseContext({
+        agent: {
+          transform: async () => ({
+            dispose: async () => {
+              disposedRegs += 1
+            },
+          }),
+        },
+        tool: {
+          hook: async (name: string, handler: typeof beforeHandler) => {
+            if (name === 'execute.before') beforeHandler = handler
+            return {
+              dispose: async () => {
+                disposedRegs += 1
+              },
+            }
+          },
+        },
+        permission: {
+          hook: async (_name: string, handler: typeof permissionHandler) => {
+            permissionHandler = handler
+            return {
+              dispose: async () => {
+                disposedRegs += 1
+              },
+            }
+          },
+        },
+      }) as never,
+    )) as unknown as (() => void) | undefined
+
+    assert.equal(typeof cleanup, 'function', 'setup must return a cleanup handle for hot-reload')
+    cleanup?.()
+    assert.ok(disposedRegs >= 3, 'cleanup must dispose captured transform and hook registrations')
+
+    // Stale permission handler from disposed instance must NOT mutate events or deny
+    const staleEvent: Record<string, unknown> = {
+      sessionID: 'root',
+      action: 'subagent',
+      resources: ['hermes'],
+      effect: 'ask',
+    }
+    await permissionHandler?.(staleEvent)
+    assert.equal(staleEvent.effect, 'ask', 'disposed permission handler must remain a no-op')
+  })
+
+  test('hot-reload cleanup + re-setup preserves hermes->apollo root delegation without stale hook interference', async () => {
+    const permissionHandlers: Array<(event: unknown) => void | Promise<void>> = []
+    const beforeHandlers: Array<(event: unknown, output: unknown) => void | Promise<void>> = []
+    const fakeSession = { id: 'ses_hermes_root', parentID: null }
+
+    const buildCtx = () =>
+      makeBaseContext({
+        session: {
+          get: async () => fakeSession,
+        },
+        tool: {
+          hook: async (
+            name: string,
+            handler: (event: unknown, output: unknown) => void | Promise<void>,
+          ) => {
+            if (name === 'execute.before') beforeHandlers.push(handler)
+            return { dispose: async () => {} }
+          },
+        },
+        permission: {
+          hook: async (_name: string, handler: (event: unknown) => void | Promise<void>) => {
+            permissionHandlers.push(handler)
+            return { dispose: async () => {} }
+          },
+        },
+      })
+
+    const cleanup1 = (await plugin.setup(buildCtx() as never)) as unknown as
+      | (() => void)
+      | undefined
+    cleanup1?.()
+    const cleanup2 = (await plugin.setup(buildCtx() as never)) as unknown as
+      | (() => void)
+      | undefined
+
+    assert.equal(permissionHandlers.length, 2)
+    assert.equal(beforeHandlers.length, 2)
+
+    const toolEvent = {
+      tool: 'subagent',
+      sessionID: 'ses_hermes_root',
+      messageID: 'msg_1',
+      id: 'call_1',
+      agent: 'hermes',
+      input: { agent: 'apollo' },
+    }
+    for (const h of beforeHandlers) await h(toolEvent, {})
+
+    const permEvent: Record<string, unknown> = {
+      sessionID: 'ses_hermes_root',
+      action: 'subagent',
+      resources: ['apollo'],
+      agent: 'hermes',
+      source: { type: 'tool', messageID: 'msg_1', id: 'call_1' },
+      effect: 'allow',
+    }
+    for (const h of permissionHandlers) await h(permEvent)
+
+    assert.equal(
+      permEvent.effect,
+      'allow',
+      'hermes->apollo root delegation must remain allowed after hot-reload cleanup + setup',
+    )
+    cleanup2?.()
   })
 
   // ─── Summary ───────────────────────────────────────────────────────

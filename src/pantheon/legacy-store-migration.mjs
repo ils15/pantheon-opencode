@@ -23,8 +23,15 @@ import {
 } from 'node:fs'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import {
+  isBelowSupportedPantheonVersion,
+  MIN_SUPPORTED_PANTHEON_VERSION,
+} from './install-guard.mjs'
 
 const SAFE_SEGMENT_RE = /^[a-zA-Z0-9._:-]{1,128}$/
+
+/** npm's per-invocation npx cache, relative to the user's home. */
+const NPX_CACHE_SEGMENTS = ['.npm', '_npx']
 
 /**
  * Resolve the user's global OpenCode config directory safely.
@@ -43,6 +50,26 @@ export function resolveSafeGlobalConfigDir(env = process.env) {
   }
   const home = env.HOME?.trim()
   return home ? join(resolve(home), '.config', 'opencode') : undefined
+}
+
+/**
+ * Resolve the user's home directory for the npm npx cache sweep WITHOUT ever
+ * aiming at the developer's real cache from a test process.
+ *
+ * Mirrors {@link resolveSafeGlobalConfigDir}: inside Node's test runner
+ * (`NODE_TEST_CONTEXT`), returns `undefined` unless the cache is explicitly
+ * redirected with `PANTHEON_TEST_NPM_HOME`. An in-process test that forgot to
+ * pass `homeDir` must not delete npx entries on the machine running it.
+ */
+export function resolveSafeNpmCacheHome(env = process.env) {
+  if (env.PANTHEON_TEST_NPM_HOME?.trim()) {
+    return resolve(env.PANTHEON_TEST_NPM_HOME.trim())
+  }
+  if (env.NODE_TEST_CONTEXT) {
+    return undefined
+  }
+  const home = env.HOME?.trim()
+  return home ? resolve(home) : undefined
 }
 
 function toSafeSegment(raw, fallback = 'default') {
@@ -402,55 +429,124 @@ function getPluginRefString(entry) {
   return null
 }
 
+function stripNegationPrefix(ref) {
+  return ref.startsWith('!') ? ref.slice(1).trim() : ref.trim()
+}
+
+function parseVersionedPantheonSpec(ref) {
+  const norm = stripNegationPrefix(ref).replaceAll('\\', '/')
+  const pkgMatch = /^(pantheon-opencode(?:\/(plugin|tui))?)(?:@([^\s/]+))?$/i.exec(norm)
+  if (pkgMatch) {
+    return {
+      kind: 'package',
+      base: pkgMatch[1].toLowerCase(),
+      subpath: pkgMatch[2]?.toLowerCase() ?? null,
+      spec: pkgMatch[3] ?? null,
+    }
+  }
+  const tuiMatch = /^(pantheon-tui)(?:@([^\s/]+))?$/i.exec(norm)
+  if (tuiMatch) {
+    return {
+      kind: 'legacy-tui',
+      base: 'pantheon-tui',
+      subpath: null,
+      spec: tuiMatch[2] ?? null,
+    }
+  }
+  if (
+    /^npx(?:\s+-y)?\s+pantheon-(?:tui|opencode)(?:@\S+)?$/i.test(norm) ||
+    /^npx:pantheon-(?:tui|opencode)(?:@\S+)?$/i.test(norm) ||
+    /(?:^|\/)\.npm\/_npx\/[^/]+\/node_modules\/pantheon-(?:tui|opencode)(?:\/|$)/i.test(norm)
+  ) {
+    return { kind: 'npx', base: norm, subpath: null, spec: null }
+  }
+  if (
+    /^plugins\/pantheon-tui(?:\/.*)?$/i.test(norm) ||
+    /(?:^|\/)plugins\/pantheon-tui(?:\/dist\/tui\.(?:js|tsx))?$/i.test(norm)
+  ) {
+    return { kind: 'copied-tui', base: norm, subpath: null, spec: null }
+  }
+  return null
+}
+
+function isStaleVersionSpec(spec) {
+  if (!spec) return false
+  const normalized = String(spec).trim().toLowerCase()
+  if (normalized === 'next') return true
+  return isBelowSupportedPantheonVersion(normalized)
+}
+
 function isPantheonPluginRef(ref) {
   if (typeof ref !== 'string') return false
-  const norm = ref.replaceAll('\\', '/')
+  if (parseVersionedPantheonSpec(ref)) return true
+  const norm = stripNegationPrefix(ref).replaceAll('\\', '/')
   return (
-    /^pantheon-opencode(?:\/.*)?$/i.test(norm) ||
-    /^pantheon-tui$/i.test(norm) ||
-    /^plugins\/pantheon-tui$/i.test(norm) ||
     /pantheon-hooks(?:\.(?:ts|js|mjs))?$/i.test(norm) ||
     /(?:^|\/)src\/plugin\.ts$/i.test(norm) ||
-    /(?:^|\/)pantheon-opencode\/src\/plugin$/i.test(norm) ||
-    /(?:^|\/)plugins\/pantheon-tui$/i.test(norm)
+    /(?:^|\/)pantheon-opencode\/src\/plugin$/i.test(norm)
   )
 }
 
-function isNpmNativePantheonPluginRef(ref) {
-  if (typeof ref !== 'string') return false
-  const norm = ref.trim().replaceAll('\\', '/')
-  return norm === 'pantheon-opencode' || norm === 'pantheon-opencode/plugin'
-}
-
-function shouldRemoveLegacyPluginEntry(entry, configDir, { singularKey, hasNpmNativePlugin }) {
+function classifyLegacyPluginEntry(
+  entry,
+  configDir,
+  { singularKey, hasExplicitNpmNativePlugin, unpinnedBasesPresent, plannedReplacements },
+) {
   const ref = getPluginRefString(entry)
-  if (!ref || !isPantheonPluginRef(ref)) return false
-  if (singularKey) return true
-  const norm = ref.replaceAll('\\', '/')
-  if (/pantheon-hooks(?:\.(?:ts|js|mjs))?$/i.test(norm)) return true
-  if (/(?:^|\/)src\/plugin\.ts$/i.test(norm)) return true
+  if (!ref || !isPantheonPluginRef(ref)) return null
+  if (singularKey) return { action: 'remove', ref }
 
-  const isCopiedTui =
-    /^pantheon-tui$/i.test(norm) ||
-    /^plugins\/pantheon-tui$/i.test(norm) ||
-    /(?:^|\/)plugins\/pantheon-tui$/i.test(norm)
-  if (isCopiedTui && hasNpmNativePlugin) return true
+  const norm = stripNegationPrefix(ref).replaceAll('\\', '/')
+  if (/pantheon-hooks(?:\.(?:ts|js|mjs))?$/i.test(norm)) return { action: 'remove', ref }
+  if (/(?:^|\/)src\/plugin\.ts$/i.test(norm)) return { action: 'remove', ref }
 
-  const isPackageSubpath =
-    norm === 'pantheon-opencode' ||
-    norm === 'pantheon-opencode/plugin' ||
-    norm === 'pantheon-opencode/tui'
-  if (!isPackageSubpath) {
-    const isPathLike = norm.startsWith('/') || norm.startsWith('.') || norm.includes('/')
-    if (isPathLike) {
-      const targetPath = isAbsolute(ref) ? ref : resolve(configDir, ref)
-      if (!existsSync(targetPath)) return true
-      if (hasNpmNativePlugin && (norm.includes('/_npx/') || norm.endsWith('/src/plugin'))) {
-        return true
+  const parsed = parseVersionedPantheonSpec(ref)
+  if (parsed?.kind === 'npx' || parsed?.kind === 'legacy-tui' || parsed?.kind === 'copied-tui') {
+    return { action: 'remove', ref }
+  }
+
+  if (parsed?.kind === 'package') {
+    if (isStaleVersionSpec(parsed.spec)) {
+      const targetBase =
+        parsed.base === 'pantheon-opencode/tui' ? 'pantheon-opencode/tui' : 'pantheon-opencode'
+      if (
+        unpinnedBasesPresent.has(targetBase) ||
+        (targetBase === 'pantheon-opencode' &&
+          unpinnedBasesPresent.has('pantheon-opencode/plugin')) ||
+        plannedReplacements.has(targetBase)
+      ) {
+        return { action: 'remove', ref }
       }
+      plannedReplacements.add(targetBase)
+      return { action: 'replace', ref, replacement: targetBase }
+    }
+    return null
+  }
+
+  const isPathLike = norm.startsWith('/') || norm.startsWith('.') || norm.includes('/')
+  if (isPathLike) {
+    const targetPath = isAbsolute(ref) ? ref : resolve(configDir, ref)
+    if (!existsSync(targetPath)) return { action: 'remove', ref }
+    if (norm.includes('/_npx/')) {
+      if (
+        hasExplicitNpmNativePlugin ||
+        unpinnedBasesPresent.has('pantheon-opencode') ||
+        unpinnedBasesPresent.has('pantheon-opencode/plugin') ||
+        plannedReplacements.has('pantheon-opencode')
+      ) {
+        return { action: 'remove', ref }
+      }
+      plannedReplacements.add('pantheon-opencode')
+      return { action: 'replace', ref, replacement: 'pantheon-opencode' }
+    }
+    if (
+      (hasExplicitNpmNativePlugin || plannedReplacements.has('pantheon-opencode')) &&
+      norm.endsWith('/src/plugin')
+    ) {
+      return { action: 'remove', ref }
     }
   }
-  return false
+  return null
 }
 
 function isRepoSourceRoot(dirPath) {
@@ -546,46 +642,72 @@ function inspectConfigFileLegacyItems(filePath, configDir, options = {}) {
   }
 
   const pluralPlugins = Array.isArray(parsed.plugins) ? parsed.plugins : []
-  const hasNpmNativePlugin =
-    options.forceNativePluginActive === true ||
-    pluralPlugins.some((entry) => isNpmNativePantheonPluginRef(getPluginRefString(entry)))
+  const unpinnedBasesPresent = new Set()
+  for (const entry of pluralPlugins) {
+    const parsedRef = parseVersionedPantheonSpec(getPluginRefString(entry) ?? '')
+    if (parsedRef?.kind === 'package' && !isStaleVersionSpec(parsedRef.spec)) {
+      unpinnedBasesPresent.add(parsedRef.base)
+    }
+  }
+  const hasExplicitNpmNativePlugin =
+    unpinnedBasesPresent.has('pantheon-opencode') ||
+    unpinnedBasesPresent.has('pantheon-opencode/plugin')
+  const hasNpmNativePlugin = options.forceNativePluginActive === true || hasExplicitNpmNativePlugin
 
   const isLegacyTuiEntry = (entry) => {
     const ref = getPluginRefString(entry)
-    if (!ref) return false
-    const cleanRef = ref.startsWith('!') ? ref.slice(1) : ref
-    return (
-      isPantheonPluginRef(cleanRef) &&
-      (hasNpmNativePlugin || ref.startsWith('!') || !existsSync(resolve(configDir, cleanRef)))
-    )
+    if (!ref) return null
+    const cleanRef = stripNegationPrefix(ref)
+    if (!isPantheonPluginRef(cleanRef)) return null
+    const parsedRef = parseVersionedPantheonSpec(cleanRef)
+    if (
+      parsedRef?.kind === 'copied-tui' ||
+      parsedRef?.kind === 'legacy-tui' ||
+      parsedRef?.kind === 'npx'
+    ) {
+      return { action: 'remove', ref }
+    }
+    if (parsedRef?.kind === 'package' && isStaleVersionSpec(parsedRef.spec)) {
+      if (hasNpmNativePlugin || unpinnedBasesPresent.has('pantheon-opencode/tui')) {
+        return { action: 'remove', ref }
+      }
+      return { action: 'replace', ref, replacement: 'pantheon-opencode/tui' }
+    }
+    if (hasNpmNativePlugin || ref.startsWith('!') || !existsSync(resolve(configDir, cleanRef))) {
+      return { action: 'remove', ref }
+    }
+    return null
   }
 
   const legacyPlugins = []
+  const plannedReplacements = new Set()
   if (Array.isArray(parsed.plugin)) {
     parsed.plugin.forEach((entry, index) => {
-      if (
-        isTuiConfig
-          ? isLegacyTuiEntry(entry)
-          : shouldRemoveLegacyPluginEntry(entry, configDir, {
-              singularKey: true,
-              hasNpmNativePlugin,
-            })
-      ) {
-        legacyPlugins.push({ key: 'plugin', index, ref: getPluginRefString(entry) })
+      const verdict = isTuiConfig
+        ? isLegacyTuiEntry(entry)
+        : classifyLegacyPluginEntry(entry, configDir, {
+            singularKey: true,
+            hasExplicitNpmNativePlugin,
+            unpinnedBasesPresent,
+            plannedReplacements,
+          })
+      if (verdict) {
+        legacyPlugins.push({ key: 'plugin', index, ...verdict })
       }
     })
   }
   if (Array.isArray(parsed.plugins)) {
     parsed.plugins.forEach((entry, index) => {
-      if (
-        isTuiConfig
-          ? isLegacyTuiEntry(entry)
-          : shouldRemoveLegacyPluginEntry(entry, configDir, {
-              singularKey: false,
-              hasNpmNativePlugin,
-            })
-      ) {
-        legacyPlugins.push({ key: 'plugins', index, ref: getPluginRefString(entry) })
+      const verdict = isTuiConfig
+        ? isLegacyTuiEntry(entry)
+        : classifyLegacyPluginEntry(entry, configDir, {
+            singularKey: false,
+            hasExplicitNpmNativePlugin,
+            unpinnedBasesPresent,
+            plannedReplacements,
+          })
+      if (verdict) {
+        legacyPlugins.push({ key: 'plugins', index, ...verdict })
       }
     })
   }
@@ -627,9 +749,22 @@ function cleanConfigFileInPlace(inspection, backupScopeRoot, dryRun = false) {
 
     for (const key of ['plugin', 'plugins']) {
       if (!Array.isArray(cfg[key])) continue
-      const dropIndexes = new Set(legacyPlugins.filter((p) => p.key === key).map((p) => p.index))
-      if (dropIndexes.size === 0) continue
-      cfg[key] = cfg[key].filter((_, idx) => !dropIndexes.has(idx))
+      const actions = new Map(legacyPlugins.filter((p) => p.key === key).map((p) => [p.index, p]))
+      if (actions.size === 0) continue
+      const updated = []
+      cfg[key].forEach((entry, idx) => {
+        const verdict = actions.get(idx)
+        if (!verdict) {
+          updated.push(entry)
+          return
+        }
+        if (verdict.action === 'replace' && verdict.replacement) {
+          updated.push(
+            isPlainObject(entry) ? { ...entry, package: verdict.replacement } : verdict.replacement,
+          )
+        }
+      })
+      cfg[key] = updated
       if (
         cfg[key].length === 0 &&
         (key === 'plugin' || basename(filePath) === 'tui.json' || basename(filePath) === 'cli.json')
@@ -697,7 +832,7 @@ function cleanConfigFileInPlace(inspection, backupScopeRoot, dryRun = false) {
         )
       }
     }
-    // Remove legacy plugin entries in descending index order.
+    // Remove or unpin legacy plugin entries in descending index order.
     const sortedPlugins = [...legacyPlugins].sort((a, b) => b.index - a.index)
     for (const item of sortedPlugins) {
       const ast = parseJsoncAst(text, true)
@@ -705,6 +840,20 @@ function cleanConfigFileInPlace(inspection, backupScopeRoot, dryRun = false) {
       const arr = prop?.valueNode
       if (arr?.type !== 'array' || !arr.items[item.index]) continue
       const elem = arr.items[item.index]
+      if (item.action === 'replace' && item.replacement) {
+        if (elem.type === 'scalar') {
+          text = text.slice(0, elem.start) + JSON.stringify(item.replacement) + text.slice(elem.end)
+        } else if (elem.type === 'object') {
+          const pkgProp = findObjectProp(elem, 'package')
+          if (pkgProp) {
+            text =
+              text.slice(0, pkgProp.valueStart) +
+              JSON.stringify(item.replacement) +
+              text.slice(pkgProp.valueEnd)
+          }
+        }
+        continue
+      }
       text = spliceOutJsoncEntry(text, elem.start, elem.end, elem.commaBefore, elem.commaAfter)
     }
     // Drop emptied singular `plugin` key, or empty `plugins` on tui.json/cli.json.
@@ -841,6 +990,7 @@ function hasPendingLegacyFiles(rootDir, isGlobalConfig = false) {
       if (existsSync(join(dir, 'commands', 'pantheon.md'))) return true
       if (existsSync(join(dir, 'routing.yml'))) return true
       if (existsSync(join(dir, '.pantheon', 'install-state.json'))) return true
+      if (inspectConfigAgentsFiles(dir).length > 0) return true
       if (!preserveWorkingPythonMcp) {
         for (const py of LEGACY_PYTHON_RUNTIME_SCRIPTS) {
           if (existsSync(join(dir, 'scripts', py))) return true
@@ -849,6 +999,11 @@ function hasPendingLegacyFiles(rootDir, isGlobalConfig = false) {
     }
   }
   if (existsSync(join(rootDir, '.pantheon', 'install-state.json'))) return true
+  if (isGlobalConfig) {
+    const npmHome = resolveSafeNpmCacheHome(process.env)
+    if (collectLegacyNpxInstalls(npmHome).length > 0) return true
+    if (collectLegacyOpenCodeCacheInstalls(npmHome, process.env).length > 0) return true
+  }
   return false
 }
 
@@ -1584,8 +1739,9 @@ export function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
 
       const copiedTui = join(dir, 'plugins', 'pantheon-tui')
       if (existsSync(copiedTui) && !lstatSync(copiedTui).isSymbolicLink()) {
-        if (!dryRun) rmSync(copiedTui, { recursive: true, force: true })
-        staleFilesDeleted.push(copiedTui)
+        // v2.3.0 ships the TUI inside the package (`./tui`); a copied directory
+        // shadows it and is what left users on the V1 panel.
+        backupAndRemovePath(copiedTui, dir, staleFilesDeleted, dryRun)
       }
 
       const isPantheonMarkdown = (filePath) => {
@@ -1651,6 +1807,17 @@ export function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
         }
       }
 
+      for (const agentsAction of inspectConfigAgentsFiles(dir)) {
+        if (agentsAction.mode === 'delete') {
+          backupAndRemovePath(agentsAction.path, dir, staleFilesDeleted, dryRun)
+        } else if (agentsAction.mode === 'strip' && agentsAction.cleanedContent !== undefined) {
+          if (!dryRun) {
+            writeFileAtomicallyWithBackup(agentsAction.path, agentsAction.cleanedContent, dir)
+          }
+          staleFilesDeleted.push(`${agentsAction.path}#pantheon-managed`)
+        }
+      }
+
       const rootIsRepoSource = isRepoSourceRoot(root)
       if (!configCleanup.hasWorkingPythonMcp) {
         const codeModeDirs = [join(dir, '.pantheon', 'code-mode')]
@@ -1697,6 +1864,25 @@ export function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
       ]) {
         removeEmptyDirIfPossible(join(dir, emptySub), staleFilesDeleted, dryRun)
       }
+    }
+  }
+
+  // Sweep npm's npx cache for BELOW-MINIMUM pantheon-opencode installs.
+  //
+  // `opencode plugin add pantheon-opencode` can land a V1-era tree in an npx
+  // hash directory that later resolution reuses; removing the tree itself is not
+  // enough, the containing hash directory must go (npm keys the cache by it).
+  // Global-config leg only, so a project boot does not walk the cache twice.
+  if (options.cleanCopiedInstallArtifacts === true && options.isGlobalConfig === true) {
+    const npmHome = options.homeDir
+      ? resolve(options.homeDir)
+      : resolveSafeNpmCacheHome(options.env ?? process.env)
+    const backupScopeRoot = options.globalConfigDir ? resolve(options.globalConfigDir) : root
+    for (const { hashDir } of collectLegacyNpxInstalls(npmHome)) {
+      backupAndRemovePath(hashDir, backupScopeRoot, staleFilesDeleted, dryRun)
+    }
+    for (const { cacheDir } of collectLegacyOpenCodeCacheInstalls(npmHome, options.env)) {
+      backupAndRemovePath(cacheDir, backupScopeRoot, staleFilesDeleted, dryRun)
     }
   }
 
@@ -1852,6 +2038,210 @@ function isConfinedWithin(rootDir, targetPath) {
   }
 }
 
+/**
+ * Directories under `~/.npm/_npx` whose installed `pantheon-opencode` is below
+ * {@link MIN_SUPPORTED_PANTHEON_VERSION}.
+ *
+ * The whole hash directory is reported, not just `node_modules/pantheon-opencode`:
+ * npm keys the npx cache by the resolved tree, so a leftover hash directory keeps
+ * the V1 package resolvable and a re-run reuses it.
+ *
+ * Only entries that actually carry a `pantheon-opencode/package.json` are
+ * candidates, and an unreadable version is never guessed at — it is skipped.
+ *
+ * @param {string | undefined} homeDir
+ * @returns {Array<{ hashDir: string, version: string }>}
+ */
+export function collectLegacyNpxInstalls(homeDir) {
+  const found = []
+  if (!homeDir || typeof homeDir !== 'string') return found
+  const home = resolve(homeDir)
+  if (home === '/' || !existsSync(home)) return found
+  const npxRoot = join(home, ...NPX_CACHE_SEGMENTS)
+  if (!existsSync(npxRoot)) return found
+
+  let entries
+  try {
+    entries = readdirSync(npxRoot)
+  } catch {
+    return found
+  }
+
+  for (const entry of entries) {
+    const hashDir = join(npxRoot, entry)
+    try {
+      if (lstatSync(hashDir).isSymbolicLink()) continue
+    } catch {
+      continue
+    }
+    const manifestPath = join(hashDir, 'node_modules', 'pantheon-opencode', 'package.json')
+    if (!existsSync(manifestPath)) continue
+    let version
+    try {
+      version = String(JSON.parse(readFileSync(manifestPath, 'utf8')).version ?? '').trim()
+    } catch {
+      continue
+    }
+    if (!version || !isBelowSupportedPantheonVersion(version)) continue
+    if (!isConfinedWithin(npxRoot, hashDir)) continue
+    found.push({ hashDir, version })
+  }
+
+  return found
+}
+
+const PANTHEON_MANAGED_REGION_RE =
+  /<!--\s*pantheon:generated:begin[\s\S]*?<!--\s*pantheon:generated:end[^\n]*-->\r?\n?/gi
+
+/**
+ * Inspect copied Pantheon AGENTS.global.md / AGENTS.md inside an OpenCode config
+ * scope directory (`~/.config/opencode/` or `<project>/.opencode/`). Never
+ * runs against a repository checkout root.
+ */
+function inspectConfigAgentsFiles(configDir) {
+  const actions = []
+  if (!configDir || !existsSync(configDir) || isRepoSourceRoot(configDir)) return actions
+
+  const globalCopy = join(configDir, 'AGENTS.global.md')
+  if (existsSync(globalCopy)) {
+    try {
+      const st = lstatSync(globalCopy)
+      if (!st.isSymbolicLink() && st.isFile()) {
+        const content = readFileSync(globalCopy, 'utf8')
+        if (/<!--\s*pantheon:generated:begin|Pantheon Agent System/i.test(content)) {
+          actions.push({ path: globalCopy, mode: 'delete' })
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const agentsCopy = join(configDir, 'AGENTS.md')
+  if (existsSync(agentsCopy)) {
+    try {
+      const st = lstatSync(agentsCopy)
+      if (!st.isSymbolicLink() && st.isFile()) {
+        const content = readFileSync(agentsCopy, 'utf8')
+        if (/<!--\s*pantheon:generated:begin/i.test(content)) {
+          const stripped = content.replace(PANTHEON_MANAGED_REGION_RE, '').trim()
+          if (stripped === '') {
+            actions.push({ path: agentsCopy, mode: 'delete' })
+          } else if (stripped !== content.trim()) {
+            actions.push({
+              path: agentsCopy,
+              mode: 'strip',
+              cleanedContent: `${stripped}\n`,
+            })
+          }
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return actions
+}
+
+/**
+ * Sweep `~/.cache/opencode/npm/pantheon-opencode@*` directories whose cached
+ * version is below {@link MIN_SUPPORTED_PANTHEON_VERSION} or pinned to `@next`.
+ */
+export function collectLegacyOpenCodeCacheInstalls(homeDir, env) {
+  const found = []
+  const xdgCache = env?.XDG_CACHE_HOME?.trim()
+  const cacheRoot =
+    homeDir && typeof homeDir === 'string' && resolve(homeDir) !== '/'
+      ? xdgCache && env !== process.env
+        ? join(resolve(xdgCache), 'opencode', 'npm')
+        : join(resolve(homeDir), '.cache', 'opencode', 'npm')
+      : xdgCache
+        ? join(resolve(xdgCache), 'opencode', 'npm')
+        : undefined
+  if (!cacheRoot || !existsSync(cacheRoot)) return found
+
+  let entries
+  try {
+    entries = readdirSync(cacheRoot, { withFileTypes: true })
+  } catch {
+    return found
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    if (!entry.name.startsWith('pantheon-opencode@')) continue
+    const channelDir = join(cacheRoot, entry.name)
+    try {
+      if (lstatSync(channelDir).isSymbolicLink()) continue
+    } catch {
+      continue
+    }
+    const spec = entry.name.slice('pantheon-opencode@'.length).trim().toLowerCase()
+    const isNext = spec === 'next'
+
+    const manifests = []
+    try {
+      for (const sub of readdirSync(channelDir, { withFileTypes: true })) {
+        if (!sub.isDirectory()) continue
+        const m1 = join(channelDir, sub.name, 'node_modules', 'pantheon-opencode', 'package.json')
+        const m2 = join(channelDir, sub.name, 'package.json')
+        if (existsSync(m1)) manifests.push(m1)
+        else if (existsSync(m2)) manifests.push(m2)
+      }
+    } catch {
+      continue
+    }
+    const rootManifest = join(channelDir, 'node_modules', 'pantheon-opencode', 'package.json')
+    if (existsSync(rootManifest)) manifests.push(rootManifest)
+
+    const versions = []
+    for (const m of manifests) {
+      try {
+        const ver = String(JSON.parse(readFileSync(m, 'utf8')).version ?? '').trim()
+        if (ver) versions.push(ver)
+      } catch {
+        /* ignore */
+      }
+    }
+    const allBelowMin =
+      versions.length > 0 && versions.every((ver) => isBelowSupportedPantheonVersion(ver))
+    if (!isNext && !allBelowMin) continue
+    if (!isConfinedWithin(cacheRoot, channelDir)) continue
+    found.push({ cacheDir: channelDir, version: versions[0] ?? spec })
+  }
+  return found
+}
+
+/**
+ * Move a legacy directory into `<scope>/.pantheon/backups/` before it disappears.
+ *
+ * A rename, not a copy: same-filesystem removals cost no extra bytes and stay
+ * reversible. When the rename cannot happen (another filesystem), the directory
+ * is still removed — install cleanup never fails over a best-effort backup.
+ */
+function backupAndRemovePath(target, backupScopeRoot, deleted, dryRun = false) {
+  if (!existsSync(target)) return false
+  const tagged = resolve(target)
+  if (dryRun) {
+    deleted.push(tagged)
+    return true
+  }
+  let moved = false
+  try {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const backupDir = join(backupScopeRoot, '.pantheon', 'backups', `legacy-migration-${stamp}`)
+    mkdirSync(backupDir, { recursive: true, mode: 0o700 })
+    chmodSync(backupDir, 0o700)
+    renameSync(target, join(backupDir, basename(target)))
+    moved = true
+  } catch {
+    /* backup is best-effort */
+  }
+  if (!moved) rmSync(target, { recursive: true, force: true })
+  deleted.push(tagged)
+  return true
+}
+
 export function cleanLegacyOpenCodeConfigs(root, options = {}) {
   return inspectAndCleanLegacyConfigs(resolve(root), options)
 }
@@ -1921,6 +2311,8 @@ function collectScopeArtifacts(scope, baseRoot, configRoot, options = {}) {
       stale.endsWith('__pycache__')
     ) {
       addItem(stale, 'v1Obsolete', 'Obsolete legacy Python MCP runtime artifact')
+    } else if (/[\\/]_npx[\\/]/.test(stale)) {
+      addItem(stale, 'v1Obsolete', 'Below-minimum npx-cached Pantheon install (pre-2.3.0)')
     } else {
       addItem(stale, 'legacyStore', 'Obsolete or migrated legacy store artifact')
     }
@@ -1965,6 +2357,22 @@ function collectScopeArtifacts(scope, baseRoot, configRoot, options = {}) {
         'redundantAsset',
         'Legacy instruction file superseded by AGENTS.global.md reference transform',
       )
+    }
+
+    for (const agentsAction of inspectConfigAgentsFiles(configRoot)) {
+      if (agentsAction.mode === 'delete') {
+        addItem(
+          agentsAction.path,
+          'redundantAsset',
+          'Copied global AGENTS.md/AGENTS.global.md superseded by bundled reference transform',
+        )
+      } else {
+        addVirtualItem(
+          `${agentsAction.path}#pantheon-managed`,
+          'redundantAsset',
+          'Stale Pantheon managed block inside AGENTS.md superseded by reference transform',
+        )
+      }
     }
 
     for (const skillId of CANONICAL_SKILL_IDS) {

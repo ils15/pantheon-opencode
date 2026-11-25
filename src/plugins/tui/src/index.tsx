@@ -56,6 +56,7 @@ import {
   tuiPrefs,
 } from './tui-prefs'
 import {
+  comparePantheonVersions,
   formatUpdateBadge,
   formatUpdateToast,
   getAvailableUpdateVersion,
@@ -92,6 +93,38 @@ export {
 export { cellWidth } from './sidebar-width'
 
 const SINGLETON = Symbol.for('pantheon.tui.v2.loaded')
+
+interface TuiSingletonHandle {
+  readonly version?: string
+  readonly dispose?: () => void
+}
+
+function resolveSiblingCoreVersion(): string | undefined {
+  try {
+    const candidates = [
+      new URL('../../package.json', import.meta.url),
+      new URL('../../../package.json', import.meta.url),
+      new URL('../../../../package.json', import.meta.url),
+    ]
+    for (const candidate of candidates) {
+      try {
+        const parsed = JSON.parse(readFileSync(candidate, 'utf8')) as {
+          name?: unknown
+          version?: unknown
+        }
+        if (parsed.name === 'pantheon-opencode' && typeof parsed.version === 'string') {
+          const trimmed = parsed.version.trim()
+          if (trimmed) return trimmed
+        }
+      } catch {
+        /* try next candidate */
+      }
+    }
+  } catch {
+    /* fail-open */
+  }
+  return undefined
+}
 
 /* ─── Constants ─────────────────────────────────────────── */
 
@@ -5868,9 +5901,49 @@ function PromptFooter(props: { context: any; sessionID?: string | undefined }) {
 const plugin = Plugin.define({
   id: 'pantheon.tui',
   setup(context: Context) {
+    const currentVer = typeof __PANTHEON_VERSION__ !== 'undefined' ? __PANTHEON_VERSION__ : ''
     const globalState = globalThis as unknown as Record<PropertyKey, unknown>
-    if (globalState[SINGLETON]) return
-    globalState[SINGLETON] = true
+    const existing = globalState[SINGLETON] as TuiSingletonHandle | boolean | undefined
+    if (existing) {
+      if (typeof existing === 'object' && existing !== null) {
+        const existingVer = typeof existing.version === 'string' ? existing.version : ''
+        if (
+          currentVer &&
+          existingVer &&
+          comparePantheonVersions(currentVer, existingVer) > 0 &&
+          typeof existing.dispose === 'function'
+        ) {
+          try {
+            existing.dispose()
+          } catch {
+            /* best-effort eviction of stale TUI generation */
+          }
+        } else {
+          return
+        }
+      } else {
+        try {
+          context.ui.toast?.show?.({
+            variant: 'warning',
+            title: 'Pantheon TUI',
+            message:
+              'Legacy Pantheon TUI conflict detected — remove `plugins/pantheon-tui` from tui.json or run `/pantheon-settings` -> Clean legacy, then restart OpenCode.',
+          })
+        } catch {}
+        return
+      }
+    }
+
+    const coreVer = resolveSiblingCoreVersion()
+    if (coreVer && currentVer && coreVer !== currentVer) {
+      try {
+        context.ui.toast?.show?.({
+          variant: 'warning',
+          title: 'Pantheon Version Drift',
+          message: `TUI v${currentVer} mismatches core v${coreVer}. Run \`opencode plugin update pantheon-opencode\` and restart OpenCode.`,
+        })
+      } catch {}
+    }
 
     // The durable TUI prefs store — created before any consumer (sidebar,
     // footers, dispatch panel, settings) reads it, so their first reactive
@@ -5894,7 +5967,6 @@ const plugin = Plugin.define({
     })
     // Hydrate cached update announcement immediately on boot; probe npm after 3s
     // and every TTL window (6h) while OpenCode remains open.
-    const currentVer = typeof __PANTHEON_VERSION__ !== 'undefined' ? __PANTHEON_VERSION__ : ''
     setAvailableUpdateVersion(
       resolveCachedAvailableUpdate(currentVer, updateCheckStateFile().readState()),
     )
@@ -5963,7 +6035,10 @@ const plugin = Plugin.define({
     // host dialog when the version changed since the last dismissal. Fail-open;
     // a missing changelog or unreadable state simply means no window.
     void maybeShowWhatsNew(context)
-    return () => {
+    let disposed = false
+    const cleanup = () => {
+      if (disposed) return
+      disposed = true
       clearTimeout(updateNoticeTimer)
       clearInterval(updateNoticeInterval)
       if (typeof unregisterSidebar === 'function') unregisterSidebar()
@@ -5973,8 +6048,13 @@ const plugin = Plugin.define({
       if (typeof unregisterSettingsSlot === 'function') unregisterSettingsSlot()
       if (typeof unregisterCommands === 'function') unregisterCommands()
       if (typeof unregisterSettingsCommands === 'function') unregisterSettingsCommands()
-      delete globalState[SINGLETON]
+      if (globalState[SINGLETON] === handle) {
+        delete globalState[SINGLETON]
+      }
     }
+    const handle: TuiSingletonHandle = { version: currentVer, dispose: cleanup }
+    globalState[SINGLETON] = handle
+    return cleanup
   },
 })
 

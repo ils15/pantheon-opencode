@@ -11,6 +11,7 @@
 import {
   ensureLegacyStoresMigratedOnce,
   resolveSafeGlobalConfigDir,
+  resolveSafeNpmCacheHome,
 } from '../src/pantheon/legacy-store-migration.mjs'
 import { isSupportedNodeVersion, unsupportedNodeVersionMessage } from './node-engine-policy.mjs'
 
@@ -24,9 +25,11 @@ try {
     try {
       const globalConfigDir = resolveSafeGlobalConfigDir()
       if (globalConfigDir) {
+        const npmHome = resolveSafeNpmCacheHome()
         const report = ensureLegacyStoresMigratedOnce(globalConfigDir, {
           isGlobalConfig: true,
           cleanCopiedInstallArtifacts: true,
+          ...(npmHome ? { homeDir: npmHome } : {}),
         })
         cleanedCount = report?.staleFilesDeleted?.length ?? 0
       }

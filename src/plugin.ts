@@ -146,6 +146,7 @@ import { resolveGoalLoopConfig } from './pantheon/goal-loop-config.ts'
 import { GoalStore } from './pantheon/goal-store.ts'
 import { createGuardPathResolver } from './pantheon/guard-path.ts'
 import { runSecretScanInProcess } from './pantheon/hook-engine.ts'
+import { assertSupportedPantheonInstall } from './pantheon/install-guard.mjs'
 import { createJTelemetryMirror } from './pantheon/j-telemetry-file.ts'
 import {
   approvalInputHash,
@@ -171,6 +172,7 @@ import {
 import {
   ensureLegacyStoresMigratedOnce,
   resolveSafeGlobalConfigDir,
+  resolveSafeNpmCacheHome,
 } from './pantheon/legacy-store-migration.mjs'
 import { DECISION_EGRESS_ACTION } from './pantheon/local-decision-egress-gate.ts'
 import { applyDecisionRouterToPrompt } from './pantheon/local-decision-prompt.ts'
@@ -433,6 +435,30 @@ interface HostPluginContext extends PluginContext {
  */
 function hostDomains(context: PluginContext): HostPluginContext {
   return context as HostPluginContext
+}
+
+/**
+ * Best-effort host version for the install guard's diagnostic.
+ *
+ * The plugin API (`@opencode-ai/plugin` 1.18.33 `PluginContext`) carries no
+ * version field, and the live context exposes only an `app` domain the SDK does
+ * not type. Only DATA carriers are read here: a function-valued carrier is not
+ * called, because invoking an unmeasured host method during setup is a worse
+ * failure than omitting the version from a message. When nothing is exposed the
+ * guard simply omits the host line.
+ */
+function detectHostVersion(context: PluginContext): string | undefined {
+  try {
+    const app = (hostDomains(context) as unknown as { app?: unknown }).app
+    if (!app || typeof app !== 'object') return undefined
+    const candidate = (app as Record<string, unknown>).version
+    if (typeof candidate !== 'string') return undefined
+    const trimmed = candidate.trim()
+    return /^\d+\.\d+\.\d+/.test(trimmed) ? trimmed : undefined
+  } catch {
+    /* diagnostic only: never let the host probe affect setup */
+  }
+  return undefined
 }
 
 // ─── Idle todo enforcer ────────────────────────────────────────────────
@@ -1058,10 +1084,67 @@ function buildV2JevRuntime(host: ReturnType<typeof hostDomains>): V2JevDecisionR
  *
  * Returns true if tools were registered, false if the API is unavailable.
  */
+interface V2InstanceLifecycle {
+  readonly isDisposed: () => boolean
+  readonly trackRegistration: (reg: unknown) => void
+  readonly trackCleanup: (fn: CleanupFn) => void
+  readonly dispose: () => void
+}
+
+function createV2InstanceLifecycle(): V2InstanceLifecycle {
+  let disposed = false
+  const cleanups: CleanupFn[] = []
+  const trackCleanup = (fn: CleanupFn): void => {
+    if (disposed) {
+      try {
+        fn()
+      } catch {
+        // Best-effort cleanup
+      }
+      return
+    }
+    cleanups.push(fn)
+  }
+  const trackRegistration = (reg: unknown): void => {
+    if (reg === null || typeof reg !== 'object') return
+    const disposeFn = (reg as { dispose?: unknown }).dispose
+    if (typeof disposeFn !== 'function') return
+    trackCleanup(() => {
+      try {
+        const res = (disposeFn as (this: unknown) => unknown).call(reg)
+        if (res && typeof (res as Promise<unknown>).catch === 'function') {
+          void (res as Promise<unknown>).catch(() => {})
+        }
+      } catch {
+        // Best-effort registration disposal
+      }
+    })
+  }
+  const dispose = (): void => {
+    if (disposed) return
+    disposed = true
+    for (const cleanup of cleanups) {
+      try {
+        cleanup()
+      } catch {
+        // Best-effort cleanup
+      }
+    }
+    cleanups.length = 0
+  }
+  return {
+    isDisposed: () => disposed,
+    trackRegistration,
+    trackCleanup,
+    dispose,
+  }
+}
+
 async function registerV2Tools(
   context: PluginContext,
   boundedRead?: ReturnType<typeof createV2BoundedReadTool>['definition'],
   jevRuntime?: V2JevDecisionRuntime,
+  lifecycle?: V2InstanceLifecycle,
 ): Promise<boolean> {
   const host = hostDomains(context)
   const toolCtx = host.tool
@@ -1112,7 +1195,7 @@ async function registerV2Tools(
     const p11Sink = createTelemetrySink()
     p11TelemetrySink = p11Sink
 
-    await toolCtx.transform((draft: V2ToolDraft) => {
+    const registration = await toolCtx.transform((draft: V2ToolDraft) => {
       // Catalog grouping only. The host computes a tool's registration id as
       // `options.namespace === undefined ? name : `${namespace}_${name}``, and
       // `draft.namespace()` does NOT set `options.namespace` on later `add`
@@ -1162,6 +1245,7 @@ async function registerV2Tools(
         // Observation must never fail the tool registration.
       }
     })
+    lifecycle?.trackRegistration(registration)
     return true
   } catch {
     return false
@@ -1694,7 +1778,10 @@ const V2_VISION_HISTORY_TEXT: ReadonlyMap<string, ReadonlyMap<string, string>> =
  *
  * Returns true if any hooks were registered.
  */
-async function registerV2SessionHooks(context: PluginContext): Promise<boolean> {
+async function registerV2SessionHooks(
+  context: PluginContext,
+  lifecycle?: V2InstanceLifecycle,
+): Promise<boolean> {
   // Config validity is independent of hook availability; warn before the early
   // return so a typo is visible even on a host that registers no session hook.
   warnContextPrunerConfigOnce(context.options)
@@ -1715,7 +1802,8 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
 
   try {
     // "context" hook — inject routing policy + compaction state
-    await sessionCtx.hook('context', (event: unknown) => {
+    const contextReg = await sessionCtx.hook('context', (event: unknown) => {
+      if (lifecycle?.isDisposed()) return
       try {
         // Opt-in lifetime proof for the host-backed hook canary (MODE=real).
         // Inert unless PANTHEON_HOOK_CANARY_LIFETIME_PROOF is set.
@@ -1784,6 +1872,7 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
         // Fail-open: never throw to the host.
       }
     })
+    lifecycle?.trackRegistration(contextReg)
     registered = true
   } catch {
     // Context hook not supported
@@ -1800,7 +1889,8 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
     // "prompt" hook — preserve attached image references and add model-visible
     // instructions so Zeus can inspect visual context and pass it to the
     // implementation specialist before editing.
-    await sessionCtx.hook('prompt', async (event: unknown) => {
+    const promptReg = await sessionCtx.hook('prompt', async (event: unknown) => {
+      if (lifecycle?.isDisposed()) return
       try {
         // 2.0.29 host payload: `{ sessionID, messageID, prompt: { text,
         // files, agents, skills }, metadata, delivery }`. The session id is
@@ -1885,6 +1975,7 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
         // Fail-open: malformed/unsupported prompt shapes must not block input.
       }
     })
+    lifecycle?.trackRegistration(promptReg)
     registered = true
   } catch {
     // Prompt hook not supported
@@ -2339,6 +2430,7 @@ async function registerV2ToolHooks(
   subagentOrigins: V2SubagentOriginRegistry,
   boundedReadOrigins?: V2BoundedReadOriginRegistry,
   jevRuntime?: V2JevDecisionRuntime,
+  lifecycle?: V2InstanceLifecycle,
 ): Promise<{ registered: boolean; beforeRegistered: boolean }> {
   const host = hostDomains(context)
   const toolCtx = host.tool
@@ -2433,7 +2525,8 @@ async function registerV2ToolHooks(
     // exist in that process. The guard below is instantiated here and consulted
     // here; without it the tools registered by registerV2Tools would be a live
     // write path in every session, including read-only ones.
-    await toolCtx.hook('execute.before', async (event: unknown) => {
+    const beforeReg = await toolCtx.hook('execute.before', async (event: unknown) => {
+      if (lifecycle?.isDisposed()) return
       const benchStartedAt = Date.now()
       const { input, output, agent } = adaptV2ExecuteBeforeEvent(event)
       try {
@@ -2620,6 +2713,7 @@ async function registerV2ToolHooks(
         logBenchHookTiming('before', event, benchStartedAt)
       }
     })
+    lifecycle?.trackRegistration(beforeReg)
     registered = true
     beforeRegistered = true
   } catch {
@@ -2640,7 +2734,8 @@ async function registerV2ToolHooks(
       sandbox: resolveV2SandboxConfig(context.options),
       cwd: () => activeHostWorkspaceDir ?? process.cwd(),
     })
-    await toolCtx.hook('execute.after', async (event: unknown) => {
+    const afterReg = await toolCtx.hook('execute.after', async (event: unknown) => {
+      if (lifecycle?.isDisposed()) return
       const benchStartedAt = Date.now()
       try {
         subagentOrigins.forget(event)
@@ -2696,6 +2791,7 @@ async function registerV2ToolHooks(
         logBenchHookTiming('after', event, benchStartedAt)
       }
     })
+    lifecycle?.trackRegistration(afterReg)
     registered = true
   } catch {
     // Tool after-hook not supported
@@ -2736,6 +2832,7 @@ function readPermissionEffect(event: unknown): string | null {
 async function registerV2PermissionHook(
   context: PluginContext,
   subagentOrigins: V2SubagentOriginRegistry,
+  lifecycle?: V2InstanceLifecycle,
 ): Promise<boolean> {
   const domains = hostDomains(context)
   const permCtx = domains.permission
@@ -2788,7 +2885,8 @@ async function registerV2PermissionHook(
   }
 
   try {
-    await permCtx.hook('evaluate', async (rawEvent: unknown) => {
+    const permReg = await permCtx.hook('evaluate', async (rawEvent: unknown) => {
+      if (lifecycle?.isDisposed()) return
       const event = rawEvent as V2PermissionEvent | null
       const effectBefore = event?.effect
       let origin: ReturnType<V2SubagentOriginRegistry['consume']>
@@ -2933,7 +3031,15 @@ async function registerV2PermissionHook(
       // and a record emitted after a throw would describe an unreached state.
       const p8Result = p8Guardrail.apply(event)
       if (decision === 'deny') {
-        deny('caller or target is not allowed by delegation policy')
+        const diag = [
+          `caller=${origin?.caller ?? String(event.agent ?? 'unknown')}`,
+          `target=${targets.join(',')}`,
+          ...(callerSessionParentID !== undefined && callerSessionParentID !== null
+            ? [`parentID=${String(callerSessionParentID)}`]
+            : []),
+        ].join(' ')
+        appendV2HookLog(`[delegation-deny] ${diag} session=${String(event.sessionID ?? '')}`)
+        deny(`caller or target is not allowed by delegation policy (${diag})`)
         return
       }
 
@@ -2945,6 +3051,7 @@ async function registerV2PermissionHook(
       writeProof()
       recordP8(p8Result, event)
     })
+    lifecycle?.trackRegistration(permReg)
     return true
   } catch {
     markUnsupported('permission-hook')
@@ -3075,9 +3182,18 @@ export const plugin = define({
   id: 'pantheon-opencode',
 
   async setup(context: PluginContext): Promise<void> {
+    // ─── Phase -2: install-shape guard (V1 package loaded by mistake) ────
+    // Runs before any host call. A below-minimum or V1-shaped tree otherwise
+    // surfaces as a missing TUI panel plus `Session.AgentNotFoundError: Agent
+    // not found: "zeus"` — a message that names neither the package, nor the
+    // version, nor the fix.
+    const hostVersion = detectHostVersion(context)
+    assertSupportedPantheonInstall(hostVersion ? { hostVersion } : {})
+
     // ─── Phase -1: Legacy store migration & stale purge (plugin-native) ──
     const setupHost = hostDomains(context)
     const hostLocationDir = setupHost.location?.directory
+    const npmHomeDir = resolveSafeNpmCacheHome()
     activeHostWorkspaceDir = hostLocationDir || undefined
     loadRuntimeOverrides(hostLocationDir)
     const safeGlobalConfigDir = resolveSafeGlobalConfigDir()
@@ -3086,6 +3202,7 @@ export const plugin = define({
       try {
         migrationReport = ensureLegacyStoresMigratedOnce(hostLocationDir, {
           ...(safeGlobalConfigDir ? { globalConfigDir: safeGlobalConfigDir } : {}),
+          ...(npmHomeDir ? { homeDir: npmHomeDir } : {}),
           cleanCopiedInstallArtifacts: true,
         })
       } catch {
@@ -3095,6 +3212,7 @@ export const plugin = define({
       try {
         migrationReport = ensureLegacyStoresMigratedOnce(safeGlobalConfigDir, {
           isGlobalConfig: true,
+          ...(npmHomeDir ? { homeDir: npmHomeDir } : {}),
           cleanCopiedInstallArtifacts: true,
         })
       } catch {
@@ -3136,6 +3254,8 @@ export const plugin = define({
       }
     }
 
+    const lifecycle = createV2InstanceLifecycle()
+
     // ─── Phase 1: V2 Transforms (isolated per-domain, best-effort) ────
     // Each transform registration is individually wrapped and settled via Promise.allSettled:
     // a rejection marks only that transform unsupported
@@ -3176,6 +3296,8 @@ export const plugin = define({
       const feature = phase1Transforms[index]!.feature
       if (result.status === 'rejected') {
         markUnsupported(feature)
+      } else {
+        lifecycle.trackRegistration(result.value)
       }
     })
 
@@ -3187,18 +3309,27 @@ export const plugin = define({
     // Registered before the event subscription and session hooks so the
     // delegation matrix is enforced before any turn runs. Egress never depends
     // on this hook: the user-level config plus the host's own rules gate it.
-    await registerV2PermissionHook(context, subagentOrigins).catch(() => false)
+    await registerV2PermissionHook(context, subagentOrigins, lifecycle).catch(() => false)
 
     // ─── Phase 3: V2 Event Subscription (best-effort) ────────────────
     const eventCleanup = subscribeV2Events(context, boundedRead?.clearSession)
     if (eventCleanup) {
-      activeCleanups.push(eventCleanup)
+      let eventCleaned = false
+      const safeEventCleanup = () => {
+        if (eventCleaned) return
+        eventCleaned = true
+        eventCleanup()
+      }
+      activeCleanups.push(safeEventCleanup)
+      lifecycle.trackCleanup(safeEventCleanup)
     } else {
       markUnsupported('event-stream')
     }
 
     // ─── Phase 4: V2 Session Hooks (best-effort) ─────────────────────
-    const sessionHooksRegistered = await registerV2SessionHooks(context).catch(() => false)
+    const sessionHooksRegistered = await registerV2SessionHooks(context, lifecycle).catch(
+      () => false,
+    )
     if (!sessionHooksRegistered) {
       markUnsupported('session-hooks')
     }
@@ -3215,6 +3346,7 @@ export const plugin = define({
       subagentOrigins,
       boundedRead?.origins,
       jevRuntime,
+      lifecycle,
     ).catch(() => ({ registered: false, beforeRegistered: false }))
     if (!toolHookResult.registered) {
       markUnsupported('tool-execute-hooks')
@@ -3227,24 +3359,37 @@ export const plugin = define({
     if (boundedRead !== undefined && boundedReadDefinition === undefined) {
       markUnsupported('bounded-read')
     }
-    const toolsRegistered = await registerV2Tools(context, boundedReadDefinition, jevRuntime).catch(
-      () => false,
-    )
+    const toolsRegistered = await registerV2Tools(
+      context,
+      boundedReadDefinition,
+      jevRuntime,
+      lifecycle,
+    ).catch(() => false)
     if (!toolsRegistered) markUnsupported('tool-transform')
 
     if (typeof setupHost.worktree?.transform === 'function') {
       try {
-        await setupHost.worktree.transform((draft) => {
+        const worktreeReg = await setupHost.worktree.transform((draft) => {
           draft.add(createPantheonWorktreeDefinition())
         })
+        lifecycle.trackRegistration(worktreeReg)
       } catch {
         markUnsupported('worktree-transform')
       }
     }
 
     if (hostLocationDir) {
-      activeCleanups.push(wireCockpitBusRecorder(hostLocationDir))
-      activeCleanups.push(wireSwarmWatchdog(hostLocationDir))
+      const stopRecorder = wireCockpitBusRecorder(hostLocationDir)
+      const stopWatchdog = wireSwarmWatchdog(hostLocationDir)
+      let busStopped = false
+      const safeBusCleanup = () => {
+        if (busStopped) return
+        busStopped = true
+        stopRecorder()
+        stopWatchdog()
+      }
+      activeCleanups.push(safeBusCleanup)
+      lifecycle.trackCleanup(safeBusCleanup)
     }
 
     // ─── Phase 7: V2 Compaction Hook (best-effort) ───────────────────
@@ -3266,7 +3411,8 @@ export const plugin = define({
         // `compacting` is not a valid key: the registry accepts any string and
         // silently drops unknown names, so the old name was a permanent no-op.
         // Proven by the canary's negative control.
-        await compactionCtx.hook('compaction', async (event: unknown) => {
+        const compactionReg = await compactionCtx.hook('compaction', async (event: unknown) => {
+          if (lifecycle.isDisposed()) return
           try {
             // Opt-in lifetime proof for the host-backed hook canary
             // (tests/pantheon/plugin-hook-canary.test.mjs, MODE=real). It is
@@ -3403,12 +3549,17 @@ export const plugin = define({
             )
           }
         })
+        lifecycle.trackRegistration(compactionReg)
       } catch {
         markUnsupported('compaction-hook')
       }
     } else {
       markUnsupported('compaction-hook')
     }
+    // OpenCode 2.x (@opencode/plugin@2.2.5) accepts a Cleanup function returned
+    // by setup() and invokes it on hot-reload; @opencode-ai/plugin@1.18.33 types
+    // setup() as returning Promise<void>, so cast cleanly at the boundary.
+    return lifecycle.dispose as unknown as undefined
   },
 })
 

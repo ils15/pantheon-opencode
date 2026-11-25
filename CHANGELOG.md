@@ -13,6 +13,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+## [v2.3.1] - 2026-11-25
+
+### 🆕 What's New
+
+- **Release `dist-tags` Guard**: `release.yml` reconciles and asserts `latest`, `beta`, and `next` tags so stale V1 tags cannot resolve.
+- **Hot-Reload Lifecycle Cleanup**: `plugin.setup()` disposes hook/transform registrations cleanly and guards stale handlers on reload.
+- **Pin & Legacy `AGENTS.md` Cleanup**: Auto-unpins `@1.5.2`/`@next`, sweeps `npx`/npm caches, and strips copied `AGENTS.md` blocks.
+- **Load-Time & TUI Compatibility Guards**: Fails loudly with remediation on sub-2.3.0 packages, host `<2.0`, or drifted TUI singletons.
+
+### Changed
+
+- **install-guard** — added `assertSupportedPantheonInstall` and `MIN_SUPPORTED_HOST_VERSION` (`2.0.0`) checks at plugin startup.
+- **release** — added `Reconcile and assert npm dist-tags` gate in `.github/workflows/release.yml` to align `beta` and drop stale `next` tags.
+
+### Fixed
+
+- **plugin** — returned `Registration.dispose()` cleanup handle from `setup()`, added `isDisposed()` hook guards, and logged delegation denial context.
+- **tui** — upgraded `SINGLETON` with version eviction and core/TUI version-drift toast notifications instead of silent failure.
+- **migration** — unpinned `<2.3.0`/`@next` entries in config, swept stale `pantheon-opencode@*`/`_npx` caches, and stripped stale `AGENTS.md` blocks.
+- **gate-c** — preserved standalone valid `/src/plugin` entries during startup migration so Gate (c) and local path installs stay registered.
 ## [v2.3.0] - 2026-11-25
 
 ### 🆕 What's New

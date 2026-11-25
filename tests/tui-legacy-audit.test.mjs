@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -173,6 +181,48 @@ describe('tui legacy-audit scanner & cleaner', () => {
       assert.equal(existsSync(oldRev), false)
       assert.equal(existsSync(join(cacheNpmDir, 'pantheon-opencode@beta')), false)
       assert.equal(existsSync(activeBundlePath), true)
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('unpins @1.5.2 plugin entries, cleans @next cache, and strips stale global AGENTS.md block preserving user rules', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'pantheon-tui-unpin-'))
+    try {
+      const globalDir = join(tmp, 'global-opencode')
+      const cacheNpmDir = join(tmp, 'cache', 'opencode', 'npm')
+      mkdirSync(globalDir, { recursive: true })
+      mkdirSync(join(cacheNpmDir, 'pantheon-opencode@next', '100'), { recursive: true })
+
+      writeFileSync(
+        join(globalDir, 'opencode.json'),
+        JSON.stringify({ plugins: ['pantheon-opencode@1.5.2', 'npx pantheon-tui'] }, null, 2),
+      )
+      writeFileSync(
+        join(globalDir, 'AGENTS.md'),
+        '# User Global Header\n\n<!-- pantheon:generated:begin -->\n| @talos | Old |\n<!-- pantheon:generated:end -->\n',
+      )
+
+      const scan = scanLegacyArtifacts({
+        globalConfigDir: globalDir,
+        cacheDir: cacheNpmDir,
+        runningVersion: '2.3.1',
+      })
+      assert.ok(scan.items.some((i) => i.path.endsWith('#legacy-plugin')))
+      assert.ok(scan.items.some((i) => i.path.endsWith('#pantheon-managed')))
+      assert.ok(scan.items.some((i) => i.path.endsWith('pantheon-opencode@next')))
+
+      const cleaned = cleanLegacyArtifacts({
+        globalConfigDir: globalDir,
+        cacheDir: cacheNpmDir,
+        runningVersion: '2.3.1',
+      })
+      assert.equal(cleaned.errors.length, 0)
+      assert.deepEqual(JSON.parse(readFileSync(join(globalDir, 'opencode.json'), 'utf8')).plugins, [
+        'pantheon-opencode',
+      ])
+      assert.equal(readFileSync(join(globalDir, 'AGENTS.md'), 'utf8'), '# User Global Header\n')
+      assert.equal(existsSync(join(cacheNpmDir, 'pantheon-opencode@next')), false)
     } finally {
       rmSync(tmp, { recursive: true, force: true })
     }

@@ -332,3 +332,31 @@ test('cleanCopiedInstallArtifacts never deletes tracked .pantheon/code-mode insi
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('cleanCopiedInstallArtifacts preserves an active standalone /src/plugin path entry when no npm package entry is present', () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-standalone-plugin-entry-'))
+  try {
+    resetLegacyMigrationCacheForTests()
+    const workspaceDir = join(root, 'project')
+    const pluginDir = join(root, 'installed', 'pantheon-opencode', 'src', 'plugin')
+    mkdirSync(workspaceDir, { recursive: true })
+    mkdirSync(pluginDir, { recursive: true })
+    writeFileSync(join(pluginDir, 'index.ts'), 'export * from "../plugin.ts"\n')
+
+    const projectConfig = join(workspaceDir, 'opencode.json')
+    writeFileSync(
+      projectConfig,
+      `${JSON.stringify({ plugins: [{ package: pluginDir, options: {} }] }, null, 2)}\n`,
+    )
+
+    ensureLegacyStoresMigratedOnce(workspaceDir, {
+      cleanCopiedInstallArtifacts: true,
+    })
+
+    const after = JSON.parse(readFileSync(projectConfig, 'utf8'))
+    assert.deepEqual(after.plugins, [{ package: pluginDir, options: {} }])
+  } finally {
+    resetLegacyMigrationCacheForTests()
+    rmSync(root, { recursive: true, force: true })
+  }
+})

@@ -126,6 +126,8 @@ test('release never checks out, packs, repacks, or installs after artifact hando
     /actions\/checkout|npm ci|npm install|npm pack|tar -czf/,
   )
   assert.match(release, /npm publish "\$PACKAGE" --ignore-scripts/)
+  assert.match(release, /Reconcile and assert npm dist-tags/)
+  assert.match(release, /dist-tags\.latest=/)
 })
 
 test('credentials and mutations occur only after immutable validation', () => {
