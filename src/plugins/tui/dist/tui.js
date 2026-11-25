@@ -4168,11 +4168,11 @@ function isLegacyOrBrokenPantheonMcp(name, entry, configDir) {
 	const argList = Array.isArray(entry.args) ? entry.args.filter((x) => typeof x === "string") : [];
 	const parts = [...cmdList, ...argList];
 	const isPythonScript = parts.some((p) => LEGACY_PYTHON_MCP_SCRIPTS.has(basename(p.replaceAll("\\", "/"))));
-	const isPythonBin = parts.length > 0 && /(?:^|[\\/])python(?:\d+(?:\.\d+)*)?(?:\.exe)?$/i.test(parts[0]);
+	const exe = parts[0];
+	const isPythonBin = typeof exe === "string" && /(?:^|[\\/])python(?:\d+(?:\.\d+)*)?(?:\.exe)?$/i.test(exe);
 	const isVenvPath = parts.some((p) => /(?:^|[\\/])\.venv(?:[\\/]|$)/.test(p));
 	const isPython = isPythonScript || isPythonBin || isVenvPath;
 	const cwd = typeof entry.cwd === "string" && entry.cwd.trim() !== "" ? resolve(configDir, entry.cwd) : configDir;
-	const exe = parts[0];
 	const hasMissingExe = typeof exe === "string" && (exe.includes("/") || exe.includes("\\")) && !existsSync(isAbsolute(exe) ? exe : resolve(cwd, exe));
 	const hasMissingScript = parts.slice(1).some((p) => {
 		if (!/\.(?:py|mjs|js|ts)$/i.test(p) || p.startsWith("-")) return false;
@@ -4818,9 +4818,9 @@ function cleanLegacyArtifacts(options = {}) {
 			continue;
 		}
 		if (item.path.includes("#legacy-mcp:") || item.path.endsWith("#legacy-plugin")) {
-			const cfgPath = item.path.split("#")[0];
+			const cfgPath = item.path.split("#")[0] ?? "";
 			const scopeRoot = item.scope === "global" ? globalConfigDir : workspaceDir;
-			if (!scopeRoot || !isConfinedWithin(scopeRoot, cfgPath)) {
+			if (!cfgPath || !scopeRoot || !isConfinedWithin(scopeRoot, cfgPath)) {
 				errors.push({
 					path: item.path,
 					reason: "Path escapes target scope root"
