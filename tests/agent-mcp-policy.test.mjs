@@ -5,22 +5,7 @@ import { fileURLToPath } from 'node:url'
 
 const agent = (name) =>
   readFileSync(fileURLToPath(new URL(`../src/agents/${name}.md`, import.meta.url)), 'utf8')
-const AGENT_NAMES = [
-  'zeus',
-  'apollo',
-  'athena',
-  'themis',
-  'hermes',
-  'prometheus',
-  'hephaestus',
-  'demeter',
-  'gaia',
-  'iris',
-  'aphrodite',
-  'mnemosyne',
-  'nyx',
-  'talos',
-]
+const AGENT_NAMES = ['zeus', 'apollo', 'athena', 'themis', 'hermes', 'demeter', 'iris', 'aphrodite']
 
 test('zeus carries the measured usage policy markers', () => {
   // Agent prose is hard-wrapped; contracts match on whitespace-normalized text.

@@ -10,15 +10,14 @@ writes `.env` and never injects top-level `model`/`small_model` into `opencode.j
 
 ## Usage
 
-- `/pantheon-model status` or `/pantheon-model show` — list 14 canonical agents
-  (`zeus`, `athena`, `apollo`, `hermes`, `aphrodite`, `demeter`, `themis`,
-  `prometheus`, `hephaestus`, `nyx`, `gaia`, `iris`, `mnemosyne`, `talos`)
+- `/pantheon-model status` or `/pantheon-model show` — list 8 canonical agents
+  (`zeus`, `athena`, `apollo`, `hermes`, `aphrodite`, `demeter`, `themis`, `iris`)
   with effective `model`, `effort`, and origin (`preset` | `override` | `env` | `none`)
   and the active preset, without showing secrets.
 - `/pantheon-model` (no args) — defaults to `status` (list active per-agent overrides).
 
 - `/pantheon-model set --agent <name> --model <provider/model-id> [--effort low|medium|high] [--scope project|global]`
-  — set per-agent override. Validates agent is one of the 14, `provider/model-id`
+  — set per-agent override. Validates agent is one of the 8, `provider/model-id`
   format, `CAPABILITY_TABLE` entry via `capabilityEntry()` and clamps effort via
   `normalizeCapability()`; warns via `hasVision` for text-only models. Persists
   atomically with `.bak` backup and per-path lock. Default scope is `project`.

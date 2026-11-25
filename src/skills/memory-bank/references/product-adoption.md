@@ -10,7 +10,7 @@ memory bank in a new product repository.
 ```bash
 mkdir -p .pantheon/memory-bank/_tasks .pantheon/memory-bank/_notes
 touch .pantheon/memory-bank/_tasks/.gitkeep .pantheon/memory-bank/_notes/.gitkeep
-# @mnemosyne Initialize memory bank for this repository
+# @iris Initialize memory bank for this repository
 ```
 
 Add to `.github/copilot-instructions.md`:

@@ -21,8 +21,8 @@ Route tasks to optimized agents based on category instead of specifying agents m
 
 | Category | Agent | Use For |
 |----------|-------|---------|
-| **Deep** | Athena, Hephaestus | Complex planning, AI pipelines |
-| **Quick** | Talos, Apollo | Fast fixes, codebase search |
+| **Deep** | Athena | Complex planning, architecture |
+| **Quick** | Apollo, Hermes (`spawn_ephemeral` `hotfix`) | Fast fixes, codebase search |
 | **Ultrabrain** | Zeus | Multi-agent orchestration, model routing |
 
 ---
@@ -38,7 +38,7 @@ Route tasks to optimized agents based on category instead of specifying agents m
 6. @themis reviews all phases (GATE 2)
 7. User reviews Themis findings
 8. If approved → user commits (GATE 3)
-9. @mnemosyne updates memory bank
+9. @iris updates memory bank (when requested)
 ```
 
 ---

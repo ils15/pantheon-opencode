@@ -4,7 +4,7 @@ import test from 'node:test'
 
 const readPrompt = (path) => readFileSync(new URL(path, import.meta.url), 'utf8')
 const zeus = readPrompt('../src/agents/zeus.md')
-const mnemosyne = readPrompt('../src/agents/mnemosyne.md')
+const iris = readPrompt('../src/agents/iris.md')
 const memoryProtocol = readPrompt('../src/instructions/memory-protocol.instructions.md')
 const zeusMemoryOps = readPrompt('../src/instructions/zeus-memory-operations.instructions.md')
 const zeusAntiStall = readPrompt('../src/instructions/zeus-anti-stall.instructions.md')
@@ -14,7 +14,7 @@ const returnContract = readPrompt('../src/instructions/agent-return-format.instr
 const delegationQuality = readPrompt('../docs/PERMISSIONS-QUALITY-DELEGATION.md')
 const readme = readPrompt('../README.md')
 const councilSynthesis = readPrompt('../src/instructions/zeus-council-synthesis.instructions.md')
-const sessionAgents = ['aphrodite', 'demeter', 'hephaestus', 'hermes'].map((agent) =>
+const sessionAgents = ['aphrodite', 'demeter', 'hermes'].map((agent) =>
   readPrompt(`../src/agents/${agent}.md`),
 )
 const autoContinue = readPrompt('../src/skills/auto-continue/SKILL.md')
@@ -25,16 +25,10 @@ const mcpGuide = readPrompt('../docs/mcp-tools.md')
 const agentMcpGuide = readPrompt('../docs/MCP.md')
 const generatedAgents = readPrompt('../AGENTS.md')
 const delegationRoleDocs = Object.fromEntries(
-  ['athena', 'hermes', 'demeter', 'hephaestus'].map((agent) => [
-    agent,
-    readPrompt(`../src/agents/${agent}.md`),
-  ]),
+  ['athena', 'hermes', 'demeter'].map((agent) => [agent, readPrompt(`../src/agents/${agent}.md`)]),
 )
 const discoveryRoleDocs = Object.fromEntries(
-  ['aphrodite', 'nyx', 'prometheus'].map((agent) => [
-    agent,
-    readPrompt(`../src/agents/${agent}.md`),
-  ]),
+  ['aphrodite'].map((agent) => [agent, readPrompt(`../src/agents/${agent}.md`)]),
 )
 
 test('memory retrieval and storage are selective rather than automatic', () => {
@@ -63,8 +57,8 @@ test('memory retrieval and storage are selective rather than automatic', () => {
     zeus,
     /(?:Não use KV compartilhado para contar profundidade|Do not use shared KV to track depth)/i,
   )
-  assert.doesNotMatch(mnemosyne, /Called automatically by Zeus when any agent returns/i)
-  assert.match(mnemosyne, /Never auto-index a `subtask_summary`/i)
+  assert.doesNotMatch(iris, /Called automatically by Zeus when any agent returns/i)
+  assert.match(iris, /Never auto-index a `subtask_summary`/i)
   for (const agent of sessionAgents) {
     assert.doesNotMatch(agent, /When dispatched by Zeus, call context_get/i)
   }
@@ -205,17 +199,17 @@ test('memory docs and prompts state the current storage, privacy, and grant cont
   )
   assert.doesNotMatch(architectureGuide, /Written by:\s*Any agent, automatically/i)
 
-  assert.match(mnemosyne, /automatic regex scrubbing\/redaction is not guaranteed/i)
-  assert.doesNotMatch(mnemosyne, /memory_store` MCP server applies regex scrub/i)
+  assert.match(iris, /automatic regex scrubbing\/redaction is not guaranteed/i)
+  assert.doesNotMatch(iris, /memory_store` MCP server applies regex scrub/i)
   assert.match(
     memoryProtocol,
     /Zeus[^\n]*`memory_search`[^\n]*no durable writes/i,
-    'Zeus must not be assumed to have Mnemosyne’s durable-memory grants',
+    'Zeus must not be assumed to have Iris’s durable-memory grants',
   )
   assert.match(
     memoryProtocol,
-    /Mnemosyne[^\n]*`memory_store`/i,
-    'Mnemosyne’s distinct durable-memory grant must remain explicit',
+    /Iris[^\n]*`memory_store`/i,
+    'Iris’s distinct durable-memory grant must remain explicit',
   )
   assert.match(memoryProtocol, /Never store secrets, credentials, or tokens/i)
   assert.match(zeus, /pantheon-memory:\s*\[memory_search\]/i)
@@ -228,9 +222,9 @@ test('memory docs and prompts state the current storage, privacy, and grant cont
   assert.match(agentMcpGuide, /installed per-agent allowlists[\s\S]*not[\s\S]*guarantee/i)
 })
 
-test('Mnemosyne MCP allowlist names only the registered memory tools', () => {
-  const memoryTools = mnemosyne.match(/pantheon-memory:\n((?:\s+- [\w_]+\n)+)/)?.[1]
-  assert.ok(memoryTools, 'Mnemosyne must declare an explicit pantheon-memory allowlist')
+test('Iris MCP allowlist names only the registered memory tools', () => {
+  const memoryTools = iris.match(/pantheon-memory:\n((?:\s+- [\w_]+\n)+)/)?.[1]
+  assert.ok(memoryTools, 'Iris must declare an explicit pantheon-memory allowlist')
 
   const names = [...memoryTools.matchAll(/^\s+- ([\w_]+)$/gm)].map((match) => match[1])
   assert.deepEqual(names, [
@@ -309,10 +303,6 @@ test('child agents route discovery and review requests to Zeus root', () => {
   )
   assert.match(
     delegationRoleDocs.demeter,
-    /ask Zeus to route any needed broad discovery to @apollo/i,
-  )
-  assert.match(
-    delegationRoleDocs.hephaestus,
     /ask Zeus to route any needed broad discovery to @apollo/i,
   )
   for (const roleDoc of Object.values(delegationRoleDocs)) {

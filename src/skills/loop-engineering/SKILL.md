@@ -48,4 +48,4 @@ Stop looping when:
 - Each loop must have a clear success/fail gate
 - After loop 3: stop and deliver regardless of perfection
 - Escalate to @zeus if task needs more than 3 loops
-- Document what was learned in each loop for @mnemosyne
+- Document what was learned in each loop for @iris (when requested)

@@ -81,7 +81,7 @@ test('--verbose still lists the individual passing checks', () => {
     section.title.startsWith('A. Agent Files'),
   )
   assert.ok(agentSection, 'the Agent Files section must be present')
-  assert.match(agentSection.body, /\u2705 14 canonical agents found/i, agentSection.body)
+  assert.match(agentSection.body, /\u2705 8 canonical agents found/i, agentSection.body)
   assert.doesNotMatch(
     agentSection.body,
     /\d+ checks? passed/,

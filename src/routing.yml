@@ -16,14 +16,8 @@ presets:
       hermes:     { model: opencode/deepseek-v4-flash-free,  reasoning_effort: medium }
       aphrodite:  { model: opencode/deepseek-v4-flash-free,  reasoning_effort: medium }
       demeter:    { model: opencode/deepseek-v4-flash-free,  reasoning_effort: medium }
-      prometheus: { model: opencode/deepseek-v4-flash-free,  reasoning_effort: medium }
-      hephaestus: { model: opencode/deepseek-v4-flash-free,  reasoning_effort: medium }
       apollo:     { model: opencode/mimo-v2.5-free,          reasoning_effort: low }
-      nyx:        { model: opencode/mimo-v2.5-free,          reasoning_effort: low }
-      gaia:       { model: opencode/mimo-v2.5-free,          reasoning_effort: low }
       iris:       { model: opencode/mimo-v2.5-free,          reasoning_effort: low }
-      mnemosyne:  { model: opencode/mimo-v2.5-free,          reasoning_effort: low }
-      talos:      { model: opencode/mimo-v2.5-free,          reasoning_effort: low }
   go-fast:
     description: "Low-latency OpenCode Go profile 2026: kimi-k2.7-code and glm-5.3-flash planners, gpt-5.6-luna / mimo-v2.5 / deepseek-v4-flash implementers, gpt-5.6-luna-fast scouts. All via Go gateway https://opencode.ai/zen/go/v1. Pricing 2026."
     vision:
@@ -40,14 +34,8 @@ presets:
       hermes:     { model: opencode-go/deepseek-v4-flash,    reasoning_effort: medium }
       aphrodite:  { model: opencode-go/mimo-v2.5,            reasoning_effort: low }
       demeter:    { model: opencode-go/gpt-5.6-luna,         reasoning_effort: low }
-      prometheus: { model: opencode-go/deepseek-v4-flash,    reasoning_effort: medium }
-      hephaestus: { model: opencode-go/mimo-v2.5,            reasoning_effort: low }
       apollo:     { model: opencode-go/gpt-5.6-luna-fast,    reasoning_effort: low }
-      nyx:        { model: opencode-go/gpt-5.6-luna-fast,    reasoning_effort: low }
-      gaia:       { model: opencode-go/gpt-5.6-luna-fast,    reasoning_effort: low }
       iris:       { model: opencode-go/gpt-5.6-luna-fast,    reasoning_effort: low }
-      mnemosyne:  { model: opencode-go/gpt-5.6-luna-fast,    reasoning_effort: low }
-      talos:      { model: opencode-go/gpt-5.6-luna-fast,    reasoning_effort: low }
   go-premium:
     description: "Premium lineup on OpenCode Go 2026: gpt-5.6-sol / qwen3.8-max / deepseek-v4-pro planners, gpt-5.6-terra / kimi-k3 implementers, gpt-5.6-luna scouts. Vision via gpt-5.6-sol. Pricing 2026."
     vision:
@@ -64,16 +52,10 @@ presets:
       hermes:     { model: opencode-go/gpt-5.6-terra,        reasoning_effort: medium }
       aphrodite:  { model: opencode-go/kimi-k3,              reasoning_effort: medium }
       demeter:    { model: opencode-go/gpt-5.6-terra,        reasoning_effort: medium }
-      prometheus: { model: opencode-go/kimi-k3,              reasoning_effort: medium }
-      hephaestus: { model: opencode-go/gpt-5.6-terra,        reasoning_effort: medium }
       apollo:     { model: opencode-go/gpt-5.6-luna,         reasoning_effort: low }
-      nyx:        { model: opencode-go/gpt-5.6-luna,         reasoning_effort: low }
-      gaia:       { model: opencode-go/gpt-5.6-luna,         reasoning_effort: low }
       iris:       { model: opencode-go/gpt-5.6-luna,         reasoning_effort: low }
-      mnemosyne:  { model: opencode-go/gpt-5.6-luna,         reasoning_effort: low }
-      talos:      { model: opencode-go/gpt-5.6-luna,         reasoning_effort: low }
   go-hybrid:
-    description: "OpenCode Go hybrid lineup: premium models for Zeus, Athena, Themis, and Hephaestus; the existing low-latency Go lineup for every other agent."
+    description: "OpenCode Go hybrid lineup: premium models for Zeus, Athena, and Themis; the existing low-latency Go lineup for every other agent."
     vision:
       model: opencode-go/gpt-5.6-sol
       reasoning_effort: high
@@ -88,14 +70,8 @@ presets:
       hermes:     { model: opencode-go/deepseek-v4-flash,    reasoning_effort: medium }
       aphrodite:  { model: opencode-go/mimo-v2.5,            reasoning_effort: low }
       demeter:    { model: opencode-go/gpt-5.6-luna,         reasoning_effort: low }
-      prometheus: { model: opencode-go/deepseek-v4-flash,    reasoning_effort: medium }
-      hephaestus: { model: opencode-go/gpt-5.6-terra,        reasoning_effort: medium }
       apollo:     { model: opencode-go/gpt-5.6-luna-fast,    reasoning_effort: low }
-      nyx:        { model: opencode-go/gpt-5.6-luna-fast,    reasoning_effort: low }
-      gaia:       { model: opencode-go/gpt-5.6-luna-fast,    reasoning_effort: low }
       iris:       { model: opencode-go/gpt-5.6-luna-fast,    reasoning_effort: low }
-      mnemosyne:  { model: opencode-go/gpt-5.6-luna-fast,    reasoning_effort: low }
-      talos:      { model: opencode-go/gpt-5.6-luna-fast,    reasoning_effort: low }
   anthropic:
     description: "Anthropic direct provider profile using claude-sonnet-5-5 for every agent. Configure ANTHROPIC_API_KEY in your environment."
     providers:
@@ -109,14 +85,8 @@ presets:
       hermes:     { model: anthropic/claude-sonnet-5-5, reasoning_effort: medium }
       aphrodite:  { model: anthropic/claude-sonnet-5-5, reasoning_effort: medium }
       demeter:    { model: anthropic/claude-sonnet-5-5, reasoning_effort: medium }
-      prometheus: { model: anthropic/claude-sonnet-5-5, reasoning_effort: medium }
-      hephaestus: { model: anthropic/claude-sonnet-5-5, reasoning_effort: medium }
       apollo:     { model: anthropic/claude-sonnet-5-5, reasoning_effort: medium }
-      nyx:        { model: anthropic/claude-sonnet-5-5, reasoning_effort: medium }
-      gaia:       { model: anthropic/claude-sonnet-5-5, reasoning_effort: medium }
       iris:       { model: anthropic/claude-sonnet-5-5, reasoning_effort: medium }
-      mnemosyne:  { model: anthropic/claude-sonnet-5-5, reasoning_effort: medium }
-      talos:      { model: anthropic/claude-sonnet-5-5, reasoning_effort: medium }
   openai:
     description: "Pure OpenAI provider 2026: gpt-5.6-sol planners high, gpt-5.6-luna implementers high, gpt-5.6-luna-fast scouts low (fallback to luna low). Provider openai https://api.openai.com/v1 OPENAI_API_KEY. Pricing 2026."
     vision:
@@ -133,14 +103,8 @@ presets:
       hermes:     { model: openai/gpt-5.6-luna,              reasoning_effort: high }
       aphrodite:  { model: openai/gpt-5.6-luna,              reasoning_effort: high }
       demeter:    { model: openai/gpt-5.6-luna,              reasoning_effort: high }
-      prometheus: { model: openai/gpt-5.6-luna,              reasoning_effort: high }
-      hephaestus: { model: openai/gpt-5.6-luna,              reasoning_effort: high }
       apollo:     { model: openai/gpt-5.6-luna-fast,         reasoning_effort: low }
-      nyx:        { model: openai/gpt-5.6-luna-fast,         reasoning_effort: low }
-      gaia:       { model: openai/gpt-5.6-luna-fast,         reasoning_effort: low }
       iris:       { model: openai/gpt-5.6-luna-fast,         reasoning_effort: low }
-      mnemosyne:  { model: openai/gpt-5.6-luna-fast,         reasoning_effort: low }
-      talos:      { model: openai/gpt-5.6-luna-fast,         reasoning_effort: low }
 agents:
   zeus:
     role: Central orchestrator
@@ -166,12 +130,7 @@ agents:
     - aphrodite
     - demeter
     - themis
-    - prometheus
-    - hephaestus
-    - nyx
     - iris
-    - mnemosyne
-    - talos
     skills:
     - agent-coordination
     - agent-forge
@@ -340,94 +299,8 @@ agents:
     - tdd-with-agents
     - test-slicing
     - worktrees
-  prometheus:
-    role: Infrastructure specialist
-    reasoning_effort: medium
-    user_invocable: true
-    can_delegate: false
-    subagent_can_delegate_to: []
-    can_receive_delegation: true
-    capabilities:
-    - infrastructure_as_code
-    - docker_configuration
-    - ci_cd_pipelines
-    - deployment_strategy
-    - container_optimization
-    - pantheon_code_mode
-    - memory_store
-    skills:
-    - git-workflow-and-versioning
-    - incremental-implementation
-    - loop-engineering
-    - reflect
-    - security-hardening
-    - simplify
-    - worktrees
-  hephaestus:
-    role: AI pipelines
-    reasoning_effort: medium
-    user_invocable: true
-    can_delegate: false
-    subagent_can_delegate_to: []
-    can_receive_delegation: true
-    capabilities:
-    - rag_pipeline_design
-    - langchain_workflow
-    - vector_store_integration
-    - embedding_strategy
-    - ai_workflow_composition
-    - memory_search
-    - pantheon_code_mode
-    skills:
-    - auto-continue
-    - clonedeps
-    - loop-engineering
-    - reflect
-    - simplify
-    - tdd-with-agents
-    - worktrees
-  nyx:
-    role: Observability
-    reasoning_effort: low
-    user_invocable: true
-    can_delegate: false
-    subagent_can_delegate_to: []
-    can_receive_delegation: true
-    capabilities:
-    - opentelemetry_setup
-    - token_cost_tracking
-    - agent_performance_analytics
-    - alerting
-    - monitoring_dashboards
-    - pantheon_resources_routing
-    - pantheon_code_mode
-    skills:
-    - auto-continue
-    - loop-engineering
-    - reflect
-    - security-hardening
-    - simplify
-    - worktrees
-  gaia:
-    role: Remote sensing domain specialist
-    reasoning_effort: low
-    user_invocable: false
-    can_delegate: false
-    subagent_can_delegate_to: []
-    can_receive_delegation: true
-    capabilities:
-    - remote_sensing
-    - spectral_analysis
-    - change_detection
-    - ml_classification
-    skills:
-    - auto-continue
-    - loop-engineering
-    - reflect
-    - simplify
-    - worktrees
   iris:
-    role: GitHub operations
+    role: GitHub & memory custody
     reasoning_effort: low
     user_invocable: true
     can_delegate: false
@@ -439,62 +312,23 @@ agents:
     - issue_tracking
     - release_management
     - changelog_generation
-    - pantheon_resources
-    skills:
-    - artifact-management
-    - git-workflow-and-versioning
-    - loop-engineering
-    - reflect
-    - simplify
-    - worktrees
-  mnemosyne:
-    role: Memory bank
-    reasoning_effort: low
-    user_invocable: true
-    can_delegate: false
-    can_receive_delegation: true
-    capabilities:
     - memory_bank_management
     - artifact_persistence
     - adr_writing
-    - project_initialization
-    - sprint_documentation
     - context_compression
     - memory_store
     - memory_recall
     - pantheon_resources_memory_bank
     - pantheon_code_mode
-    subagent_can_delegate_to: []
     skills:
     - artifact-management
     - context-compression
+    - git-workflow-and-versioning
     - loop-engineering
     - memory-bank
     - reflect
     - session-goal
     - simplify
-    - worktrees
-  talos:
-    role: Hotfix agent
-    reasoning_effort: low
-    user_invocable: true
-    can_delegate: false
-    can_receive_delegation: true
-    capabilities:
-    - rapid_repair
-    - css_fix
-    - typo_correction
-    - minor_bug_fix
-    - escalation_detection
-    - pantheon_code_mode
-    subagent_can_delegate_to: []
-    skills:
-    - fast-path-execution
-    - incremental-implementation
-    - loop-engineering
-    - reflect
-    - simplify
-    - test-slicing
     - worktrees
 auto_continue:
   checkpoint_script: .pantheon/code-mode/checkpoint-session.sh
@@ -513,7 +347,7 @@ intent_gate:
     - fail
     - wrong
     - incorrect
-    target: talos
+    target: hermes
   research:
     patterns:
     - how
@@ -560,20 +394,14 @@ delegation:
   - target: aphrodite
   - target: demeter
   - target: themis
-  - target: prometheus
-  - target: hephaestus
-  - target: nyx
-  - target: gaia
   - target: iris
-  - target: mnemosyne
-  - target: talos
 handoffs:
   zeus:
     compress_context:
       label: 🗜️ Compress Context
       description: Compress completed subtask_summaries and archive IMPL/REVIEW artifacts
         after Themis approval
-      agent: mnemosyne
+      agent: iris
       prompt: 'Compress completed phase artifacts (Level 2): create ZZ-phase{N}-context.md
         with priority-scored entries, write compressed entries to 01-active-context.md
         (priority-aware, budget-allocated), archive IMPL/REVIEW to 02-progress-log.md,
@@ -586,29 +414,15 @@ fallback_chains:
     - athena
     - hermes
   hermes:
-    - talos
     - athena
   aphrodite:
-    - talos
     - hermes
   demeter:
     - hermes
     - athena
   themis:
     - zeus
-  prometheus:
-    - hermes
-    - zeus
-  talos:
-    - hermes
-  hephaestus:
-    - nyx
-    - hermes
-  nyx:
-    - hermes
   iris:
-    - zeus
-  mnemosyne:
     - zeus
 
 platforms:
@@ -638,7 +452,7 @@ background_delegation:
   timeout_ms: 900000        # 15 min
   poll_ms: 250
   prune_ttl_ms: 86400000    # 24h
-  read_only_agents: [apollo, gaia]
+  read_only_agents: [apollo]
   session_max: 3
   retry_count: 1              # one retry after an initial transient failure; no retry loops
 # ── O5: permission.task — glob rules for which subagents an agent may

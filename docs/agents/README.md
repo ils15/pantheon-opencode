@@ -1,6 +1,6 @@
 # Agent Reference — Pantheon
 
-This directory indexes the definitions for all 14 Pantheon agents. The canonical files live in `src/agents/` and use the `.md` extension; their frontmatter specifies tools, model tier, capabilities, and delegation rules.
+This directory indexes the definitions for all 8 canonical Pantheon agents (plus `spawn_ephemeral` slice archetypes: `hotfix`, `infra-ci`, `ai-pipeline`, `observability`, `geospatial`, `memory-adr`). The canonical files live in `src/agents/` and use the `.md` extension; their frontmatter specifies tools, model tier, capabilities, and delegation rules.
 
 ## Agents
 
@@ -9,17 +9,11 @@ This directory indexes the definitions for all 14 Pantheon agents. The canonical
 | @zeus | [zeus.md](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/zeus.md) | Central orchestrator |
 | @athena | [athena.md](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/athena.md) | Strategic planner |
 | @apollo | [apollo.md](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/apollo.md) | Investigation scout |
-| @hermes | [hermes.md](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/hermes.md) | Backend specialist |
+| @hermes | [hermes.md](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/hermes.md) | Backend, infra & execution specialist |
 | @aphrodite | [aphrodite.md](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/aphrodite.md) | Frontend specialist |
 | @demeter | [demeter.md](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/demeter.md) | Database specialist |
 | @themis | [themis.md](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/themis.md) | Quality & security gate |
-| @prometheus | [prometheus.md](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/prometheus.md) | Infrastructure & observability specialist |
-| @hephaestus | [hephaestus.md](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/hephaestus.md) | AI pipelines |
-| @nyx | [nyx.md](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/nyx.md) | Chaos & adversarial testing |
-| @gaia | [gaia.md](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/gaia.md) | Remote sensing |
-| @iris | [iris.md](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/iris.md) | GitHub operations |
-| @mnemosyne | [mnemosyne.md](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/mnemosyne.md) | Memory curation |
-| @talos | [talos.md](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/talos.md) | Hotfix agent |
+| @iris | [iris.md](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/iris.md) | GitHub ops & memory-bank custodian |
 
 ## Domain artifacts and exclusivity (measured 2026-11-05)
 
@@ -37,13 +31,7 @@ new exclusive tool would remove; new exclusive tools fail the measured bar).
 | aphrodite | `docs/ui/conventions.md` — tokens, layout, a11y, component patterns — kept current whenever the project has a graphical surface | Vision grant trio (describe/ocr/analyze) — grant-exclusive ✓ |
 | demeter | `docs/data/conventions.md` — schema style, migration rules, N+1 doctrine | No new tool; SQL via shared code-mode |
 | themis | `docs/review/checklist.md` — the gates actually enforced per project | Secret scan is platform-level, not agent-owned |
-| prometheus | `docs/infra/conventions.md` — CI stages, envs, containers, observability | Observability absorbed from nyx ✓ |
-| hephaestus | `docs/ai/prompt-conventions.md` (candidate — write when the project wires LLMs) | No new tool |
-| nyx | `docs/testing/adversarial-corpus.md` — the payloads that broke it, durable for the next run | Fuzzing/adversarial niche — sole owner ✓ |
-| gaia | geospatial conventions (candidate, niche deployments) | Vision grant trio ✓ |
-| iris | `docs/release/runbook.md` (candidate) — release steps gh actually runs | gh workflows; never pushes/merges without human approval |
-| mnemosyne | `.pantheon/memory-bank/` + ADRs — owns it today | `memory_store` grant — sole owner ✓ |
-| talos | none — the hotfix lane stays light by design | No tooling; speed is the product |
+| iris | `docs/release/runbook.md` (candidate), `.pantheon/memory-bank/` + ADRs | gh workflows + `memory_store` grant; never pushes/merges without human approval |
 
 The convention-doc rule (carried in each owning agent's body): keep the
 domain doc current as you work, read it first when it exists, propose it when

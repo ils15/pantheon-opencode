@@ -429,7 +429,7 @@ echo "$LOG_LINE" >> "$LOG_FILE"
 echo "[DELEGATION] $AGENT_NAME stopped ($STATUS) delegation=$DELEGATION_ID → $LOG_FILE" >&2
 
 # --- Post-condition validation: remind about Themis review ---
-if echo "hermes aphrodite demeter prometheus" | grep -wq "$AGENT_NAME" 2>/dev/null; then
+if echo "hermes aphrodite demeter" | grep -wq "$AGENT_NAME" 2>/dev/null; then
     echo "[POST-CONDITION] 🔔 Reminder: '$AGENT_NAME' should call Themis for review after implementation" >&2
 fi
 

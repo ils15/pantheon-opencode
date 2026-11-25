@@ -15,7 +15,7 @@ do repositório — mantendo a raiz do projeto limpa e permitindo revisão tanto
 |---|---|---|---|
 | **Planos (`PLAN`)** | `.pantheon/deepwork/<slug>/PLAN.md` | `@athena` / `/pantheon-deepwork` | Durável por tarefa/sprint (ignorado no git) |
 | **Relatórios (`REPORT`)** | `.pantheon/reports/<AAAA-MM-DD>-<tópico>.md` | `@apollo` / `@themis` | Trilha de auditoria e descoberta |
-| **ADRs (`ADR`)** | `docs/adr/<NNN>-<slug>.md` (e `.pantheon/memory-bank/adr/*.md`) | `@mnemosyne` | Decisões arquiteturais permanentes |
+| **ADRs (`ADR`)** | `docs/adr/<NNN>-<slug>.md` (e `.pantheon/memory-bank/adr/*.md`) | `@iris` (ou `spawn_ephemeral` `memory-adr`) | Decisões arquiteturais permanentes |
 
 > [!TIP]
 > Worktrees vinculados resolvem automaticamente para a raiz do repositório principal,

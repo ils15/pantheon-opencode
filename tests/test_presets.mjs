@@ -581,7 +581,7 @@ test('T13: validatePresetDefs rejects bad fixtures', () => {
 test('go-hybrid overlays premium roles on go-fast and retains legacy preset definitions', () => {
   const routing = load(readFileSync(join(ROOT, 'src', 'routing.yml'), 'utf8'))
   const defs = routing.presets
-  const premiumRoles = ['zeus', 'athena', 'themis', 'hephaestus']
+  const premiumRoles = ['zeus', 'athena', 'themis']
   assert.ok(defs['go-free'] && defs['go-fast'] && defs['go-premium'])
   for (const agent of Object.keys(defs['go-fast'].agents)) {
     const source = premiumRoles.includes(agent) ? defs['go-premium'] : defs['go-fast']
@@ -628,8 +628,8 @@ test('T22: applyPreset openai injects OpenAI provider + gpt-5.6 agents', () => {
   assert.equal(config.agent.hermes.variant, 'low')
   assert.equal(config.agent.apollo.model, 'openai/gpt-5.6-luna-fast')
   assert.equal(config.agent.apollo.variant, 'low')
-  assert.equal(config.agent.talos.model, 'openai/gpt-5.6-luna-fast')
-  assert.equal(config.agent.talos.variant, 'low')
+  assert.equal(config.agent.iris.model, 'openai/gpt-5.6-luna-fast')
+  assert.equal(config.agent.iris.variant, 'low')
 
   let thrown = null
   try {
@@ -743,8 +743,8 @@ test('T24: applyPreset go-premium injects opencode-go provider + tiered agents',
   assert.equal(config.agent.aphrodite.variant, 'medium')
   assert.equal(config.agent.apollo.model, 'opencode-go/gpt-5.6-luna')
   assert.equal(config.agent.apollo.variant, 'low')
-  assert.equal(config.agent.talos.model, 'opencode-go/gpt-5.6-luna')
-  assert.equal(config.agent.talos.variant, 'low')
+  assert.equal(config.agent.iris.model, 'opencode-go/gpt-5.6-luna')
+  assert.equal(config.agent.iris.variant, 'low')
 
   let thrown = null
   try {

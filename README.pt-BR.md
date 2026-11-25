@@ -2,7 +2,7 @@
 # Pantheon
 
 Plugin de orquestração multiagente para o OpenCode que leva um pedido do plano até a
-alteração revisada com 14 agentes especializados, TDD obrigatório e gates de aprovação
+alteração revisada com 8 agentes especializados, TDD obrigatório e gates de aprovação
 humana — para desenvolvedores e equipes que querem estrutura sem abrir mão do controle
 do código.
 
@@ -56,9 +56,9 @@ Dentro do OpenCode, acione o orquestrador ou um fluxo:
 /pantheon-deepwork "Implemente o fluxo de autenticação OAuth2 PKCE"
 ```
 
-`@zeus` roteia para os especialistas poliglotas (`@hermes` para backend/APIs, `@aphrodite`
-para UI, `@demeter` para dados/migrações, `@talos` para correções rápidas, `@themis` para
-revisão); `/pantheon` arbitra escolhas de arquitetura entre especialistas; `/pantheon-deepwork`
+`@zeus` roteia para os especialistas poliglotas (`@hermes` para backend/APIs/infra, `@aphrodite`
+para UI, `@demeter` para dados/migrações, `@iris` para GitHub/memória, `@themis` para
+revisão, além de workers efêmeros `spawn_ephemeral`); `/pantheon` arbitra escolhas de arquitetura entre especialistas; `/pantheon-deepwork`
 executa um plano multifase com recibos mecânicos via `pantheon_step_ledger` e gates; e
 `pantheon_agent_forge` cria especialistas customizados de domínio em `.opencode/agents/<name>.md`
 sob demanda. Você aprova cada gate e executa cada commit.
@@ -77,7 +77,7 @@ repositório principal para `.pantheon/memory`, checkpoints e metas (defina
 ## Estrutura
 
 ```
-src/agents/       14 definições canônicas de agentes poliglotas (roster.json + build-roster)
+src/agents/       8 definições canônicas de agentes poliglotas (roster.json + build-roster)
 src/pantheon/     tools nativas TypeScript, Agent Forge, Step-Ledger, memória FTS5, codemap, receipts
 src/skills/       26 skills carregadas sob demanda
 src/mcp/          ponte MCP nativa em Node.js (pantheon-mcp-server.mjs)

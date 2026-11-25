@@ -10,7 +10,7 @@ Este guia ensina a utilizar o **Pantheon** na prática, passo a passo, desde a i
 
 O Pantheon não é um prompt gigante nem um assistente genérico: ele é um **framework de orquestração multi-agente para o OpenCode**.
 
-Em vez de sobrecarregar um único modelo com planejamento, código backend, CSS, banco de dados e testes, o Pantheon divide o trabalho entre **14 agentes especialistas** com permissões e papéis rigorosamente demarcados.
+Em vez de sobrecarregar um único modelo com planejamento, código backend, CSS, banco de dados e testes, o Pantheon divide o trabalho entre **8 agentes canônicos** (além de workers efêmeros `spawn_ephemeral`) com permissões e papéis rigorosamente demarcados.
 
 ```mermaid
 flowchart TD

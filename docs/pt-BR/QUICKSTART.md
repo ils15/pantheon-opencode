@@ -20,7 +20,7 @@ Certifique-se de que seu ambiente atende aos seguintes requisitos:
 
 ### Instalação Nativa como Plugin do OpenCode (Fluxo Único na v2.2.2+)
 
-Um único comando registra em memória os 14 agentes especialistas, 26 skills, 9 comandos, 31 tools nativas em TypeScript e a interface TUI, sem copiar arquivos redundantes para o disco (e limpando automaticamente MCPs Python legados e cópias antigas da TUI/CLI):
+Um único comando registra em memória os 8 agentes canônicos, 26 skills, 9 comandos, 31 tools nativas em TypeScript e a interface TUI, sem copiar arquivos redundantes para o disco (e limpando automaticamente MCPs Python legados e cópias antigas da TUI/CLI):
 
 ```bash
 opencode plugin add pantheon-opencode
@@ -94,9 +94,9 @@ Para trade-offs arquiteturais, seleção de tecnologias ou revisões de seguran�
 - Retorna uma síntese assertiva com recomendações claras.
 
 ### D. Chamada Direta de Agentes Especialistas com `@`
-- **`@talos` (Faixa Expressa / Hotfixes em 1 Turno):** Para correções pontuais, erros de digitação e pequenos ajustes sem cerimônia de planejamento:
+- **`@hermes` (Backend, Infra & Execução Rápida):** Correções cirúrgicas e implementação backend/infra em TDD (ou `spawn_ephemeral` com `role="hotfix"` para slices isolados):
   ```text
-  @talos Corrija o erro de importação no arquivo src/server.ts e atualize a porta do servidor.
+  @hermes Corrija o erro de importação no arquivo src/server.ts e atualize a porta do servidor.
   ```
 - **`@apollo` (Batedor Read-Only):** Para explorar e entender o código, mapear dependências e encontrar trechos sem qualquer risco de edições:
   ```text

@@ -1,6 +1,6 @@
 ---
 description: "Merge and consolidate memory entries"
-agent: mnemosyne
+agent: iris
 ---
 
 Merge related memory entries and consolidate duplicates:

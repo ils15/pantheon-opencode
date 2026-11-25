@@ -14,7 +14,7 @@ description: "Forge a new OpenCode agent on demand. Use when the user asks for '
 - The user asks for a dedicated agent ("cria um agente de reviews de PR", "I want an agent that watches deploys").
 - A recurring task keeps being delegated with ad-hoc Briefs and would benefit from a standing definition.
 
-Do NOT fire when an existing specialist covers the domain — route there instead (the 14 canonical agents + any agents already forged in this project).
+Do NOT fire when an existing specialist covers the domain — route there instead (the 8 canonical agents + `spawn_ephemeral` archetypes + any agents already forged in this project).
 
 ---
 
@@ -35,7 +35,7 @@ Then present the draft definition for confirm-or-adjust BEFORE writing (the same
 
 ```markdown
 ---
-name: <kebab-id>                    # must NOT collide with the 14 canonical ids
+name: <kebab-id>                    # must NOT collide with the 8 canonical ids
 description: "<what it owns> — <domain keywords for routing>. Use when <trigger>."
 mode: subagent                      # or 'all' when it may also be invoked directly
 reasoning_effort: low|medium|high

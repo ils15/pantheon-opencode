@@ -1,8 +1,8 @@
-# Tutorial: Utilitário CLI de Alta Performance com o @talos
+# Tutorial: Utilitário CLI de Alta Performance com o @hermes / Hotfix Efêmero
 
 > 🇺🇸 **English version available:** [Read in English](../../guides/cli-tool.md)
 
-Neste tutorial prático e direto ao ponto, você aprenderá a utilizar a **Linha Expressa (Fast Lane)** do Pantheon com o agente `@talos` para criar uma ferramenta de linha de comando leve, sem dependências externas e com testes unitários automatizados em Node.js.
+Neste tutorial prático e direto ao ponto, você aprenderá a utilizar a **Linha Expressa (Fast Lane)** do Pantheon com o agente `@hermes` (ou `pantheon_step_ledger(action="spawn_ephemeral", role="hotfix")`) para criar uma ferramenta de linha de comando leve, sem dependências externas e com testes unitários automatizados em Node.js.
 
 ---
 
@@ -19,15 +19,15 @@ flowchart LR
         Hermes --> Themis["⚖️ @themis (Auditoria)"]
     end
 
-    subgraph FastLane["⚡ Linha Expressa (@talos)"]
-        User2["👤 Desenvolvedor"] --> Talos["🛡️ @talos (Execução Direta)"]
-        Talos --> Result["✅ Concluído (Edição e teste em 1 turno)"]
+    subgraph FastLane["⚡ Linha Expressa (@hermes / efêmero)"]
+        User2["👤 Desenvolvedor"] --> HermesFast["🛡️ @hermes (Execução Direta)"]
+        HermesFast --> Result["✅ Concluído (Edição e teste rápidos)"]
     end
 ```
 
-O `@talos` é o especialista em respostas rápidas do Pantheon:
-- **Sem sobrecarga de subagentes:** Opera diretamente na sessão principal.
-- **Execução em turno único:** Formula o código e executa a validação de testes imediatamente.
+O `@hermes` (ou um worker efêmero `hotfix`) resolve tarefas delimitadas diretamente:
+- **Sem cerimônia de Deepwork:** Pula planejamento multifase para utilitários CLI enxutos.
+- **Execução direta:** Formula o código e executa a validação de testes imediatamente.
 - **Edições seguras:** Valida a sintaxe e a integridade de testes antes de entregar.
 
 ---
@@ -41,12 +41,12 @@ Construiremos um utilitário CLI chamado `repo-health` que analisa qualquer repo
 
 ---
 
-## 2. Enviando o Pedido ao @talos
+## 2. Enviando o Pedido ao @hermes
 
 Inicie o OpenCode e envie o seguinte prompt no chat:
 
 ```text
-@talos Crie uma ferramenta CLI em Node.js sem dependências externas em bin/repo-health.mjs para inspecionar a saúde do repositório:
+@hermes Crie uma ferramenta CLI em Node.js sem dependências externas em bin/repo-health.mjs para inspecionar a saúde do repositório:
 1. Verifica se há arquivos modificados ou não comitados no git.
 2. Valida a sintaxe do package.json e confere se existe o script "test".
 3. Confere se existe um README.md.
@@ -58,7 +58,7 @@ Inicie o OpenCode e envie o seguinte prompt no chat:
 
 ## 3. Passo a Passo da Implementação
 
-O `@talos` implementa diretamente a suíte de testes e o arquivo da CLI.
+O `@hermes` implementa diretamente a suíte de testes e o arquivo da CLI.
 
 ### Passo 3.1: Suíte de Testes Unitários (`tests/cli.test.mjs`)
 

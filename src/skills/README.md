@@ -18,107 +18,107 @@ There are **26 skills** divided into **6 domains**.
    - Structured `#seq` council synthesis, targeted rebuttals, and swarm board handoffs.
    - Used by: Zeus
 
-2. **fast-path-execution** — `fast-path-execution/SKILL.md`
+3. **fast-path-execution** — `fast-path-execution/SKILL.md`
    - Fast-track execution protocol for bounded micro-edits (<= 2 files). Zero council overhead, direct specialist dispatch, inline verification.
-   - Used by: Zeus, Talos, Hermes, Aphrodite
+   - Used by: Zeus, Hermes, Aphrodite
 
-3. **artifact-management** — `artifact-management/SKILL.md`
+4. **artifact-management** — `artifact-management/SKILL.md`
    - Structured artifact trail for feature implementations — plans, implementations, reviews, and decisions.
-   - Used by: Zeus, Mnemosyne, Iris
+   - Used by: Zeus, Iris
 
-3. **auto-continue** — `auto-continue/SKILL.md`
+5. **auto-continue** — `auto-continue/SKILL.md`
    - Auto-continue through todos with idle detection and safety gates for multi-step orchestration.
-   - Used by: Zeus, Apollo, Hephaestus, Nyx, Gaia
+   - Used by: Zeus, Apollo
 
-4. **context-compression** — `context-compression/SKILL.md`
+6. **context-compression** — `context-compression/SKILL.md`
    - Native compaction guidance and explicit checkpoint rules; no automatic compression MCP calls.
-   - Used by: Zeus, Mnemosyne
+   - Used by: Zeus, Iris
 
-5. **memory-bank** — `memory-bank/SKILL.md`
+7. **memory-bank** — `memory-bank/SKILL.md`
    - Memory bank rules, structure, and optimization — complete guide to Pantheon memory management.
-   - Used by: Mnemosyne, Athena
+   - Used by: Iris, Athena
 
-6. **session-goal** — `session-goal/SKILL.md`
+8. **session-goal** — `session-goal/SKILL.md`
    - Pin session objectives to prevent scope creep across long multi-agent sessions.
-   - Used by: Zeus, Mnemosyne
+   - Used by: Zeus, Iris
 
 ### Domain 2: Development Tools
 
-7. **clonedeps** — `clonedeps/SKILL.md`
+9. **clonedeps** — `clonedeps/SKILL.md`
    - Clones dependency source locally so agents can inspect library internals, understand behavior, and debug integration issues.
-   - Used by: Hermes, Hephaestus
+   - Used by: Hermes
 
-8. **git-workflow-and-versioning** — `git-workflow-and-versioning/SKILL.md`
-   - Atomic commits, conventional commits, trunk-based development workflow.
-   - Used by: Hermes, Prometheus, Iris
+10. **git-workflow-and-versioning** — `git-workflow-and-versioning/SKILL.md`
+    - Atomic commits, conventional commits, trunk-based development workflow.
+    - Used by: Hermes, Iris
 
-9. **incremental-implementation** — `incremental-implementation/SKILL.md`
+11. **incremental-implementation** — `incremental-implementation/SKILL.md`
     - Implement in thin vertical slices — one commit per task, testable, rollback-safe.
-    - Used by: Zeus, Hermes, Aphrodite, Demeter, Prometheus, Talos
+    - Used by: Zeus, Hermes, Aphrodite, Demeter
 
-10. **loop-engineering** — `loop-engineering/SKILL.md`
+12. **loop-engineering** — `loop-engineering/SKILL.md`
     - Iterative refinement pattern for complex problems — solve, review, improve, repeat in controlled cycles.
     - Used by: All agents
 
-11. **reflect** — `reflect/SKILL.md`
+13. **reflect** — `reflect/SKILL.md`
     - Turns repeated workflow friction into reusable skills, agents, or configuration improvements.
     - Used by: All agents
 
-12. **simplify** — `simplify/SKILL.md`
+14. **simplify** — `simplify/SKILL.md`
     - Behavior-preserving code simplification for readability, maintainability, and reduced complexity.
     - Used by: All agents
 
-13. **worktrees** — `worktrees/SKILL.md`
+15. **worktrees** — `worktrees/SKILL.md`
     - Git worktrees as safe, isolated coding lanes for risky or parallel work without affecting the main workspace.
     - Used by: All agents
 
 ### Domain 3: Quality & Security
 
-14. **code-review-checklist** — `code-review-checklist/SKILL.md`
+16. **code-review-checklist** — `code-review-checklist/SKILL.md`
     - Systematic code review with quality gates, security audit, and parallel checks for structured feedback.
+    - Used by: Themis, Hermes
+
+17. **security-hardening** — `security-hardening/SKILL.md`
+    - Security gate — OWASP, SAST, secrets detection, MCP hardening, dependency audit.
     - Used by: Themis
 
-15. **security-hardening** — `security-hardening/SKILL.md`
-    - Security gate — OWASP, SAST, secrets detection, MCP hardening, dependency audit.
-    - Used by: Themis, Nyx
-
-17. **tdd-with-agents** — `tdd-with-agents/SKILL.md`
+18. **tdd-with-agents** — `tdd-with-agents/SKILL.md`
     - TDD enforcement with RED→GREEN→REFACTOR cycle and advanced testing patterns across all layers.
-    - Used by: Hermes, Aphrodite, Demeter, Themis, Hephaestus
+    - Used by: Hermes, Aphrodite, Demeter, Themis
 
-18. **test-slicing** — `test-slicing/SKILL.md`
+19. **test-slicing** — `test-slicing/SKILL.md`
     - Targeted test execution — map changed files directly to their narrow test slice instead of running full suites.
-    - Used by: Talos, Themis, Hermes, Aphrodite, Zeus
+    - Used by: Themis, Hermes, Aphrodite, Zeus
 
 ### Domain 4: Planning
 
-17. **codemap** — `codemap/SKILL.md`
+20. **codemap** — `codemap/SKILL.md`
     - Generates hierarchical repository maps so agents understand codebase structure without re-reading every file.
     - Used by: Apollo, Zeus
 
-18. **spec-driven-development** — `spec-driven-development/SKILL.md`
+21. **spec-driven-development** — `spec-driven-development/SKILL.md`
     - Define requirements via spec-first before any code — PRD, edge cases, acceptance criteria.
     - Used by: Athena
 
-19. **verification-planning** — `verification-planning/SKILL.md`
+22. **verification-planning** — `verification-planning/SKILL.md`
     - Plans an evidence path before non-trivial changes, ensuring changes are testable and verifiable.
     - Used by: Athena, Zeus
 
 ### Domain 5: Frontend Development
 
-20. **visual-review-pipeline** — `visual-review-pipeline/SKILL.md`
+23. **visual-review-pipeline** — `visual-review-pipeline/SKILL.md`
     - Automated visual review pipeline — Playwright screenshots, self-analysis, fix loop, escalation.
     - Used by: Aphrodite
 
 ### Domain 6: Meta
 
-21. **agent-forge** — `agent-forge/SKILL.md`
+24. **agent-forge** — `agent-forge/SKILL.md`
     - Forge a new OpenCode agent on demand — interview, canonical draft, confirm, write to project or user scope; never shadows a specialist.
     - Used by: Zeus
-22. **prompt-refinery** — `prompt-refinery/SKILL.md`
+25. **prompt-refinery** — `prompt-refinery/SKILL.md`
     - Turn a vague multi-concern request into a usable brief — silent internal adjust by default; the full contract is only via `>>`.
     - Used by: Zeus
-23. **instruction-forge** — `instruction-forge/SKILL.md`
+26. **instruction-forge** — `instruction-forge/SKILL.md`
     - Write and maintain AI instructions — where a rule lives, the contract, and testing that it fires (references/ for the doctrine).
     - Used by: Zeus
 
@@ -150,30 +150,30 @@ agent grants, and skill inventory.
 | # | Skill Name | Domain | Used By |
 |---|------------|--------|---------|
 | 1 | agent-coordination | Orchestration & Workflow | Zeus |
-| 2 | fast-path-execution | Orchestration & Workflow | Zeus, Talos, Hermes, Aphrodite |
-| 3 | artifact-management | Orchestration & Workflow | Zeus, Mnemosyne, Iris |
-| 4 | auto-continue | Orchestration & Workflow | Zeus, Apollo, Hephaestus, Nyx, Gaia |
-| 5 | context-compression | Orchestration & Workflow | Zeus, Mnemosyne |
-| 6 | memory-bank | Orchestration & Workflow | Mnemosyne, Athena |
-| 7 | session-goal | Orchestration & Workflow | Zeus, Mnemosyne |
-| 8 | clonedeps | Development Tools | Hermes, Hephaestus |
-| 9 | git-workflow-and-versioning | Development Tools | Hermes, Prometheus, Iris |
-| 10 | incremental-implementation | Development Tools | Zeus, Hermes, Aphrodite, Demeter, Prometheus, Talos |
+| 2 | fast-path-execution | Orchestration & Workflow | Zeus, Hermes, Aphrodite |
+| 3 | artifact-management | Orchestration & Workflow | Zeus, Iris |
+| 4 | auto-continue | Orchestration & Workflow | Zeus, Apollo |
+| 5 | context-compression | Orchestration & Workflow | Zeus, Iris |
+| 6 | memory-bank | Orchestration & Workflow | Iris, Athena |
+| 7 | session-goal | Orchestration & Workflow | Zeus, Iris |
+| 8 | clonedeps | Development Tools | Hermes |
+| 9 | git-workflow-and-versioning | Development Tools | Hermes, Iris |
+| 10 | incremental-implementation | Development Tools | Zeus, Hermes, Aphrodite, Demeter |
 | 11 | loop-engineering | Development Tools | All agents |
 | 12 | reflect | Development Tools | All agents |
 | 13 | simplify | Development Tools | All agents |
 | 14 | worktrees | Development Tools | All agents |
-| 15 | code-review-checklist | Quality & Security | Themis |
-| 16 | security-hardening | Quality & Security | Themis, Nyx |
-| 17 | tdd-with-agents | Quality & Security | Hermes, Aphrodite, Demeter, Themis, Hephaestus |
-| 18 | test-slicing | Quality & Security | Talos, Themis, Hermes, Aphrodite, Zeus |
+| 15 | code-review-checklist | Quality & Security | Themis, Hermes |
+| 16 | security-hardening | Quality & Security | Themis |
+| 17 | tdd-with-agents | Quality & Security | Hermes, Aphrodite, Demeter, Themis |
+| 18 | test-slicing | Quality & Security | Themis, Hermes, Aphrodite, Zeus |
 | 19 | codemap | Planning | Apollo, Zeus |
 | 20 | spec-driven-development | Planning | Athena |
 | 21 | verification-planning | Planning | Athena, Zeus |
 | 22 | visual-review-pipeline | Frontend Development | Aphrodite |
 | 23 | agent-forge | Meta | Zeus |
 | 24 | prompt-refinery | Meta | Zeus |
-| 25 | instruction-forge | Meta | Zeus, Athena |
+| 25 | instruction-forge | Meta | Zeus |
 | 26 | council-agora | Orchestration & Workflow | Zeus |
 
 ---

@@ -92,16 +92,15 @@ test('agent-specific instructions are present in the actual installed agent prom
     copyAgentPrompts(srcAgents, join(target, '.opencode', 'agents'))
     const installedHermes = readFileSync(join(target, '.opencode', 'agents', 'hermes.md'), 'utf8')
     const installedZeus = readFileSync(join(target, '.opencode', 'agents', 'zeus.md'), 'utf8')
-    const installedTalos = readFileSync(join(target, '.opencode', 'agents', 'talos.md'), 'utf8')
     assert.ok(installedHermes.includes('Backend Development Standards (Hermes)'))
     assert.ok(installedHermes.includes('Apply only when a target workspace file matches `**/*.py`'))
     assert.ok(!installedHermes.includes('INLINE COUNCIL SYNTHESIS'))
     assert.ok(installedZeus.includes('INLINE COUNCIL SYNTHESIS'))
     assert.ok(installedZeus.includes('Fallback Chain Definitions'))
     assert.ok(!installedZeus.includes('Backend Development Standards (Hermes)'))
-    assert.match(installedTalos, /Requested Artifact Completion/)
-    assert.match(installedTalos, /successful native `write` or `edit` tool call/)
-    assert.match(installedTalos, /MCP Code Mode catalog.*native file tools/)
+    assert.match(installedHermes, /Requested Artifact Completion/)
+    assert.match(installedHermes, /successful native `write` or `edit` tool call/)
+    assert.match(installedHermes, /MCP Code Mode catalog.*native file tools/)
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -144,7 +143,7 @@ test('timeout instructions use the explicit routing fallback map as canonical', 
   const timeout = read('../src/instructions/zeus-timeout-retry.instructions.md')
   const routing = read('../src/routing.yml')
   assert.match(timeout, /routing\.yml.*fallback_chains.*canonical/s)
-  assert.match(routing, /fallback_chains:\s*[\s\S]*?hermes:\s*\n\s*- talos\s*\n\s*- athena/)
+  assert.match(routing, /fallback_chains:\s*[\s\S]*?hermes:\s*\n\s*- athena/)
   assert.match(timeout, /if an agent has no configured chain, stop[\s\S]*escalate/i)
 })
 

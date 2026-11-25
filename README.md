@@ -1,7 +1,7 @@
 # Pantheon
 
 A multi-agent orchestration plugin for OpenCode that carries a request from plan to
-reviewed change with 14 specialized agents, enforced TDD and explicit human approval
+reviewed change with 8 specialized agents, enforced TDD and explicit human approval
 gates — for developers and teams who want structure without giving up control of the code.
 
 [Português (Brasil)](README.pt-BR.md) · [Repository](https://github.com/ils15/pantheon-opencode) · [MIT License](LICENSE)
@@ -53,8 +53,8 @@ Inside OpenCode, dispatch the orchestrator or a workflow:
 /pantheon-deepwork "Implement OAuth2 PKCE authentication flow"
 ```
 
-`@zeus` routes to the polyglot specialists (`@hermes` for backend/APIs, `@aphrodite` for UI,
-`@demeter` for data/migrations, `@talos` for fast fixes, `@themis` for review); `/pantheon`
+`@zeus` routes to the polyglot specialists (`@hermes` for backend/APIs/infra, `@aphrodite` for UI,
+`@demeter` for data/migrations, `@iris` for GitHub/memory custody, `@themis` for review, plus `spawn_ephemeral` slice workers); `/pantheon`
 arbitrates architectural choices across specialists; `/pantheon-deepwork` runs a multi-phase
 plan with `pantheon_step_ledger` mechanical receipts and gates; and `pantheon_agent_forge`
 creates custom project-specific domain specialists in `.opencode/agents/<name>.md` on demand.
@@ -73,7 +73,7 @@ share the main repository's `.pantheon/memory`, checkpoints, and goals store (se
 ## Structure
 
 ```
-src/agents/       14 canonical polyglot agent definitions (roster.json + build-roster)
+src/agents/       8 canonical polyglot agent definitions (roster.json + build-roster)
 src/pantheon/     native TypeScript tools, Agent Forge, Step-Ledger, FTS5 memory, codemap, receipts
 src/skills/       26 skills loaded on demand
 src/mcp/          native Node.js MCP bridge (pantheon-mcp-server.mjs)

@@ -84,20 +84,14 @@ O instalador lê a lista `mcp_tools` de cada arquivo canônico em `src/agents/*.
 
 | Agente | Recursos | Code-mode | Memory | Persistence | Vision |
 |---|---|---|---|---|---|
-| **zeus** | all | — | search | context_save, context_get, goal_create, goal_get, goal_update, goal_done | — |
+| **zeus** | all | — | search | context_save, context_get, goal_create, goal_get, goal_update, goal_done | describe |
 | **athena** | all | — | search, code_query, code_neighbors | — | — |
 | **apollo** | all | — | search, code_query, code_neighbors | — | — |
 | **hermes** | all | execute script | search | — | — |
 | **aphrodite** | all | execute script | search | — | describe/OCR/analyze |
 | **demeter** | all | execute script | search | — | — |
-| **themis** | all | execute script | search | — | — |
-| **prometheus** | all | execute script | search | — | — |
-| **hephaestus** | all | execute script | search | — | — |
-| **nyx** | all | execute script | search | — | — |
-| **gaia** | all | — | recall | — | describe/OCR/analyze |
-| **iris** | all | — | recall | — | — |
-| **mnemosyne** | all | execute script | ferramentas explícitas de escrita | — | — |
-| **talos** | all | execute script | recall | — | — |
+| **themis** | all | — | search | — | — |
+| **iris** | all | execute script | ferramentas explícitas de escrita | — | — |
 
 **Regras:**
 - `all` permite todas as ferramentas daquele servidor específico.
@@ -111,7 +105,7 @@ O instalador lê a lista `mcp_tools` de cada arquivo canônico em `src/agents/*.
 
 ### 1. `pantheon-resources`
 Servidor somente-leitura que expõe metadados e esquemas do Pantheon via URIs `pantheon://`:
-- `pantheon://framework/capabilities` — Capacidades e papéis dos 14 agentes.
+- `pantheon://framework/capabilities` — Capacidades e papéis dos 8 agentes canônicos.
 - `pantheon://templates/athena-plan` — Template do plano Deepwork.
 - `pantheon://templates/themis-report` — Formato do veredito de auditoria.
 - `pantheon://memory-bank/{file}` — Leitura sob demanda dos arquivos em `.pantheon/memory-bank/`.

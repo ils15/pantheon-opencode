@@ -20,7 +20,7 @@ Ensure your environment satisfies the following requirements:
 
 ### Native OpenCode Plugin Install (Only Supported Flow in v2.2.2+)
 
-One command registers the 14 agents, 26 skills, 9 slash commands, 31 native TypeScript tools, and TUI in-process with zero copied files on disk (and automatically cleans legacy Python MCPs and old TUI/CLI copies):
+One command registers the 8 canonical agents, 26 skills, 9 slash commands, 31 native TypeScript tools, and TUI in-process with zero copied files on disk (and automatically cleans legacy Python MCPs and old TUI/CLI copies):
 
 ```bash
 opencode plugin add pantheon-opencode
@@ -94,9 +94,9 @@ For high-impact architectural trade-offs, technology evaluations, or security ar
 - Returns a single, assertive synthesis with clear recommendations.
 
 ### D. Direct Specialist Invocations with `@`
-- **`@talos` (Fast Lane / Single-Turn Hotfixer):** For quick surgical edits, bug fixes, and typos without planning ceremony:
+- **`@hermes` (Backend, Infra & Fast Execution):** Direct backend/infra fixes and implementation in TDD (or `spawn_ephemeral` with `role="hotfix"` for isolated micro-edits):
   ```text
-  @talos Fix the import path error in src/server.ts and update the port binding.
+  @hermes Fix the import path error in src/server.ts and update the port binding.
   ```
 - **`@apollo` (Read-Only Codebase Scout):** For deep codebase exploration, tracing references, and finding code locations without edit risk:
   ```text

@@ -3,7 +3,7 @@
 
 > 🇧🇷 **Versão em Português disponível:** [Leia em Português](../pt-BR/guides/cookbook.md)
 
-This practical cookbook gathers copy-paste recipes for everyday development in **Pantheon `v2.3.0` (`OpenCode 2.x` native)** — covering zero-init setup, the **14 specialist agents**, **31 native in-process tools**, **9 server commands**, and **5 interactive TUI surfaces**.
+This practical cookbook gathers copy-paste recipes for everyday development in **Pantheon `v2.3.0` (`OpenCode 2.x` native)** — covering zero-init setup, the **8 canonical agents** (+ `spawn_ephemeral` slice workers), **31 native in-process tools**, **9 server commands**, and **5 interactive TUI surfaces**.
 
 ---
 
@@ -19,7 +19,7 @@ opencode plugin update pantheon-opencode
 ```
 
 **Why this works:**
-- All **14 agents**, **9 server commands**, global instructions, and **30 native TypeScript tools** load directly in memory.
+- All **8 canonical agents**, **9 server commands**, global instructions, and **31 native TypeScript tools** load directly in memory.
 - Inside the TUI, run `/pantheon-updates` to check registry updates or clean stale npm plugin caches cleanly.
 
 ---
@@ -41,17 +41,17 @@ opencode plugin update pantheon-opencode
 
 ---
 
-## Recipe 2: Express 1-Turn Fix (`@talos`)
+## Recipe 2: Express 1-Turn Fix (`@hermes` / `spawn_ephemeral` `hotfix`)
 
 **Scenario:** Fix a CSS styling bug, a typo, or a missing import without planning ceremony.
 
 **Prompt:**
 ```text
-@talos Update the login submit button background from blue to emerald green in login.css using hashline_edit
+@hermes Update the login submit button background from blue to emerald green in login.css using hashline_edit
 ```
 
-**Why use @talos?**
-`@talos` is Pantheon's fast lane: zero subagent overhead, surgical edits via `hashline_edit` (confined to the workspace root), and immediate verification.
+**Why use `@hermes` or `spawn_ephemeral`?**
+Bounded edits go straight to `@hermes` (or `@zeus` via `pantheon_step_ledger(action="spawn_ephemeral", role="hotfix")` for isolated worktree execution) using `hashline_edit` and immediate verification.
 
 ---
 
@@ -66,7 +66,7 @@ opencode plugin update pantheon-opencode
 
 **Workflow (`pantheon_step_ledger`):**
 1. `@zeus` initializes a `bugfix` step (`init_step`) capturing a non-invasive `GIT_INDEX_FILE` `baselineTree` snapshot without touching `.git/index`.
-2. `tool.execute.before` blocks edits (`edit`, `write`, `hashline_edit`, `ast_rewrite`) on production files by `@hermes` / `@talos` while allowing edits to test files.
+2. `tool.execute.before` blocks edits (`edit`, `write`, `hashline_edit`, `ast_rewrite`) on production files by `@hermes` while allowing edits to test files.
 3. Once a failing test is recorded via `record_reproduction` (`exitCode !== 0`), production edits unlock automatically.
 4. If verification fails repeatedly and `ThemisReflexController` escalates, `pantheon_step_ledger` rolls back cleanly to `baselineTree` (`rollback_step` is also available manually).
 
@@ -152,16 +152,16 @@ or directly:
 
 ---
 
-## Recipe 9: AI Pipelines, Containers & CI/CD
+## Recipe 9: Ephemeral Archetypes (`ai-pipeline`, `infra-ci`, `observability`)
 
-**Scenarios:** Build vector RAG retrieval pipelines or multi-stage container builds & GitHub Actions workflows.
+**Scenarios:** Build vector RAG retrieval pipelines or multi-stage container builds & GitHub Actions workflows via isolated `spawn_ephemeral` workers.
 
 **Prompts:**
 ```text
-@hephaestus Implement a vector search pipeline using embeddings and pgvector with batched ingestion.
+@zeus Run spawn_ephemeral(role="ai-pipeline") to implement a vector search pipeline using embeddings and pgvector with batched ingestion.
 ```
 ```text
-@prometheus Create a multi-stage Dockerfile for this service and a GitHub Actions PR workflow.
+@zeus Run spawn_ephemeral(role="infra-ci") to create a multi-stage Dockerfile for this service and a GitHub Actions PR workflow.
 ```
 
 ---

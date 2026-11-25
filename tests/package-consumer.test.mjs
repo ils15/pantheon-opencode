@@ -159,7 +159,7 @@ test('the ./plugin export loads from a clean production-only consumer', () => {
         '    },',
         '  },',
         '})',
-        "if (!agents.has('zeus') || agents.size < 14) throw new Error('expected >=14 agents, got ' + String(agents.size))",
+        "if (!agents.has('zeus') || agents.size < 8) throw new Error('expected >=8 agents, got ' + String(agents.size))",
         "if (skills.size < 25) throw new Error('expected >=25 skills, got ' + String(skills.size))",
         "if (commands.size < 8) throw new Error('expected >=8 commands, got ' + String(commands.size))",
         "const refPath = refs.get('pantheon-agents')?.path",

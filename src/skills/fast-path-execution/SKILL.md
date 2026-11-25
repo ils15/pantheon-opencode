@@ -27,7 +27,7 @@ User Request
      │
      ▼
 [Zeus Assessment: <= 2 files?]
-     ├── YES ──► Dispatch directly to Specialist (@talos / @hermes / @aphrodite)
+     ├── YES ──► Dispatch directly to Specialist (@hermes / @aphrodite / spawn_ephemeral hotfix)
      │                 │
      │                 ▼
      │           [Implement change + Targeted Test Slice]
@@ -47,7 +47,7 @@ User Request
 
 1. **Zero-Council:** Do NOT call `pantheon_jev_decide`, local selector, or Athena planning for an obvious route. Dispatch directly via native `subagent`.
 2. **Dedicated Lane:**
-   - Small bug, typo, isolated CSS: dispatch to `@talos` (hotfix express lane).
+   - Small bug, typo, isolated CSS: dispatch to `@hermes` (or `pantheon_step_ledger(action="spawn_ephemeral", role="hotfix")`).
    - Backend logic, single endpoint: dispatch to `@hermes`.
    - Frontend component, style: dispatch to `@aphrodite`.
 3. **Inline Verification:** The specialist runs the sliced test (`test-slicing`), verifies GREEN, and completes the turn without requesting `@themis` review.

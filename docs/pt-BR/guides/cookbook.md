@@ -3,7 +3,7 @@
 
 > 🇺🇸 **English version available:** [Read in English](../../guides/cookbook.md)
 
-Este livro de receitas reúne fluxos práticos prontos para copiar e colar no **Pantheon `v2.3.0` (`OpenCode 2.x` nativo)** — cobrindo onboarding Zero-Init, os **14 agentes especialistas**, as **31 ferramentas TypeScript nativas**, os **9 comandos de servidor** e as **5 superfícies interativas de TUI**.
+Este livro de receitas reúne fluxos práticos prontos para copiar e colar no **Pantheon `v2.3.0` (`OpenCode 2.x` nativo)** — cobrindo onboarding Zero-Init, os **8 agentes canônicos** (+ workers efêmeros `spawn_ephemeral`), as **31 ferramentas TypeScript nativas**, os **9 comandos de servidor** e as **5 superfícies interativas de TUI**.
 
 ---
 
@@ -19,7 +19,7 @@ opencode plugin update pantheon-opencode
 ```
 
 **Por que funciona melhor:**
-- Todos os **14 agentes**, **9 comandos de servidor**, instruções globais e **30 ferramentas nativas** carregam direto em memória.
+- Todos os **8 agentes canônicos**, **9 comandos de servidor**, instruções globais e **31 ferramentas nativas** carregam direto em memória.
 - Na TUI, use `/pantheon-updates` para verificar atualizações no npm e limpar caches obsoletos automaticamente.
 
 ---
@@ -41,17 +41,17 @@ opencode plugin update pantheon-opencode
 
 ---
 
-## Receita 2: Correção Expressa em 1 Turno (`@talos`)
+## Receita 2: Correção Expressa em 1 Turno (`@hermes` / `spawn_ephemeral` `hotfix`)
 
 **Cenário:** Corrigir um estilo CSS, typo ou import ausente sem cerimônia de planejamento.
 
 **Prompt:**
 ```text
-@talos Altere a cor de fundo do botão de login para verde esmeralda em login.css usando hashline_edit
+@hermes Altere a cor de fundo do botão de login para verde esmeralda em login.css usando hashline_edit
 ```
 
-**Por que usar `@talos`?**
-`@talos` é a via rápida do Pantheon: zero sobrecarga de subagentes, edições cirúrgicas via `hashline_edit` (confinado à raiz do projeto) e verificação imediata.
+**Por que usar `@hermes` ou `spawn_ephemeral`?**
+Edições pontuais vão direto ao `@hermes` (ou via `@zeus` com `pantheon_step_ledger(action="spawn_ephemeral", role="hotfix")` em worktree isolado) usando `hashline_edit` e verificação imediata.
 
 ---
 
@@ -66,7 +66,7 @@ opencode plugin update pantheon-opencode
 
 **Fluxo (`pantheon_step_ledger`):**
 1. `@zeus` inicia um step `bugfix` (`init_step`), gravando um snapshot `baselineTree` isolado via `GIT_INDEX_FILE` sem mexer no `.git/index` do usuário.
-2. O hook `tool.execute.before` bloqueia edições (`edit`, `write`, `hashline_edit`, `ast_rewrite`) em arquivos de produção por `@hermes` / `@talos`, mantendo escrita livre em arquivos de teste.
+2. O hook `tool.execute.before` bloqueia edições (`edit`, `write`, `hashline_edit`, `ast_rewrite`) em arquivos de produção por `@hermes`, mantendo escrita livre em arquivos de teste.
 3. Assim que um teste falhando é registrado via `record_reproduction` (`exitCode !== 0`), a edição em produção é liberada automaticamente.
 4. Se as tentativas de validação esgotarem e `ThemisReflexController` escalar, o `pantheon_step_ledger` restaura o `baselineTree` automaticamente (`rollback_step` também pode ser chamado sob demanda).
 
@@ -152,16 +152,16 @@ ou diretamente:
 
 ---
 
-## Receita 9: Pipelines de IA, Containers e CI/CD
+## Receita 9: Arquétipos Efêmeros (`ai-pipeline`, `infra-ci`, `observability`)
 
-**Cenários:** Construir pipelines vetoriais RAG ou Dockerfiles multi-stage e workflows GitHub Actions.
+**Cenários:** Construir pipelines vetoriais RAG ou Dockerfiles multi-stage e workflows GitHub Actions com workers isolados via `spawn_ephemeral`.
 
 **Prompts:**
 ```text
-@hephaestus Implemente um pipeline de busca semântica com embeddings e pgvector com ingestão em lotes.
+@zeus Execute spawn_ephemeral(role="ai-pipeline") para implementar um pipeline de busca semântica com embeddings e pgvector com ingestão em lotes.
 ```
 ```text
-@prometheus Crie um Dockerfile multi-stage para este serviço e um workflow do GitHub Actions para rodar testes em PRs.
+@zeus Execute spawn_ephemeral(role="infra-ci") para criar um Dockerfile multi-stage para este serviço e um workflow do GitHub Actions para rodar testes em PRs.
 ```
 
 ---
