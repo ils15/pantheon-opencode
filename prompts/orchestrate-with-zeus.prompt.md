@@ -20,7 +20,7 @@ Apply the risk-based routing policy: a bounded, low-risk task usually needs one 
 When invoked with a feature request like `@zeus: Implement [feature description]`:
 
 - **Fast-Track (Level 0 — Bounded Edit, <= 2 files, <= 50 lines)**:
-  Route directly to `@talos` (hotfix/CSS/glue) or domain specialist (`@hermes`, `@aphrodite`).
+  Route directly to `@hermes` (or `spawn_ephemeral` `hotfix`) or `@aphrodite`.
   Do NOT run Athena planning, discovery, or multi-agent councils.
   Verify inline with targeted test slicing (`node --test tests/foo.test.mjs`, `pytest -k ...`). Conclude immediately.
 
@@ -103,26 +103,18 @@ APPROVE: report findings and continue when the applicable gate is satisfied
 BLOCK: identify evidence, unmet repository gate, or defect that needs correction
 ```
 
-#### When to Delegate to Prometheus (Infrastructure)
+#### When to Delegate to Iris (GitHub & Explicit Memory/Artifact Work)
 ```
-When infrastructure or deployment work is explicitly in scope:
-Invoke: @prometheus: Update deployment for [feature]
-Provide context: Environment variables, containerization, breaking changes, scaling.
-Wait for: Docker/compose/infra config with multi-stage builds, non-root users, and health checks.
-```
-
-#### When to Delegate to Mnemosyne (Explicit Artifact Work)
-```
-Only when the user explicitly requests a durable memory-bank artifact:
-Invoke: @mnemosyne: Write the requested record
-Mnemosyne creates: The requested ADR, task record, or workflow artifact.
+Only when GitHub ops or an explicit durable memory-bank artifact is requested:
+Invoke: @iris: Write the requested record / prepare PR
+Iris creates: The requested ADR, task record, or GitHub operation.
 ```
 
-#### When to Delegate to Talos (Hotfix & Fast-Track Runner)
+#### When to Spawn Ephemeral Workers (`spawn_ephemeral`)
 ```
-Invoke: @talos: Fix [bounded issue / CSS / glue code]
-Provide context: Reproduction step, target file (<= 2 files), expected behavior.
-Wait for: Focused fix verified with targeted test slicing in < 10s.
+For isolated short-lived slices — `role` accepts any valid slug (`^[a-z0-9][a-z0-9-]{0,31}$`); the built-in archetype presets (`hotfix`, `infra-ci`, `ai-pipeline`, `observability`, `geospatial`, `memory-adr`, `memory-consolidate`) are defaults, not an allowlist:
+Invoke: pantheon_step_ledger(action="spawn_ephemeral", role=..., stepKey=...)
+Wait for: Verified slice + automatic worktree/sub-session cleanup.
 ```
 
 ---
@@ -219,18 +211,12 @@ DONT: Don't auto-commit or bypass a required safety gate
 | Aphrodite | Frontend change | Task scope + UI/accessibility context | Verified UI change + focused tests |
 | Demeter | Database/schema change | Schema/data-integrity scope | Migration/query verification + required review |
 | Themis | Sensitive/material change or required gate | Changed surface + intent | Risk-appropriate review findings |
-| Prometheus | Infrastructure, providers, or deployment | Architecture + operational constraints | Verified infrastructure changes |
-| Hephaestus | AI pipelines and RAG | AI workflow + data context | Verified pipeline changes + focused tests |
-| Nyx | Observability and monitoring | Instrumentation + telemetry requirements | Verified observability changes |
-| Gaia | Remote-sensing domain work | Geospatial task + data context | Domain analysis or implementation findings |
-| Iris | GitHub issues, PRs, or releases | Repository + requested operation | Authorized GitHub operation result |
-| Mnemosyne | Explicit durable memory/artifact request | Approved content and scope | Requested record/artifact |
-| Talos | Small isolated hotfix or Fast-Track repair | Reproduction + bounded scope | Focused fix + verification |
+| Iris | GitHub ops or explicit durable memory/ADR request | Repository/approved content + scope | Authorized GitHub/memory result |
 
 ---
 
-**Version:** 2.0
+**Version:** 2.3
 **Role:** Central Orchestrator
-**Authority:** Coordinates the canonical 14-agent roster
+**Authority:** Coordinates the canonical 8-agent roster (+ `spawn_ephemeral` archetypes)
 **Constraints:** Respect applicable approval gates; no universal plan/review phases
 **Goal:** High-quality features with TDD, test slicing, and optimal token efficiency

@@ -302,7 +302,7 @@ function testBuildRequestSanitization(): void {
     { ok: false, reasonCode: 'INPUT_INVALID' },
   )
   // Canonical delegates build; a valid id never gains characters in transit.
-  for (const delegateId of ['apollo', 'talos', 'prometheus', 'nyx']) {
+  for (const delegateId of ['apollo', 'hermes', 'themis', 'iris']) {
     const built = classifyTurnComplexity({
       delegateId,
       stateHash: hash,
@@ -522,7 +522,7 @@ function testEscalationOverrideGuardRails(): void {
   const mainAgent: DraftAgent = { id: 'apollo', model: { ...untouched } }
   assert.equal(applyEscalationOverride(mainAgent, 'main'), undefined)
   assert.deepEqual(mainAgent.model, untouched)
-  const absentAgent: DraftAgent = { id: 'talos', model: { ...untouched } }
+  const absentAgent: DraftAgent = { id: 'hermes', model: { ...untouched } }
   assert.equal(applyEscalationOverride(absentAgent, undefined), undefined)
   assert.deepEqual(absentAgent.model, untouched)
   // A non-delegate agent id is refused by the SAME known-agents gate the
@@ -537,7 +537,7 @@ function testEscalationOverrideGuardRails(): void {
   clearEscalationOverride(restoreMe, undefined)
   const model = restoreMe.model as { id: string }
   assert.equal(model.id, J3_ESCALATION_CHEAP_MODEL.split('/')[1], 'no handle → no clear')
-  clearEscalationOverride({ id: 'talos', model: { ...untouched } }, handle)
+  clearEscalationOverride({ id: 'hermes', model: { ...untouched } }, handle)
   clearEscalationOverride(restoreMe, handle)
   assert.deepEqual(restoreMe.model, untouched, 'the matching handle clears the override')
 }

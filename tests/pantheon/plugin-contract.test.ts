@@ -2641,7 +2641,7 @@ async function main(): Promise<void> {
     // `{ sessionID, info }`. Both spellings must drop the entry — reading only
     // one would reintroduce the leak under the other payload.
     const sessionID = 'ses-v2-deleted-infoid'
-    syncReadOnlySession(readOnlyRegistry, sessionID, 'gaia')
+    syncReadOnlySession(readOnlyRegistry, sessionID, 'apollo')
     assert.equal(readOnlyRegistry.has(sessionID), true)
 
     let handled!: () => void
@@ -2918,6 +2918,7 @@ async function main(): Promise<void> {
       'memory_stats',
       'memory_store',
       'pantheon_agent_forge',
+      'pantheon_board',
       'pantheon_cost',
       'pantheon_deepwork',
       'pantheon_local_decision',
@@ -3134,6 +3135,7 @@ async function main(): Promise<void> {
       'memory_stats',
       'memory_store',
       'pantheon_agent_forge',
+      'pantheon_board',
       'pantheon_cost',
       'pantheon_deepwork',
       'pantheon_local_decision',
@@ -3691,7 +3693,7 @@ async function main(): Promise<void> {
     assert.match(denial, /pantheon_model/)
   })
 
-  test('every registered V2 mutating tool is denied for gaia (both read-only agents)', async () => {
+  test('every registered V2 mutating tool is denied for apollo (read-only agent)', async () => {
     const registeredNames = new Set(apolloCaptured.tools.map((t) => t.name))
     const v2WriteTools = [...DEFAULT_BLOCKED_TOOLS].filter((tool) => registeredNames.has(tool))
     assert.deepEqual(
@@ -3702,10 +3704,10 @@ async function main(): Promise<void> {
     for (const tool of v2WriteTools) {
       const denial = await denyMessage(apolloCaptured.before as (e: unknown) => Promise<void>, {
         tool,
-        sessionID: `ses_v2_gaia_${tool}`,
-        agent: 'gaia',
+        sessionID: `ses_v2_apollo_${tool}`,
+        agent: 'apollo',
       })
-      assert.ok(denial !== null, `${tool} must be denied for gaia`)
+      assert.ok(denial !== null, `${tool} must be denied for apollo`)
       assert.match(denial, /READ-ONLY/)
     }
   })
@@ -3840,7 +3842,7 @@ async function main(): Promise<void> {
   })
 
   test('the read guard is scoped to Zeus, not a blanket block on reads', async () => {
-    for (const agent of ['apollo', 'demeter', 'hermes', 'talos']) {
+    for (const agent of ['apollo', 'demeter', 'hermes', 'iris']) {
       const denial = await readGuardDenial(apolloCaptured.before as (e: unknown) => Promise<void>, {
         tool: 'read',
         agent,
@@ -4781,6 +4783,53 @@ async function main(): Promise<void> {
     const f1 = getUnsupportedFeatures()
     const f2 = getUnsupportedFeatures()
     assert.strictEqual(f1, f2)
+  })
+
+  test('setup wires pantheon_board and swarm watchdog with clean v2Dispose', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pantheon-v2-board-contract-'))
+    const registered: Array<{
+      name: string
+      execute: (input: Record<string, unknown>, ctx: unknown) => Promise<{ output: string }>
+    }> = []
+    try {
+      await plugin.setup(
+        makeBaseContext({
+          location: { directory: tempDir },
+          tool: {
+            transform: async (cb: (draft: unknown) => void) => {
+              cb({
+                list: () => [],
+                get: () => undefined,
+                namespace: () => {},
+                add: (tool: {
+                  name: string
+                  execute: (i: Record<string, unknown>, c: unknown) => Promise<{ output: string }>
+                }) => {
+                  registered.push(tool)
+                },
+              })
+              return { dispose: async () => {} }
+            },
+          },
+        }) as never,
+      )
+      const boardTool = registered.find((t) => t.name === 'pantheon_board')
+      assert.ok(boardTool, 'pantheon_board must be registered via tool.transform')
+      const posted = JSON.parse(
+        (
+          await boardTool.execute(
+            { action: 'post', body: '[note] contract check' },
+            { directory: tempDir, agent: 'athena' },
+          )
+        ).output,
+      ) as { ok: boolean; message: { seq: number; from: string } }
+      assert.equal(posted.ok, true)
+      assert.equal(posted.message.seq, 1)
+      assert.equal(posted.message.from, 'athena')
+      v2Dispose()
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
   })
 
   // ─── V2 execute.after parity (PR224) ───────────────────────────────

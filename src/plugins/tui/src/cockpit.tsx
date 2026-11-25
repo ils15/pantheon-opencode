@@ -17,7 +17,7 @@ import {
   writeCockpitReplayArtifact,
 } from './cockpit-state.ts'
 import { handleMouseClick, stopMouseEvent } from './mouse-click'
-import { resolveLanguage } from './settings-i18n'
+import { I18N, resolveLanguage, t } from './settings-i18n'
 import { resolveAccentColor, tuiPrefs } from './tui-prefs'
 
 const ROUTE_NAME = 'pantheon.cockpit'
@@ -160,12 +160,24 @@ export function CockpitView(props: {
   readonly sessionID?: string
   readonly onClose: () => void
 }) {
-  const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === 'pt-BR'
+  const lang = () => resolveLanguage(tuiPrefs().layout?.language)
+  const isPt = () => lang() === 'pt-BR'
   const [tab, setTab] = createSignal<CockpitTabId>('overview')
   const [selectedRow, setSelectedRow] = createSignal(0)
   const [showDetail, setShowDetail] = createSignal(false)
   const [exportNote, setExportNote] = createSignal<string | null>(null)
   const [tick, setTick] = createSignal(0)
+
+  const formatAttentionBadge = (
+    category: 'decision' | 'failure' | 'review' | 'stuck' | 'quota',
+  ) => {
+    const l = lang()
+    if (category === 'decision') return t(I18N.cockpit.catDecision, l)
+    if (category === 'failure') return t(I18N.cockpit.catFailure, l)
+    if (category === 'review') return t(I18N.cockpit.catReview, l)
+    if (category === 'stuck') return t(I18N.cockpit.catStuck, l)
+    return t(I18N.cockpit.catQuota, l)
+  }
 
   const activeSid = () =>
     props.sessionID ??
@@ -300,7 +312,7 @@ export function CockpitView(props: {
       <Show when={tab() === 'overview'}>
         <box flexDirection="column" marginTop={1}>
           <text fg={accent()} attributes={1}>
-            {'Token Meter & Context'}
+            {t(I18N.cockpit.tokenMeter, lang())}
           </text>
           <text fg={fg()}>
             {`Velocity: ${snapshot().overview.velocityBars}   Context: ${snapshot().overview.contextGauge}   Spend: $${snapshot().overview.sessionCost.toFixed(4)}`}
@@ -308,7 +320,7 @@ export function CockpitView(props: {
 
           <box marginTop={1} flexDirection="column">
             <text fg={accent()} attributes={1}>
-              {'Runtime Surfaces & Health'}
+              {t(I18N.cockpit.runtimeSurfaces, lang())}
             </text>
             <For each={snapshot().overview.surfaces}>
               {(item) => <text fg={fg()}>{`  ● ${item.label.padEnd(28)} ${item.status}`}</text>}
@@ -317,7 +329,7 @@ export function CockpitView(props: {
 
           <box marginTop={1} flexDirection="column">
             <text fg={accent()} attributes={1}>
-              {'Work Map (Topology)'}
+              {t(I18N.cockpit.workMap, lang())}
             </text>
             <For each={snapshot().overview.workMap}>
               {(line) => <text fg={muted()}>{line}</text>}
@@ -330,18 +342,94 @@ export function CockpitView(props: {
       <Show when={tab() === 'swarm'}>
         <box flexDirection="column" marginTop={1}>
           <text fg={fg()} attributes={1}>
-            {`● ${snapshot().swarm.activeCount} active  ✓ ${snapshot().swarm.completedCount} done  ✗ ${snapshot().swarm.failedCount} failed  · $${snapshot().swarm.totalCost.toFixed(4)}`}
+            {`● ${snapshot().swarm.activeCount} active  ✓ ${snapshot().swarm.completedCount} done  ✗ ${snapshot().swarm.failedCount} failed  · $${snapshot().swarm.totalCost.toFixed(4)}  · ${snapshot().threads.totalMessages} msgs (#${snapshot().threads.headSeq})  · ${snapshot().attention.length} attn`}
           </text>
+
+          {/* Ranked Attention Queue */}
           <box marginTop={1} flexDirection="column">
+            <text fg={accent()} attributes={1}>
+              {t(I18N.cockpit.attentionQueue, lang())}
+            </text>
+            <Show
+              when={snapshot().attention.length > 0}
+              fallback={<text fg={muted()}>{t(I18N.cockpit.noAttentionItems, lang())}</text>}
+            >
+              <For each={snapshot().attention.slice(0, 6)}>
+                {(item) => {
+                  const refs = [
+                    item.seq !== undefined ? `#${item.seq}` : undefined,
+                    item.stepKey ? `step=${item.stepKey}` : undefined,
+                  ]
+                    .filter(Boolean)
+                    .join(' ')
+                  const badge = formatAttentionBadge(item.category)
+                  const tone =
+                    item.category === 'decision' || item.category === 'failure' ? errFg() : accent()
+                  return (
+                    <text fg={tone}>
+                      {`  [${badge}] ${refs ? `${refs} ` : ''}@${item.agent}: ${item.detail.slice(0, 56)}`}
+                    </text>
+                  )
+                }}
+              </For>
+            </Show>
+          </box>
+
+          {/* Outcome-Grouped Threads (Goal -> Threads -> Workstreams) */}
+          <box marginTop={1} flexDirection="column">
+            <text fg={accent()} attributes={1}>
+              {t(I18N.cockpit.outcomeThreads, lang())}
+            </text>
+            <Show
+              when={snapshot().threads.groups.length > 0}
+              fallback={<text fg={muted()}>{t(I18N.cockpit.noThreads, lang())}</text>}
+            >
+              <For each={snapshot().threads.groups.slice(0, 4)}>
+                {(group) => (
+                  <box flexDirection="column">
+                    <text fg={fg()} attributes={1}>
+                      {`  ▸ ${group.goal} [#${group.latestSeq} · ${group.statusTag}]`}
+                    </text>
+                    <For each={group.threads.slice(0, 3)}>
+                      {(thread) => (
+                        <box flexDirection="column">
+                          <text fg={muted()}>
+                            {`    ├─ ${thread.channel}/${thread.threadId} (#${thread.latestSeq} · ${thread.statusTag})`}
+                          </text>
+                          <For each={thread.workstreams.slice(0, 3)}>
+                            {(ws) => {
+                              const latestMsg = ws.messages[ws.messages.length - 1]
+                              const ephBadge = ws.ephemeral
+                                ? ` [eph:${ws.ephemeral.role}->${ws.ephemeral.baseAgent}:${ws.ephemeral.status}]`
+                                : ''
+                              const stepRef = ws.stepKey ? ` step=${ws.stepKey}` : ''
+                              const bodyPreview = latestMsg
+                                ? ` #${latestMsg.seq} @${latestMsg.from}: ${latestMsg.body.slice(0, 32)}`
+                                : ''
+                              return (
+                                <text fg={fg()}>
+                                  {`    │  • ${ws.workstream}${stepRef}${ephBadge} [${ws.statusTag}]${bodyPreview}`}
+                                </text>
+                              )
+                            }}
+                          </For>
+                        </box>
+                      )}
+                    </For>
+                  </box>
+                )}
+              </For>
+            </Show>
+          </box>
+
+          {/* Workers & Gantt Timeline */}
+          <box marginTop={1} flexDirection="column">
+            <text fg={accent()} attributes={1}>
+              {t(I18N.cockpit.workersGantt, lang())}
+            </text>
             <Show
               when={snapshot().swarm.rows.length > 0}
-              fallback={
-                <text fg={muted()}>
-                  {isPt()
-                    ? 'Nenhum subagente registrado nesta sessão ainda.'
-                    : 'No subagent delegations recorded in this session yet.'}
-                </text>
-              }
+              fallback={<text fg={muted()}>{t(I18N.cockpit.noSubagents, lang())}</text>}
             >
               <For each={snapshot().swarm.rows.slice(0, 12)}>
                 {(row, idx) => {
@@ -387,7 +475,7 @@ export function CockpitView(props: {
 
           <box marginTop={1} flexDirection="column">
             <text fg={accent()} attributes={1}>
-              {'Step-Ledger & Active Tasks'}
+              {t(I18N.cockpit.stepLedgerTitle, lang())}
             </text>
             <Show
               when={snapshot().flightdeck.steps.length > 0}
@@ -407,7 +495,7 @@ export function CockpitView(props: {
 
           <box marginTop={1} flexDirection="column">
             <text fg={accent()} attributes={1}>
-              {'Semantic Event Stream'}
+              {t(I18N.cockpit.eventStreamTitle, lang())}
             </text>
             <Show
               when={snapshot().flightdeck.logs.length > 0}

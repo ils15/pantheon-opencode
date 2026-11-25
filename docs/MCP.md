@@ -105,20 +105,14 @@ default to deny; unrelated user MCP servers are untouched.
 
 | Agent | Resources | Code-mode | Memory | Persistence | Vision |
 |---|---|---|---|---|---|
-| **zeus** | all | — | search | context_save, context_get, goal_create, goal_get, goal_update, goal_done | — |
+| **zeus** | all | — | search | context_save, context_get, goal_create, goal_get, goal_update, goal_done | describe |
 | **athena** | all | — | search, code_query, code_neighbors | — | — |
 | **apollo** | all | — | search, code_query, code_neighbors | — | — |
 | **hermes** | all | execute script | search | — | — |
 | **aphrodite** | all | execute script | search | — | describe/OCR/analyze |
 | **demeter** | all | execute script | search | — | — |
-| **themis** | all | execute script | search | — | — |
-| **prometheus** | all | execute script | search | — | — |
-| **hephaestus** | all | execute script | search | — | — |
-| **nyx** | all | execute script | search | — | — |
-| **gaia** | all | — | recall | — | describe/OCR/analyze |
-| **iris** | all | — | recall | — | — |
-| **mnemosyne** | all | execute script | explicit memory tools | — | — |
-| **talos** | all | execute script | recall | — | — |
+| **themis** | all | — | search | — | — |
+| **iris** | all | execute script | explicit memory tools | — | — |
 
 Rules:
 
@@ -141,7 +135,7 @@ The Apollo/Athena `code_query` and `code_neighbors` grants are the approved
 read-only code-map choice; `code_index` and per-project binding were not
 selected. Checkpoints are limited to `context_save` and `context_get` on Zeus;
 they are session-qualified temporary persistence, not durable memory writes.
-Mnemosyne's canonical allowlist includes durable-memory write tools; always
+Iris's canonical allowlist includes durable-memory write tools; always
 check the active tool list. These are installed per-agent allowlists, not a
 guarantee that the root runtime exposes the same tools.
 
@@ -153,7 +147,7 @@ resources and templates.
 | URI | Description |
 |---|---|
 | `pantheon://routing` | Canonical delegation rules and handoff contracts |
-| `pantheon://agents` | All 14 agents with roles from frontmatter |
+| `pantheon://agents` | All 8 canonical agents with roles from frontmatter |
 | `pantheon://skills` | All skills with descriptions |
 | `pantheon://eval` | Latest certification scores from the `plugin_eval` namespace |
 | `pantheon://agents/{agent_name}` | One agent file by name (case-insensitive) |

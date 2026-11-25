@@ -8,13 +8,7 @@ export const PANTHEON_AGENTS: ReadonlySet<string> = new Set([
   'aphrodite',
   'demeter',
   'themis',
-  'prometheus',
-  'hephaestus',
-  'nyx',
-  'gaia',
   'iris',
-  'mnemosyne',
-  'talos',
 ])
 
 export interface V2PermissionEvent {

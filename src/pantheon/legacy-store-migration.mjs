@@ -1800,6 +1800,7 @@ const CANONICAL_SKILL_IDS = Object.freeze([
   'code-review-checklist',
   'codemap',
   'context-compression',
+  'council-agora',
   'fast-path-execution',
   'git-workflow-and-versioning',
   'incremental-implementation',

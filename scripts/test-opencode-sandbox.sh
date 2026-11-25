@@ -1146,7 +1146,10 @@ conn.commit()
 conn.close()
 PY
 if [ "$(node -p "'ok'" 2>/dev/null || true)" = "ok" ] && [ -f "$INSTALL_DIR/scripts/postinstall.mjs" ]; then
-  if HOME="$LEGACY_SANDBOX" XDG_CONFIG_HOME="$LEGACY_SANDBOX/.config" node "$INSTALL_DIR/scripts/postinstall.mjs" >/dev/null 2>&1 \
+  # PANTHEON_HOME outranks XDG_CONFIG_HOME in legacy-store-migration.mjs, so pin
+  # it to the fixture for this one command; a command-prefix assignment keeps
+  # the exported sandbox value intact and cannot leak the fixture path onward.
+  if HOME="$LEGACY_SANDBOX" XDG_CONFIG_HOME="$LEGACY_SANDBOX/.config" PANTHEON_HOME="$LEGACY_CFG" node "$INSTALL_DIR/scripts/postinstall.mjs" >/dev/null 2>&1 \
     && LEGACY_CFG="$LEGACY_CFG" python3 - <<'PY'
 import json, os
 from pathlib import Path
@@ -1174,6 +1177,11 @@ PY
   else
     record_status "legacy-upgrade-cleanup" "FAIL" "legacy upgrade cleanup verification failed"
   fi
+fi
+# Guard: the fixture PANTHEON_HOME scope above must not survive into later gates.
+if [ "${PANTHEON_HOME:-}" = "$LEGACY_CFG" ]; then
+  printf '%s\n' 'ERROR: PANTHEON_HOME leaked into the legacy upgrade fixture.' >&2
+  exit 1
 fi
 
 echo "--- Host Check & Doctor ---"

@@ -10,7 +10,7 @@ This practical guide walks you through using **Pantheon** step-by-step, from ini
 
 Pantheon is not a monolithic prompt or a generic chatbot: it is a **multi-agent orchestration framework for OpenCode**.
 
-Rather than overloading a single model with architecture, backend, frontend, SQL, and testing, Pantheon delegates tasks to **14 specialized agents** with clear boundaries and permissions.
+Rather than overloading a single model with architecture, backend, frontend, SQL, and testing, Pantheon delegates tasks to **8 canonical agents** (plus `spawn_ephemeral` slice workers) with clear boundaries and permissions.
 
 ```mermaid
 flowchart TD

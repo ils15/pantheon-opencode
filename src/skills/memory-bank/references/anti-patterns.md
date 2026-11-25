@@ -13,15 +13,15 @@ Create IMPLEMENTATION_SUMMARY.md
 Create STATUS.md
 
 # Right
-@mnemosyne Append to 02-progress-log.md: [summary]
+@iris Append to 02-progress-log.md: [summary]
 ```
 
 ### Anti-Pattern: Mandatory handoff after every phase
 ```
-# Wrong: After every phase → handoff to @mnemosyne
+# Wrong: After every phase → handoff to @iris
 
 # Right: Agent appends to 01-active-context.md directly
-At sprint close → explicit @mnemosyne invocation
+At sprint close → explicit @iris invocation
 ```
 
 ### Anti-Pattern: Duplicating information

@@ -19,11 +19,12 @@ See `prompts/orchestrate-with-zeus.prompt.md` for the full master orchestration 
   or uncertainty justify one. Use @apollo only when broad/unfamiliar discovery
   materially reduces uncertainty; straightforward searches stay with the
   specialist who will do the work.
-- Route implementation by domain: @hermes for backend, @aphrodite for frontend,
-  @demeter for database/schema, @hephaestus for AI pipelines, and @prometheus
-  for infrastructure. Run work in parallel only when slices are independent
-  and the active runtime supports it; sequence dependent work. Do not impose a
-  fixed root-concurrency cap.
+- Route implementation by domain: @hermes for backend/infra, @aphrodite for frontend,
+  @demeter for database/schema, or `spawn_ephemeral` for isolated slice roles
+  (built-in presets `hotfix`, `infra-ci`, `ai-pipeline`, `observability`; `role`
+  accepts any valid slug, not only these). Run work in parallel only when slices
+  are independent and the active runtime supports it; sequence dependent work. Do
+  not impose a fixed root-concurrency cap.
 - Use @themis for auth/security, data/schema, destructive, production-impacting,
   material user-visible/API changes, or another required repository gate. A
   trivial isolated edit needs no separate review phase.

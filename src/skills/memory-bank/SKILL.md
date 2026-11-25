@@ -29,8 +29,8 @@ Pantheon has no `/memories/repo/` or `/memories/session/` stores. Memory Bank fi
 
 ```
 At sprint close:
-  @mnemosyne consolidates → .pantheon/memory-bank/01-active-context.md
-                          → .pantheon/memory-bank/02-progress-log.md (appended)
+  @iris consolidates → .pantheon/memory-bank/01-active-context.md
+                      → .pantheon/memory-bank/02-progress-log.md (appended)
 ```
 
 ---
@@ -39,14 +39,14 @@ At sprint close:
 
 | Content | Written by | Where |
 |---------|-----------|-------|
-| Project overview, architecture | Mnemosyne (at init) | `00-03.md` |
-| Sprint context, decisions | Agent / Mnemosyne | `01-active-context.md` |
+| Project overview, architecture | Iris (at init) | `00-03.md` |
+| Sprint context, decisions | Agent / Iris | `01-active-context.md` |
 | Milestone completions | Any agent | `02-progress-log.md` (append) |
-| Task records | Mnemosyne (on request) | `_tasks/TASK000X-*.md` |
-| Architecture decisions | Mnemosyne (on request) | `_notes/NOTE000X-*.md` |
+| Task records | Iris (on request) | `_tasks/TASK000X-*.md` |
+| Architecture decisions | Iris (on request) | `_notes/NOTE000X-*.md` |
 | Reusable durable fact or decision | Agent with explicit `memory_store` grant, when retention is warranted | `pantheon-memory` |
 | Conversation-only goal | Current session instructions / `/pantheon-focus` | Not durable; no `/memories/session/` store |
-| Project narrative and ADRs | Mnemosyne on explicit request | `.pantheon/memory-bank/` |
+| Project narrative and ADRs | Iris on explicit request | `.pantheon/memory-bank/` |
 
 ---
 

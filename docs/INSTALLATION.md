@@ -8,7 +8,7 @@ entirely; 1.7.x was the last line with V1 support).
 **Native plugin install (`opencode plugin add`):** in v2.2.2+, loading Pantheon directly
 through OpenCode's native plugin manager is the **only** installation method — the
 legacy `npx pantheon-opencode` CLI installer was retired. OpenCode loads all
-**14 agents, 25 skills, 9 slash commands, 30 native TypeScript tools, and TUI**
+**8 canonical agents, 26 skills, 9 slash commands, 31 native TypeScript tools, and TUI**
 in-process with zero copied files on disk, works in **any directory** (git repos,
 worktrees, or empty folders), and automatically cleans legacy Python MCPs,
 copied TUI folders, and `.venv`/`.py` artifacts during `postinstall` and startup.
@@ -546,7 +546,7 @@ node -e "import('./src/pantheon/presets.mjs').then(m=>console.log(m.validatePres
 | Symptom | Cause | Solution |
 |---|---|---|
 | Provider without a credential | Go/OpenAI/Anthropic profile active, but the expected variable is unavailable | Configure `PANTHEON_OPENCODE_API_KEY` (alias `OPENCODE_GO_API_KEY` for Go), `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY`, as the profile requires |
-| `unknown agent "foo"` in `/pantheon-model set` | non-canonical agent | Use one of the 14: `zeus`, `athena`, `apollo`, `hermes`, `aphrodite`, `demeter`, `themis`, `prometheus`, `hephaestus`, `nyx`, `gaia`, `iris`, `mnemosyne`, `talos` |
+| `unknown agent "foo"` in `/pantheon-model set` | non-canonical agent | Use one of the 8: `zeus`, `athena`, `apollo`, `hermes`, `aphrodite`, `demeter`, `themis`, `iris` |
 | `model must use provider/model-id format` | model without a slash, or with a space/`..` | Use `provider/model-id`, e.g. `openai/gpt-5.6-sol`, `opencode-go/kimi-k2.7-code` (validates `MODEL_REF_PATTERN`) |
 | `global set/reset requires explicit confirmation...` | `--scope global` without confirmation (command path) | Add `--confirm --authorize-global` (or use `--scope project`, the safe default). The `pantheon_model` tool does not support global at all. |
 | `.pantheon/active-preset.json has invalid JSON` | corrupted file | Delete or fix the JSON; `readActivePresetRaw` treats it as absent + logs `warn` without secrets; `write` preserves the previous file on failure |
@@ -626,7 +626,7 @@ After installation, verify everything works:
 ```bash
 # 1. Check agents are installed
 ls ~/.config/opencode/agents/
-# Should show 14 .md files
+# Should show 8 .md files
 
 # 2. Check MCP servers
 ls ~/.config/opencode/scripts/

@@ -75,7 +75,7 @@ A child session has a parent and must not dispatch another Pantheon agent. Inspe
 - Write API endpoints (that's @hermes)
 - Build frontend components (that's @aphrodite)
 - Design system architecture (that's @athena)
-- Deploy infrastructure (that's @prometheus)
+- Deploy infrastructure (spawn an ephemeral `infra-ci` worker for that)
 
 ##  Workflow
 

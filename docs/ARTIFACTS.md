@@ -15,7 +15,7 @@ in both **OpenCode CLI (TUI)** and **OpenCode Desktop**.
 |---|---|---|---|
 | **Plans (`PLAN`)** | `.pantheon/deepwork/<slug>/PLAN.md` | `@athena` / `/pantheon-deepwork` | Durable per task/sprint (gitignored) |
 | **Reports (`REPORT`)** | `.pantheon/reports/<YYYY-MM-DD>-<topic>.md` | `@apollo` / `@themis` | Audit & discovery trail |
-| **ADRs (`ADR`)** | `docs/adr/<NNN>-<slug>.md` (and `.pantheon/memory-bank/adr/*.md`) | `@mnemosyne` | Permanent architecture decisions |
+| **ADRs (`ADR`)** | `docs/adr/<NNN>-<slug>.md` (and `.pantheon/memory-bank/adr/*.md`) | `@iris` (or `spawn_ephemeral` `memory-adr`) | Permanent architecture decisions |
 
 > [!TIP]
 > Linked git worktrees resolve back to the main repository automatically, so

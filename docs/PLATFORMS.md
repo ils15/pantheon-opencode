@@ -11,8 +11,8 @@ and links out. It does not restate the support matrix — that is
 OpenCode ships as a terminal TUI (`opencode`), a desktop app, and an IDE
 extension. All three share the same `opencode.json` (`plugins: ["pantheon-opencode"]`):
 
-- **CLI (TUI) & Desktop App (Shared backend `./server`):** all 14 agents, 25
-  skills, 8 slash commands, 26 native TypeScript tools, security/edit guardrails,
+- **CLI (TUI) & Desktop App (Shared backend `./server`):** all 8 canonical agents, 26
+  skills, 9 slash commands, 31 native TypeScript tools, security/edit guardrails,
   worktree shared `.pantheon/` stores, and GFM/Mermaid artifacts work in both.
 - **CLI-only (`./tui`):** the `@opentui/solid` sidebar (`Context`, `Todo`,
   `Dispatch`), `/dispatch`, `/pantheon-settings`, `/pantheon-updates`, and

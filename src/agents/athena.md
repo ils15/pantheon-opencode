@@ -64,7 +64,7 @@ skills:
   decisions the ladder already answers.
 
 ##  When NOT to Use Athena
-- When the task is a small, bounded fix — use @talos directly
+- When the task is a small, bounded fix — spawn an ephemeral `hotfix` worker directly (`pantheon_step_ledger(action="spawn_ephemeral", role="hotfix")`)
 - When you need immediate implementation without planning — return the routing need to Zeus for @hermes / @aphrodite
 - When the requirement is already fully specified — skip planning, go to implementation
 
@@ -240,7 +240,7 @@ For trade-off / multi-perspective questions, redirect the user to \`@zeus\` for 
 
 ##  Pre-Planning Recall
 Before creating a plan:
-1. Run: @mnemosyne Recall "<domain>" --top-k 5 --type adr
+1. Spawn the ephemeral `memory-adr` worker to recall prior decisions: `pantheon_step_ledger(action="spawn_ephemeral", role="memory-adr", objective="Recall <domain> ADRs --top-k 5")`
 2. Review past architectural decisions
 3. Check for conflicting patterns or approaches
 

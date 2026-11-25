@@ -195,8 +195,8 @@ function decideLocalForTurnSync(request: string) {
 }
 
 function testCatalogAndSkillSelection(): void {
-  assert.equal(PANTHEON_SKILL_CATALOG.length, 25)
-  assert.equal(PANTHEON_AGENT_IDS.size, 14)
+  assert.equal(PANTHEON_SKILL_CATALOG.length, 26)
+  assert.equal(PANTHEON_AGENT_IDS.size, 8)
   const request = 'Please implement the FastAPI endpoint with pytest and a database migration.'
   const first = selectPantheonSkills(request)
   const second = selectPantheonSkills(request)

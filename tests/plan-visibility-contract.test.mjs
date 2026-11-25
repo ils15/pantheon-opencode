@@ -86,7 +86,7 @@ test('orchestration defaults to Athena task-result plans and keeps artifacts opt
   assert.match(approvalGate, /complete Markdown plan as a normal assistant message/i)
 })
 
-test('orchestration quick-reference covers the canonical fourteen-agent roster', () => {
+test('orchestration quick-reference covers the canonical eight-agent roster', () => {
   const matrix = orchestration.match(
     /## Quick Reference: Agent Matrix([\s\S]*?)(?=\n---|\n\*\*Version:)/i,
   )?.[1]
@@ -98,13 +98,7 @@ test('orchestration quick-reference covers the canonical fourteen-agent roster',
     'Aphrodite',
     'Demeter',
     'Themis',
-    'Prometheus',
-    'Hephaestus',
-    'Nyx',
-    'Gaia',
     'Iris',
-    'Mnemosyne',
-    'Talos',
   ]
 
   assert.ok(matrix, 'quick-reference matrix must exist')

@@ -17,7 +17,7 @@ Read-only resource server. No tools — read resources directly via `pantheon://
 
 | Resource URI | Description |
 |---|---|
-| `pantheon://agents` | List all 14 agent definitions (YAML frontmatter) |
+| `pantheon://agents` | List all 8 canonical agent definitions (YAML frontmatter) |
 | `pantheon://agents/{name}` | Single agent config by name (case-insensitive) |
 | `pantheon://routing` | Full `routing.yml` — delegation rules, handoff contracts |
 | `pantheon://skills` | List all skills with descriptions |
@@ -28,7 +28,7 @@ Read-only resource server. No tools — read resources directly via `pantheon://
 | `pantheon://eval` | Latest plugin/skill certification scores from the `plugin_eval` namespace |
 | `pantheon://eval/{plugin}` | Latest certification report for one plugin/skill |
 
-**Used by:** ALL agents. Common reads: `routing` (zeus, athena), `agents/{name}` (any), `skills/{name}` (implementers), `memory-bank/{path}` (aphrodite, mnemosyne), and eval reports when needed.
+**Used by:** ALL agents. Common reads: `routing` (zeus, athena), `agents/{name}` (any), `skills/{name}` (implementers), `memory-bank/{path}` (aphrodite, iris), and eval reports when needed.
 
 `pantheon://memory-bank/{path}` reads project files on demand; it does not
 auto-load them. The eval resources are registered by this server and read the
@@ -64,12 +64,12 @@ refer to provider- and version-specific documentation for those details.
 
 | Tool | Signature | Description | Who uses it |
 |------|-----------|-------------|-------------|
-| `memory_store` | `(value, namespace?: "default", key?, metadata?: "{}", ttl_seconds?)` | Store a reusable memory entry (FTS5 index updated by trigger); `metadata` is a JSON string. Over-cap writes are rejected, never truncated (see [entry cap and expiry](#entry-cap-expiry-and-purge-contract)). `ttl_seconds` gives the entry a lifetime; on success returns `{id, namespace, key, status, expires_at}`, where `expires_at` is `null` when the entry does not expire | Mnemosyne when durable context is warranted and write access is granted |
+| `memory_store` | `(value, namespace?: "default", key?, metadata?: "{}", ttl_seconds?)` | Store a reusable memory entry (FTS5 index updated by trigger); `metadata` is a JSON string. Over-cap writes are rejected, never truncated (see [entry cap and expiry](#entry-cap-expiry-and-purge-contract)). `ttl_seconds` gives the entry a lifetime; on success returns `{id, namespace, key, status, expires_at}`, where `expires_at` is `null` when the entry does not expire | Iris when durable context is warranted and write access is granted |
 | `memory_search` | `(query, namespace?, top_k?: 5, decay_days?, include_expired?: false)` | FTS5 BM25 keyword search (stopwords dropped, 4+ char terms prefix-matched); `top_k` is clamped to 1–50. Expired entries are filtered in SQL before `LIMIT`, so they cannot consume a candidate slot; `include_expired=true` opts back in. Optional freshness decay via `decay_days` (default off) only re-ranks, it does not expire. Empty results mean nothing matched; structured errors mean the memory store could not be read. | Coordinator or specialist only when prior project context is relevant |
 | `memory_recall` | `(key, namespace?: "default")` | Exact recall of an entry by key within a namespace, including `expires_at`. Expiry is ignored on purpose: an expired entry is still returned (see [entry cap and expiry](#entry-cap-expiry-and-purge-contract)) | Exact-key lookup when needed |
-| `memory_forget` | `(id?, key?, namespace?: "default", expired_only?: false)` | Delete an entry by ID or key (FTS index cleaned via trigger), or purge every expired entry with `expired_only=true` — the only path that removes expired rows. Returns `{deleted, purged, expired_only}` on the purge path; not combinable with `id`/`key` | Mnemosyne only — expiry purge is explicit maintenance |
-| `memory_list` | `(namespace?, prefix?, limit?: 50)` | List entries chronologically with namespace and key-prefix filters; `limit` is clamped to 1–500. Still lists expired entries, because this maintenance view is how they are inspected before purging | Mnemosyne — explicit maintenance |
-| `memory_stats` | `()` | Database statistics: `total_entries`, `namespaces`, `db_size_bytes`, `db_size_human`, plus payload-size accounting — `max_entry_bytes` (cap in force), `warning_threshold_bytes` (half the cap, minimum 1 byte), `total_bytes` (summed serialized entry bytes), `oversized_entries` (count above the warning threshold) and `largest_entries` (up to 5 `{namespace, key, bytes}`) | Mnemosyne — explicit maintenance |
+| `memory_forget` | `(id?, key?, namespace?: "default", expired_only?: false)` | Delete an entry by ID or key (FTS index cleaned via trigger), or purge every expired entry with `expired_only=true` — the only path that removes expired rows. Returns `{deleted, purged, expired_only}` on the purge path; not combinable with `id`/`key` | Iris only — expiry purge is explicit maintenance |
+| `memory_list` | `(namespace?, prefix?, limit?: 50)` | List entries chronologically with namespace and key-prefix filters; `limit` is clamped to 1–500. Still lists expired entries, because this maintenance view is how they are inspected before purging | Iris — explicit maintenance |
+| `memory_stats` | `()` | Database statistics: `total_entries`, `namespaces`, `db_size_bytes`, `db_size_human`, plus payload-size accounting — `max_entry_bytes` (cap in force), `warning_threshold_bytes` (half the cap, minimum 1 byte), `total_bytes` (summed serialized entry bytes), `oversized_entries` (count above the warning threshold) and `largest_entries` (up to 5 `{namespace, key, bytes}`) | Iris — explicit maintenance |
 | `code_index` | `(path?, force?)` | Index codebase files into a knowledge graph (hash-based skip) | No agent — blocked by design |
 | `code_query` | `(query, type?, limit?: 10)` | Search code entities via FTS5 | apollo, athena |
 | `code_neighbors` | `(entity_id, depth?: 1)` | Graph neighbors of a code entity (BFS depth 1-3) | apollo, athena |
@@ -144,9 +144,8 @@ These are exact per-agent `mcp_tools.pantheon-memory` frontmatter grants:
 | Agent(s) | Exact `pantheon-memory` grant |
 |----------|-------------------------------|
 | Apollo, Athena | `[memory_search, code_query, code_neighbors]` |
-| Mnemosyne | `[memory_recall, memory_store, memory_search, memory_forget, memory_list, memory_stats]` |
-| Aphrodite, Demeter, Hephaestus, Hermes, Nyx, Prometheus, Themis, Zeus | `[memory_search]` |
-| Gaia, Iris, Talos | `[memory_recall]` |
+| Iris | `[memory_recall, memory_store, memory_search, memory_forget, memory_list, memory_stats]` |
+| Aphrodite, Demeter, Hermes, Themis, Zeus | `[memory_search]` |
 
 Only Apollo and Athena receive `code_query` and `code_neighbors`; no agent
 receives any other `code_*` tool, including `code_index`. Zeus and all other
@@ -229,24 +228,22 @@ The server also registers `pantheon://code-mode/scripts` and
 | `execute_code_script` | `(script_name: str, args?: list[str], json_output?: bool)` | Run an approved script from `.pantheon/code-mode/`. Returns a plain-text summary, or with `json_output=true` a structured dict with `stdout`, `stderr`, `exit_code`, `duration_ms`, `timed_out` and frontmatter metadata | Agents that grant `pantheon-code-mode: [execute_code_script]` |
 | `approve_code_script` | `(script_name: str, json_output?: bool)` | Record or refresh the script's SHA-256 in the approval manifest. Execution is opt-in: only approved scripts whose hash matches run | No bundled agent — see [Unreachable by any agent](#unreachable-by-any-agent) |
 
-**Agents granted:** `aphrodite`, `demeter`, `hephaestus`, `hermes`, `mnemosyne`, `nyx`, `prometheus`, `talos`
+**Agents granted:** `aphrodite`, `demeter`, `hermes`, `iris`
 
-**Agents without a grant:** `apollo`, `athena`, `gaia`, `iris`, `themis`, `zeus`
+**Agents without a grant:** `apollo`, `athena`, `themis`, `zeus`
 
 These are exact `mcp_tools.pantheon-code-mode` frontmatter grants, not a bash
-permission: `mnemosyne` holds the grant while declaring `bash: deny`, and `iris`
-allows only the scoped commands `git *` and `gh *`. Zeus has no code-mode grant;
-its prompt records that `execute_code_script` was removed and that execution is
-delegated.
+permission: `iris` allows only the scoped commands `git *` and `gh *` while holding
+`edit: deny` and `execute_code_script`. Zeus has no code-mode grant; its prompt
+records that `execute_code_script` was removed and that execution is delegated.
 
 **Use cases by agent** (illustrative, not exhaustive):
 | Agent | Typical scripts |
 |-------|----------------|
-| hermes | `pytest`, `ruff check`, `ruff format` |
+| hermes | `pytest`, `ruff check`, `ruff format`, Docker/CI/hotfix scripts |
 | aphrodite | Focused tests for the changed surface; full `npm test` only when the scope or risk warrants it; `biome check` |
 | demeter | `alembic upgrade head && pytest` |
-| prometheus | Docker builds, CI/CD pipeline scripts |
-| talos | Automated hotfix sequences, batch fixes |
+| iris | Memory-bank / ADR maintenance scripts |
 
 **Call pattern:**
 ```

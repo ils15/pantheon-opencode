@@ -4,14 +4,15 @@
 > internals in [Architecture](ARCHITECTURE.md).
 
 Pantheon is a companion for [OpenCode](https://opencode.ai/) that helps you move
-from an idea to a reviewed, verified change. Fourteen specialized agents share one
-streamlined workflow: plan, implement, check, review, and record what mattered.
+from an idea to a reviewed, verified change. Eight canonical agents (plus
+`spawn_ephemeral` slice archetypes) share one streamlined workflow: plan,
+implement, check, review, and record what mattered.
 You stay in charge of every decision and every merge.
 
 ```mermaid
 flowchart LR
     U["You"] --> Z["Zeus<br/>orchestrator"]
-    Z -->|"delegates"| S["14 specialists<br/>hermes · aphrodite · demeter · themis …"]
+    Z -->|"delegates"| S["8 specialists + ephemeral<br/>hermes · aphrodite · demeter · themis …"]
     Z -->|"ambiguous route"| J["Jev decision router<br/>typed · budgeted · reversible"]
     J -->|"orders · ranks · verifies"| S
     S -->|"last resort"| M["Native MCP<br/>memory · persistence · vision<br/>code-mode · resources"]
@@ -65,4 +66,4 @@ flowchart LR
 
 - [Execution modes](guides/execution-modes.md) — Fast-Track, Council and Deepwork in detail
 - [Settings & TUI window](SETTINGS.md) — gates, presets, updates, personalization
-- [Agent Capability Matrix](AGENT-CAPABILITY-MATRIX.md) — what each of the 14 agents can and cannot do
+- [Agent Capability Matrix](AGENT-CAPABILITY-MATRIX.md) — what each of the 8 canonical agents can and cannot do

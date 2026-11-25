@@ -4,7 +4,7 @@
 
 O Pantheon 2.2 **requer o OpenCode 2.x** como host (o contrato da geração OpenCode 1.x foi completamente removido).
 
-**Instalação nativa via plugin (`opencode plugin add`):** a partir da v2.2.2, instalar pelo gerenciador nativo de plugins do OpenCode é o **único** método oficial — o instalador legado `npx pantheon-opencode` foi aposentado. O OpenCode registra em memória os **14 agentes, 25 skills, 9 comandos, 30 tools nativas em TypeScript e a TUI**, **sem copiar arquivos redundantes para o disco**, funcionando em **qualquer pasta** e removendo automaticamente MCPs Python legados, cópias antigas da TUI (`plugins/pantheon-tui/`) e `.venv`/`.py` no `postinstall` e na inicialização. Você também pode abrir `/pantheon-settings` → **Atualizações** (**Legados, Drift & Limpeza**) para escanear ou purgar os stores `.pantheon/` dentro do próprio OpenCode.
+**Instalação nativa via plugin (`opencode plugin add`):** a partir da v2.2.2, instalar pelo gerenciador nativo de plugins do OpenCode é o **único** método oficial — o instalador legado `npx pantheon-opencode` foi aposentado. O OpenCode registra em memória os **8 agentes canônicos, 26 skills, 9 comandos, 31 tools nativas em TypeScript e a TUI**, **sem copiar arquivos redundantes para o disco**, funcionando em **qualquer pasta** e removendo automaticamente MCPs Python legados, cópias antigas da TUI (`plugins/pantheon-tui/`) e `.venv`/`.py` no `postinstall` e na inicialização. Você também pode abrir `/pantheon-settings` → **Atualizações** (**Legados, Drift & Limpeza**) para escanear ou purgar os stores `.pantheon/` dentro do próprio OpenCode.
 
 ---
 
@@ -76,8 +76,8 @@ O Pantheon pode ser configurado em dois escopos distintos:
 - **Localização:** `~/.config/opencode/` (ou `$XDG_CONFIG_HOME/opencode/`).
 - **Comportamento:** Fica disponível imediatamente para qualquer repositório ou pasta em que você abrir o OpenCode no seu sistema.
 - **Estrutura de Pastas Gerada:**
-  - `agents/`: Definições dos 14 agentes especialistas (`zeus.md`, `athena.md`, etc.).
-  - `skills/`: Diretório com as 25 skills canônicas.
+  - `agents/`: Definições dos 8 agentes canônicos (`zeus.md`, `athena.md`, etc.).
+  - `skills/`: Diretório com as 26 skills canônicas.
   - `commands/`: Comandos customizados do OpenCode (`/pantheon`, `/pantheon-deepwork`).
   - `plugins/pantheon-tui/`: Payload compilado da interface visual TUI.
   - `opencode.json`: Registro central de agentes, plugins e servidores MCP.

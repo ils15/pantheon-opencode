@@ -103,7 +103,7 @@ graph LR
 
 ## 3. Architectural Decision Record (`docs/adr/<NNN>-<slug>.md`)
 
-Produced by `@mnemosyne`:
+Produced by `@iris` (or `spawn_ephemeral` `memory-adr`):
 
 ```markdown
 # ADR-[NNN]: [Decision Title]

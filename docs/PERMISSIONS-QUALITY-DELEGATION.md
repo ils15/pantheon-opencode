@@ -621,7 +621,7 @@ frontmatter parser would omit Zeus because [`src/agents/zeus.md`](https://github
 Repository search finds no importer or installer path for that script; it remains a
 packaged standalone script with its own CLI interface. The active build and installer use
 `scripts/build-agents-md.mjs`, which emits both project and global artifacts and keeps
-all 14 agents in the shared table. Keep the legacy CLI behavior distinct from the
+all 8 agents in the shared table. Keep the legacy CLI behavior distinct from the
 active generation path when reviewing references to agent tables.
 
 ---
@@ -1040,4 +1040,4 @@ Where another document is authoritative, this one defers to it:
 - Design rationale for delegation, sync and memory tiers — [ARCHITECTURE](ARCHITECTURE.md)
 - Orchestrator protocol: timeouts, fallback chains, the subtask decision tree,
   session reuse — the orchestrator's instructions, consolidated into `AGENTS.global.md`
-- Per-agent model routing — [reference/model-routing.md](reference/model-routing.md)
+- Per-agent model routing — retired V1 analysis, kept for history in `docs/archive/model-routing.md` (not published)

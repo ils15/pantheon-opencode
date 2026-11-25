@@ -2,8 +2,8 @@
 
 > 🇧🇷 **Versão em Português disponível:** [Leia em Português](pt-BR/index.md)
 
-Pantheon is a multi-agent orchestration framework for **OpenCode**: 14
-specialized agents, 25 skills, and one guided workflow from plan to reviewed
+Pantheon is a multi-agent orchestration framework for **OpenCode**: 8
+canonical agents (plus `spawn_ephemeral` slice archetypes), 26 skills, and one guided workflow from plan to reviewed
 change. This page is the map. Each fact has one home; pages link to it instead
 of repeating it.
 
@@ -12,8 +12,8 @@ of repeating it.
 | If you want to… | Read |
 |---|---|
 | Build your first real project end-to-end (scaffold → UI → skills → deploy → metrics) | [First Project Guide](guides/first-project.md) |
-| Build a zero-dependency, testable CLI tool with the Fast Lane (`@talos`) | [Fast CLI Utility](guides/cli-tool.md) |
-| Know exactly what each of the 14 agents can and cannot do | [Agent Capability Matrix](AGENT-CAPABILITY-MATRIX.md) |
+| Build a zero-dependency, testable CLI tool with the Fast Lane (`@hermes` / `spawn_ephemeral`) | [Fast CLI Utility](guides/cli-tool.md) |
+| Know exactly what each of the 8 canonical agents can and cannot do | [Agent Capability Matrix](AGENT-CAPABILITY-MATRIX.md) |
 | Master structured planning, Mermaid DAGs, and interactive approvals | [Deepwork Blueprint](guides/deepwork.md) |
 | Inspect images and screenshots without prompt clutter or artifacts | [Pantheon Vision](guides/vision.md) |
 | Find copy-paste recipes for everyday coding workflows | [Cookbook](guides/cookbook.md) |
@@ -29,7 +29,7 @@ of repeating it.
 | Agent flow, delegation mechanics, and the plugin contract | [Architecture](ARCHITECTURE.md) |
 | How work is routed: escalation ladder, request sizing, skill discovery | [Overview](OVERVIEW.md) |
 | Fast-Track, Council and Deepwork in detail | [Execution modes](guides/execution-modes.md) |
-| The 14 agents and their canonical files | [Agents & Skills](agents/README.md) |
+| The 8 canonical agents and their files | [Agents & Skills](agents/README.md) |
 | Permission layers, quality gates, and delegation rules | [Permissions, Gates & Delegation](PERMISSIONS-QUALITY-DELEGATION.md) |
 | OpenCode 2.x behavior: host gate, tools, Dispatch, pruning, goals | [OpenCode 2.x](opencode.md) |
 
@@ -48,7 +48,6 @@ of repeating it.
 
 | Topic | Page |
 |---|---|
-| Model routing analysis and per-agent fallbacks | [Model Routing](reference/model-routing.md) |
 | Local decision router (per-turn advisory selector) | [Local Decision Router](reference/local-decision-router.md) |
 | Native Jev Decisions tool and gate chain | [Native Decisions](reference/native-decisions.md) |
 | Offline protocol for evaluating agent routing and task complexity | [Offline Evaluation](reference/offline-evaluation.md) |

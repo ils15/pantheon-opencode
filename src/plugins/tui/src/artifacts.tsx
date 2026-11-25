@@ -138,9 +138,7 @@ export function ArtifactsDialogContent(props: {
                   <text fg={props.muted}>
                     {'• .pantheon/reports/*.md             (@apollo / @themis)'}
                   </text>
-                  <text fg={props.muted}>
-                    {'• docs/adr/*.md                      (@mnemosyne)'}
-                  </text>
+                  <text fg={props.muted}>{'• docs/adr/*.md                      (@iris)'}</text>
                 </box>
               }
             >

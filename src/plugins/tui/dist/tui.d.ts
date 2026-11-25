@@ -525,7 +525,7 @@ export declare const HEADER_MAX_WIDTH = 34;
  *  cut first when the row overflows, so the preset name is never the casualty;
  *  a missing provider leaves the preset alone (no `unknown` placeholder). */
 export declare function presetHeaderLine(presetName: string, providerID: string | null): string;
-export type DispatchKind = 'coun' | 'plan' | 'revw' | 'hot' | 'disc' | 'oth';
+export type DispatchKind = 'coun' | 'plan' | 'revw' | 'eph' | 'swm' | 'disc' | 'oth';
 export type DispatchKindOrigin = 'prefix' | 'agent' | 'unavailable';
 /** One classification plus the evidence that produced it. */
 export type DispatchKindLabel = {
@@ -893,7 +893,7 @@ export declare function dispatchPanelMarker(state: DelegationState | string, fra
  *  the value is cut to the cell's own width (never to the line's length, so one
  *  long cell cannot squeeze its neighbours out of alignment). Pure. */
 export declare function dispatchPanelCell(value: unknown, width: number): string;
-/** One list row: `⠋ prometheus   plan   $0.09  14m34s`. The agent cell absorbs
+/** One list row: `⠋ hermes       plan   $0.09  14m34s`. The agent cell absorbs
  *  the width difference (down to `DISPATCH_PANEL_MIN_AGENT_WIDTH`), so a narrow
  *  panel truncates the label rather than the numbers; the cost column grows by
  *  itself for a sub-cent value so the row never spends more than its budget.

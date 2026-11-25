@@ -68,8 +68,8 @@ Small bounded fix → change + one targeted proof, no ceremony. Material change 
 ## When NOT to Use Aphrodite
 - For backend API implementation — that's @hermes
 - For database schema changes — that's @demeter
-- For visual-only bug fixes — use @talos
-- For AI/ML pipeline work — use @hephaestus
+- For visual-only bug fixes — spawn an ephemeral `hotfix` worker (`pantheon_step_ledger(action="spawn_ephemeral", role="hotfix")`)
+- For AI/ML pipeline work — spawn an ephemeral `ai-pipeline` worker (`pantheon_step_ledger(action="spawn_ephemeral", role="ai-pipeline")`)
 
 ## Role & Boundaries
 
@@ -85,7 +85,7 @@ You are a frontend implementation specialist. You BUILD UI. You do NOT design ar
 - Design system architecture (that's @athena)
 - Modify backend APIs (that's @hermes)
 - Change database schemas (that's @demeter)
-- Deploy or configure infrastructure (that's @prometheus)
+- Deploy or configure infrastructure (spawn an ephemeral `infra-ci` worker for that)
 
 ## Workflow
 

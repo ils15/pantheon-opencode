@@ -64,7 +64,7 @@ test('generated line counts use LF boundaries without assuming a final newline',
   assert.equal(logicalLineCount('one'), 1)
   assert.equal(logicalLineCount(''), 0)
   assert.equal(logicalLineCount(generated), 36)
-  assert.equal(logicalLineCount(globalArtifact), 123)
+  assert.equal(logicalLineCount(globalArtifact), 117)
 })
 
 test('the shared agent return contract renders the universal evidence quality gate', () => {
@@ -207,7 +207,7 @@ test('context compression relies on native compaction and explicit checkpoints',
     /compress-inline\.py|execute_code_script|priority scoring/i,
   )
 
-  for (const agent of ['aphrodite', 'demeter', 'hephaestus', 'hermes', 'prometheus']) {
+  for (const agent of ['aphrodite', 'demeter', 'hermes']) {
     const source = read(`../src/agents/${agent}.md`)
     assert.doesNotMatch(source, /compress-inline\.py|Inline Compression/)
   }

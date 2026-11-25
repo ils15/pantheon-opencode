@@ -10,7 +10,7 @@ const autoContinue = read('../src/skills/auto-continue/SKILL.md')
 const artifacts = read('../src/skills/artifact-management/SKILL.md')
 const tdd = read('../src/skills/tdd-with-agents/SKILL.md')
 const generated = read('../AGENTS.md')
-const implementers = ['hermes', 'aphrodite', 'demeter', 'hephaestus', 'prometheus'].map((agent) =>
+const implementers = ['hermes', 'aphrodite', 'demeter'].map((agent) =>
   read(`../src/agents/${agent}.md`),
 )
 
@@ -79,6 +79,4 @@ test('quality/cost claims require measurement rather than projected percentages'
   assert.match(frontend, /test changed behavior proportionally/i)
   assert.match(generated, /use focused checks for micro-edits/i)
   assert.doesNotMatch(generated, /coverage minimum:\s*80%/i)
-  assert.match(implementers[4], /quality deltas only after an A\/B evaluation/i)
-  assert.match(implementers[4], /never combine unrelated tier savings/i)
 })

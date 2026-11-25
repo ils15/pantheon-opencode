@@ -8,7 +8,7 @@ Structured, checkpointed workflow for complex multi-step tasks spanning multiple
 
 | Use When | Don't Use When |
 |---|---|
-| 10+ turns or multi-session | Simple fixes (→ @talos) |
+| 10+ turns or multi-session | Simple fixes (→ @hermes or `spawn_ephemeral`) |
 | Multi-agent dependencies | Single-file changes (→ /subtask) |
 | Costly context loss | < 5 turns (→ normal delegation) |
 
@@ -29,7 +29,7 @@ Phase 1: DISCOVERY
   └─ @apollo maps relevant codebase areas → DISCOVERY.md
 
 Phase 2-N: IMPLEMENTATION (parallel per phase)
-  └─ @hermes, @aphrodite, @demeter, @hephaestus, @prometheus
+  └─ @hermes, @aphrodite, @demeter (or ephemeral workers via spawn_ephemeral)
   └─ Concurrent Isolation: For 2+ specialists running in parallel, allocate isolated git worktrees via `worktrees` skill:
      `<project-parent>/.pantheon-worktrees/<repo>/deepwork-<slug>-<agent>`
      (prevents file collisions, race conditions, and test runner port conflicts)

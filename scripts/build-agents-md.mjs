@@ -116,16 +116,10 @@ const GLOBAL_HEADER = `# Pantheon Agent System — OpenCode
 | @apollo | Read-only investigation scout — 3–10 parallel searches (codebase, docs, GitHub). No edits, no commands. |
 | @athena | Planner/architect — research-first, plan-only, never implements. Plans carry quality gates (ruff/Biome, dep detection, LTS policy). |
 | @demeter | Database — SQLAlchemy 2.0, Alembic, query optimization, N+1 prevention, migrations; preserves schema/data review gates. |
-| @gaia | Remote sensing — satellite/spectral analysis, SAR, change detection, time series, ML/DL classification; read-only. |
-| @hephaestus | AI pipelines — LangChain/LangGraph, RAG, vector stores, embeddings. |
-| @hermes | Backend — FastAPI, Python, async, modern stdlib, obsolete lib detection. |
-| @iris | GitHub ops — branches, PRs, issues, releases, tags; called by zeus after review. Never pushes or merges without explicit human approval. |
-| @mnemosyne | Memory bank — initializes .pantheon/memory-bank/; writes ADRs/task records only on explicit request. Called by zeus, never automatically. |
-| @nyx | Observability — OpenTelemetry tracing, token/cost tracking, agent analytics, LangSmith. |
-| @prometheus | Infrastructure + model providers — Docker, CI/CD, multi-model routing, cost optimization, provider abstraction. |
-| @talos | Hotfix lane — small bugs, CSS, typos, minor logic; no TDD ceremony, standalone, no subagents. Escalates complex issues to zeus. |
+| @hermes | Backend & execution — FastAPI, Python/TS, async, modern stdlib, obsolete lib detection, infra/hotfix slices. |
+| @iris | GitHub ops & memory custody — branches, PRs, issues, releases, tags, durable memory & ADRs on request. Never pushes or merges without explicit human approval. |
 | @themis | Quality/security gate — ruff/Biome, dead/legacy code, OWASP Top 10, coverage, correctness, deprecation audit. Reviews material/sensitive changes. |
-| @zeus | Central orchestrator — never implements. Delegates to: athena, apollo, hermes, aphrodite, demeter, prometheus, themis, iris, mnemosyne, talos, hephaestus, nyx. |
+| @zeus | Central orchestrator — never implements. Delegates to: athena, apollo, hermes, aphrodite, demeter, themis, iris (plus \`spawn_ephemeral\` roles). |
 `
 
 const PROJECT_HEADER = `# Pantheon — Repository Setup

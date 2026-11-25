@@ -46,26 +46,12 @@ const EXPECTED_AGENT_MCP_GRANTS = {
     'pantheon-memory': ['memory_search'],
     'pantheon-resources': 'all',
   },
-  gaia: {
-    'pantheon-memory': ['memory_recall'],
-    'pantheon-resources': 'all',
-    'pantheon-vision': ['vision_analyze', 'vision_describe', 'vision_ocr'],
-  },
-  hephaestus: {
-    'pantheon-code-mode': ['execute_code_script'],
-    'pantheon-memory': ['memory_search'],
-    'pantheon-resources': 'all',
-  },
   hermes: {
     'pantheon-code-mode': ['execute_code_script'],
     'pantheon-memory': ['memory_search'],
     'pantheon-resources': 'all',
   },
   iris: {
-    'pantheon-memory': ['memory_recall'],
-    'pantheon-resources': 'all',
-  },
-  mnemosyne: {
     'pantheon-code-mode': ['execute_code_script'],
     'pantheon-memory': [
       'memory_forget',
@@ -75,21 +61,6 @@ const EXPECTED_AGENT_MCP_GRANTS = {
       'memory_stats',
       'memory_store',
     ],
-    'pantheon-resources': 'all',
-  },
-  nyx: {
-    'pantheon-code-mode': ['execute_code_script'],
-    'pantheon-memory': ['memory_search'],
-    'pantheon-resources': 'all',
-  },
-  prometheus: {
-    'pantheon-code-mode': ['execute_code_script'],
-    'pantheon-memory': ['memory_search'],
-    'pantheon-resources': 'all',
-  },
-  talos: {
-    'pantheon-code-mode': ['execute_code_script'],
-    'pantheon-memory': ['memory_recall'],
     'pantheon-resources': 'all',
   },
   themis: {

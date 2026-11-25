@@ -37,8 +37,7 @@ When confronting architectural crossroads, technology evaluations, or security t
   - **Security / Auth:** `@themis` has veto power over vulnerable designs.
   - **Database / Schema:** `@demeter` carries authoritative weight on query performance and transaction safety.
   - **Frontend / UX / A11y:** `@aphrodite` governs user interface responsiveness and accessibility.
-  - **Infrastructure / CI:** `@prometheus` governs deployment contracts and container isolation.
-  - **API / Protocols:** `@hermes` governs contract consistency and transport schemas.
+  - **API / Backend / Infra:** `@hermes` governs contract consistency, transport schemas, and deployment isolation.
   - **Architecture / Modularity:** `@athena` governs separation of concerns.
 - **JEV multi-criteria decision:** if trade-offs balance competing requirements equally,
   Zeus invokes `pantheon_jev_decide` (or the local decision matrix) to rank candidates

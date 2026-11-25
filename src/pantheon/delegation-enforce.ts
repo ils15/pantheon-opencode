@@ -468,7 +468,7 @@ export const readOnlyRegistry = new ReadOnlySessionRegistry()
  * enforced by tests/pantheon/delegation-enforce.test.ts so the two cannot
  * drift silently.
  */
-export const READ_ONLY_AGENTS: ReadonlySet<string> = new Set(['apollo', 'gaia'])
+export const READ_ONLY_AGENTS: ReadonlySet<string> = new Set(['apollo'])
 
 /**
  * Whether an agent identity belongs to the read-only set. Identity is never

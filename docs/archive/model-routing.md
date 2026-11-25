@@ -40,6 +40,8 @@
 
 All unique models across 17 plans (23 total):
 
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
+
 | Model | Coding ELO | SWE-bench | Cost ($/1M out) | Latency | Available in Plans |
 |-------|------------|-----------|-----------------|---------|-------------------|
 | `claude-opus-4-6` | 1549 | 80.8% | $25.00 | 1200ms | copilot-business, copilot-pro, copilot-student |
@@ -68,6 +70,8 @@ All unique models across 17 plans (23 total):
 
 ## 4-Tier Agent Classification
 
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
+
 | Tier | Purpose | Agents | Model Strategy |
 |------|---------|--------|----------------|
 | **1. Premium** | Reasoning, planning, delegation | zeus, athena, themis | Best ELO available in plan |
@@ -83,6 +87,8 @@ All unique models across 17 plans (23 total):
 
 **Available models (3):**
 
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
+
 | Model | Coding ELO | SWE-bench | Cost ($/1M out) | Latency | Role |
 |-------|------------|-----------|-----------------|---------|------|
 | `claude-sonnet-4-6` | 1521 | 78.5% | $15.00 | 800ms | gaia override |
@@ -90,6 +96,8 @@ All unique models across 17 plans (23 total):
 | `gemini-3-flash` | 1436 | 74.0% | $3.00 | 300ms | apollo override |
 
 **Agent assignments with fallback chains (per-plan only):**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Agent | Tier | Primary | Fallback 1 | Fallback 2 | Fallback 3 | Cost/1K calls |
 |-------|------|---------|------------|------------|------------|--------------|
@@ -109,6 +117,8 @@ All unique models across 17 plans (23 total):
 | zeus | premium | `claude-opus-4-7` | `claude-sonnet-4-6` | `gemini-3-flash` | `N/A` | $150.0000 |
 
 **Cost per 1000 feature development cycles:**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Component | Calls | Model | Cost |
 |-----------|-------|-------|------|
@@ -134,6 +144,8 @@ All unique models across 17 plans (23 total):
 
 **Available models (3):**
 
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
+
 | Model | Coding ELO | SWE-bench | Cost ($/1M out) | Latency | Role |
 |-------|------------|-----------|-----------------|---------|------|
 | `claude-sonnet-4-6` | 1521 | 78.5% | $15.00 | 800ms | default tier |
@@ -141,6 +153,8 @@ All unique models across 17 plans (23 total):
 | `claude-haiku-4-5` | 1478 | 73.3% | $5.00 | 400ms | apollo override |
 
 **Agent assignments with fallback chains (per-plan only):**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Agent | Tier | Primary | Fallback 1 | Fallback 2 | Fallback 3 | Cost/1K calls |
 |-------|------|---------|------------|------------|------------|--------------|
@@ -160,6 +174,8 @@ All unique models across 17 plans (23 total):
 | zeus | premium | `claude-opus-4-7` | `claude-sonnet-4-6` | `claude-haiku-4-5` | `N/A` | $150.0000 |
 
 **Cost per 1000 feature development cycles:**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Component | Calls | Model | Cost |
 |-----------|-------|-------|------|
@@ -185,12 +201,16 @@ All unique models across 17 plans (23 total):
 
 **Available models (2):**
 
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
+
 | Model | Coding ELO | SWE-bench | Cost ($/1M out) | Latency | Role |
 |-------|------------|-----------|-----------------|---------|------|
 | `gemini-3-pro` | 1437 | 77.0% | $12.00 | 600ms | premium tier |
 | `gemini-3-flash` | 1436 | 74.0% | $3.00 | 300ms | fast tier |
 
 **Agent assignments with fallback chains (per-plan only):**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Agent | Tier | Primary | Fallback 1 | Fallback 2 | Fallback 3 | Cost/1K calls |
 |-------|------|---------|------------|------------|------------|--------------|
@@ -210,6 +230,8 @@ All unique models across 17 plans (23 total):
 | zeus | premium | `gemini-3-pro` | `gemini-3-flash` | `N/A` | `N/A` | $24.0000 |
 
 **Cost per 1000 feature development cycles:**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Component | Calls | Model | Cost |
 |-----------|-------|-------|------|
@@ -234,6 +256,8 @@ All unique models across 17 plans (23 total):
 
 **Available models (3):**
 
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
+
 | Model | Coding ELO | SWE-bench | Cost ($/1M out) | Latency | Role |
 |-------|------------|-----------|-----------------|---------|------|
 | `claude-sonnet-4-6-20250514` | 1521 | 78.5% | $15.00 | 800ms | default tier |
@@ -241,6 +265,8 @@ All unique models across 17 plans (23 total):
 | `claude-haiku-4-5-20250514` | 1478 | 73.3% | $5.00 | 400ms | fast tier |
 
 **Agent assignments with fallback chains (per-plan only):**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Agent | Tier | Primary | Fallback 1 | Fallback 2 | Fallback 3 | Cost/1K calls |
 |-------|------|---------|------------|------------|------------|--------------|
@@ -260,6 +286,8 @@ All unique models across 17 plans (23 total):
 | zeus | premium | `claude-opus-4-7-20250514` | `claude-sonnet-4-6-20250514` | `claude-haiku-4-5-20250514` | `N/A` | $150.0000 |
 
 **Cost per 1000 feature development cycles:**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Component | Calls | Model | Cost |
 |-----------|-------|-------|------|
@@ -285,6 +313,8 @@ All unique models across 17 plans (23 total):
 
 **Available models (3):**
 
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
+
 | Model | Coding ELO | SWE-bench | Cost ($/1M out) | Latency | Role |
 |-------|------------|-----------|-----------------|---------|------|
 | `claude-sonnet-4-6-20250514` | 1521 | 78.5% | $15.00 | 800ms | default tier |
@@ -292,6 +322,8 @@ All unique models across 17 plans (23 total):
 | `claude-haiku-4-5-20250514` | 1478 | 73.3% | $5.00 | 400ms | apollo override |
 
 **Agent assignments with fallback chains (per-plan only):**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Agent | Tier | Primary | Fallback 1 | Fallback 2 | Fallback 3 | Cost/1K calls |
 |-------|------|---------|------------|------------|------------|--------------|
@@ -311,6 +343,8 @@ All unique models across 17 plans (23 total):
 | zeus | premium | `claude-opus-4-7-20250514` | `claude-sonnet-4-6-20250514` | `claude-haiku-4-5-20250514` | `N/A` | $150.0000 |
 
 **Cost per 1000 feature development cycles:**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Component | Calls | Model | Cost |
 |-----------|-------|-------|------|
@@ -336,6 +370,8 @@ All unique models across 17 plans (23 total):
 
 **Available models (3):**
 
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
+
 | Model | Coding ELO | SWE-bench | Cost ($/1M out) | Latency | Role |
 |-------|------------|-----------|-----------------|---------|------|
 | `claude-opus-4-6-20250514` | 1549 | 80.8% | $25.00 | 1200ms | premium tier |
@@ -343,6 +379,8 @@ All unique models across 17 plans (23 total):
 | `claude-haiku-4-5-20250514` | 1478 | 73.3% | $5.00 | 400ms | apollo override |
 
 **Agent assignments with fallback chains (per-plan only):**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Agent | Tier | Primary | Fallback 1 | Fallback 2 | Fallback 3 | Cost/1K calls |
 |-------|------|---------|------------|------------|------------|--------------|
@@ -362,6 +400,8 @@ All unique models across 17 plans (23 total):
 | zeus | premium | `claude-opus-4-6-20250514` | `claude-sonnet-4-6-20250514` | `claude-haiku-4-5-20250514` | `N/A` | $50.0000 |
 
 **Cost per 1000 feature development cycles:**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Component | Calls | Model | Cost |
 |-----------|-------|-------|------|
@@ -387,6 +427,8 @@ All unique models across 17 plans (23 total):
 
 **Available models (6):**
 
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
+
 | Model | Coding ELO | SWE-bench | Cost ($/1M out) | Latency | Role |
 |-------|------------|-----------|-----------------|---------|------|
 | `claude-opus-4-6` | 1549 | 80.8% | $25.00 | 1200ms | premium tier |
@@ -397,6 +439,8 @@ All unique models across 17 plans (23 total):
 | `gpt-5-mini` | 1420 | 73.0% | $2.00 | 450ms | apollo override |
 
 **Agent assignments with fallback chains (per-plan only):**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Agent | Tier | Primary | Fallback 1 | Fallback 2 | Fallback 3 | Cost/1K calls |
 |-------|------|---------|------------|------------|------------|--------------|
@@ -416,6 +460,8 @@ All unique models across 17 plans (23 total):
 | zeus | premium | `claude-opus-4-6` | `claude-sonnet-4-6` | `claude-haiku-4-5` | `gemini-3.1-pro` | $50.0000 |
 
 **Cost per 1000 feature development cycles:**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Component | Calls | Model | Cost |
 |-----------|-------|-------|------|
@@ -441,6 +487,8 @@ All unique models across 17 plans (23 total):
 
 **Available models (6):**
 
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
+
 | Model | Coding ELO | SWE-bench | Cost ($/1M out) | Latency | Role |
 |-------|------------|-----------|-----------------|---------|------|
 | `claude-sonnet-4-6` | 1521 | 78.5% | $15.00 | 800ms | default tier |
@@ -451,6 +499,8 @@ All unique models across 17 plans (23 total):
 | `gpt-5-mini` | 1420 | 73.0% | $2.00 | 450ms | apollo override |
 
 **Agent assignments with fallback chains (per-plan only):**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Agent | Tier | Primary | Fallback 1 | Fallback 2 | Fallback 3 | Cost/1K calls |
 |-------|------|---------|------------|------------|------------|--------------|
@@ -470,6 +520,8 @@ All unique models across 17 plans (23 total):
 | zeus | premium | `claude-opus-4-7` | `claude-sonnet-4-6` | `claude-haiku-4-5` | `gemini-3.1-pro` | $150.0000 |
 
 **Cost per 1000 feature development cycles:**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Component | Calls | Model | Cost |
 |-----------|-------|-------|------|
@@ -495,6 +547,8 @@ All unique models across 17 plans (23 total):
 
 **Available models (3):**
 
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
+
 | Model | Coding ELO | SWE-bench | Cost ($/1M out) | Latency | Role |
 |-------|------------|-----------|-----------------|---------|------|
 | `claude-sonnet-4-6` | 1521 | 78.5% | $15.00 | 800ms | zeus override |
@@ -502,6 +556,8 @@ All unique models across 17 plans (23 total):
 | `gpt-5-nano` | 1300 | 60.0% | $0.40 | 150ms | free tier |
 
 **Agent assignments with fallback chains (per-plan only):**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Agent | Tier | Primary | Fallback 1 | Fallback 2 | Fallback 3 | Cost/1K calls |
 |-------|------|---------|------------|------------|------------|--------------|
@@ -521,6 +577,8 @@ All unique models across 17 plans (23 total):
 | zeus | premium | `claude-sonnet-4-6` | `gpt-5-mini` | `gpt-5-nano` | `N/A` | $30.0000 |
 
 **Cost per 1000 feature development cycles:**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Component | Calls | Model | Cost |
 |-----------|-------|-------|------|
@@ -546,6 +604,8 @@ All unique models across 17 plans (23 total):
 
 **Available models (5):**
 
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
+
 | Model | Coding ELO | SWE-bench | Cost ($/1M out) | Latency | Role |
 |-------|------------|-----------|-----------------|---------|------|
 | `claude-sonnet-4-6` | 1521 | 78.5% | $15.00 | 800ms | gaia override |
@@ -555,6 +615,8 @@ All unique models across 17 plans (23 total):
 | `gpt-5-mini` | 1420 | 73.0% | $2.00 | 450ms | apollo override |
 
 **Agent assignments with fallback chains (per-plan only):**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Agent | Tier | Primary | Fallback 1 | Fallback 2 | Fallback 3 | Cost/1K calls |
 |-------|------|---------|------------|------------|------------|--------------|
@@ -574,6 +636,8 @@ All unique models across 17 plans (23 total):
 | zeus | premium | `claude-opus-4-7` | `claude-sonnet-4-6` | `gemini-3.1-pro` | `gpt-5.4-mini` | $150.0000 |
 
 **Cost per 1000 feature development cycles:**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Component | Calls | Model | Cost |
 |-----------|-------|-------|------|
@@ -599,6 +663,8 @@ All unique models across 17 plans (23 total):
 
 **Available models (6):**
 
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
+
 | Model | Coding ELO | SWE-bench | Cost ($/1M out) | Latency | Role |
 |-------|------------|-----------|-----------------|---------|------|
 | `claude-opus-4-6` | 1549 | 80.8% | $25.00 | 1200ms | premium tier |
@@ -609,6 +675,8 @@ All unique models across 17 plans (23 total):
 | `gpt-5-mini` | 1420 | 73.0% | $2.00 | 450ms | apollo override |
 
 **Agent assignments with fallback chains (per-plan only):**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Agent | Tier | Primary | Fallback 1 | Fallback 2 | Fallback 3 | Cost/1K calls |
 |-------|------|---------|------------|------------|------------|--------------|
@@ -628,6 +696,8 @@ All unique models across 17 plans (23 total):
 | zeus | premium | `claude-opus-4-6` | `claude-sonnet-4-6` | `claude-haiku-4-5` | `gemini-3.1-pro` | $50.0000 |
 
 **Cost per 1000 feature development cycles:**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Component | Calls | Model | Cost |
 |-----------|-------|-------|------|
@@ -653,6 +723,8 @@ All unique models across 17 plans (23 total):
 
 **Available models (5):**
 
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
+
 | Model | Coding ELO | SWE-bench | Cost ($/1M out) | Latency | Role |
 |-------|------------|-----------|-----------------|---------|------|
 | `claude-opus-4-6` | 1549 | 80.8% | $25.00 | 1200ms | premium tier |
@@ -662,6 +734,8 @@ All unique models across 17 plans (23 total):
 | `gpt-5-mini` | 1420 | 73.0% | $2.00 | 450ms | apollo override |
 
 **Agent assignments with fallback chains (per-plan only):**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Agent | Tier | Primary | Fallback 1 | Fallback 2 | Fallback 3 | Cost/1K calls |
 |-------|------|---------|------------|------------|------------|--------------|
@@ -681,6 +755,8 @@ All unique models across 17 plans (23 total):
 | zeus | premium | `claude-opus-4-6` | `claude-sonnet-4-6` | `claude-haiku-4-5` | `gpt-5.4-mini` | $50.0000 |
 
 **Cost per 1000 feature development cycles:**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Component | Calls | Model | Cost |
 |-----------|-------|-------|------|
@@ -706,12 +782,16 @@ All unique models across 17 plans (23 total):
 
 **Available models (2):**
 
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
+
 | Model | Coding ELO | SWE-bench | Cost ($/1M out) | Latency | Role |
 |-------|------------|-----------|-----------------|---------|------|
 | `gpt-5-mini` | 1420 | 73.0% | $2.00 | 450ms | fast tier |
 | `gpt-5-nano` | 1300 | 60.0% | $0.40 | 150ms | free tier |
 
 **Agent assignments with fallback chains (per-plan only):**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Agent | Tier | Primary | Fallback 1 | Fallback 2 | Fallback 3 | Cost/1K calls |
 |-------|------|---------|------------|------------|------------|--------------|
@@ -731,6 +811,8 @@ All unique models across 17 plans (23 total):
 | zeus | premium | `gpt-5-mini` | `gpt-5-nano` | `N/A` | `N/A` | $4.0000 |
 
 **Cost per 1000 feature development cycles:**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Component | Calls | Model | Cost |
 |-----------|-------|-------|------|
@@ -756,6 +838,8 @@ All unique models across 17 plans (23 total):
 
 **Available models (6):**
 
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
+
 | Model | Coding ELO | SWE-bench | Cost ($/1M out) | Latency | Role |
 |-------|------------|-----------|-----------------|---------|------|
 | `claude-sonnet-4-6` | 1521 | 78.5% | $15.00 | 800ms | default tier |
@@ -766,6 +850,8 @@ All unique models across 17 plans (23 total):
 | `gpt-5.4-nano` | 1350 | 65.0% | $0.40 | 200ms | nyx override |
 
 **Agent assignments with fallback chains (per-plan only):**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Agent | Tier | Primary | Fallback 1 | Fallback 2 | Fallback 3 | Cost/1K calls |
 |-------|------|---------|------------|------------|------------|--------------|
@@ -785,6 +871,8 @@ All unique models across 17 plans (23 total):
 | zeus | premium | `claude-opus-4-7` | `claude-sonnet-4-6` | `claude-haiku-4-5` | `gemini-3-pro` | $150.0000 |
 
 **Cost per 1000 feature development cycles:**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Component | Calls | Model | Cost |
 |-----------|-------|-------|------|
@@ -810,6 +898,8 @@ All unique models across 17 plans (23 total):
 
 **Available models (6):**
 
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
+
 | Model | Coding ELO | SWE-bench | Cost ($/1M out) | Latency | Role |
 |-------|------------|-----------|-----------------|---------|------|
 | `claude-sonnet-4-6` | 1521 | 78.5% | $15.00 | 800ms | default tier |
@@ -820,6 +910,8 @@ All unique models across 17 plans (23 total):
 | `gpt-5.4-nano` | 1350 | 65.0% | $0.40 | 200ms | nyx override |
 
 **Agent assignments with fallback chains (per-plan only):**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Agent | Tier | Primary | Fallback 1 | Fallback 2 | Fallback 3 | Cost/1K calls |
 |-------|------|---------|------------|------------|------------|--------------|
@@ -839,6 +931,8 @@ All unique models across 17 plans (23 total):
 | zeus | premium | `claude-opus-4-7` | `claude-sonnet-4-6` | `claude-haiku-4-5` | `gemini-3-pro` | $150.0000 |
 
 **Cost per 1000 feature development cycles:**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Component | Calls | Model | Cost |
 |-----------|-------|-------|------|
@@ -864,6 +958,8 @@ All unique models across 17 plans (23 total):
 
 **Available models (6):**
 
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
+
 | Model | Coding ELO | SWE-bench | Cost ($/1M out) | Latency | Role |
 |-------|------------|-----------|-----------------|---------|------|
 | `deepseek-v4-pro` | 1502 | 80.6% | $3.48 | 800ms | gaia override |
@@ -874,6 +970,8 @@ All unique models across 17 plans (23 total):
 | `minimax-m2.5` | 1410 | 72.0% | $1.17 | 400ms | nyx override |
 
 **Agent assignments with fallback chains (per-plan only):**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Agent | Tier | Primary | Fallback 1 | Fallback 2 | Fallback 3 | Cost/1K calls |
 |-------|------|---------|------------|------------|------------|--------------|
@@ -893,6 +991,8 @@ All unique models across 17 plans (23 total):
 | zeus | premium | `kimi-k2.6` | `deepseek-v4-pro` | `qwen3.6-plus` | `deepseek-v4-flash` | $15.0000 |
 
 **Cost per 1000 feature development cycles:**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Component | Calls | Model | Cost |
 |-----------|-------|-------|------|
@@ -918,6 +1018,8 @@ All unique models across 17 plans (23 total):
 
 **Available models (3):**
 
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
+
 | Model | Coding ELO | SWE-bench | Cost ($/1M out) | Latency | Role |
 |-------|------------|-----------|-----------------|---------|------|
 | `kimi-k2.5` | 1430 | 76.0% | $2.50 | 700ms | premium tier |
@@ -925,6 +1027,8 @@ All unique models across 17 plans (23 total):
 | `gpt-5-nano` | 1300 | 60.0% | $0.40 | 150ms | apollo override |
 
 **Agent assignments with fallback chains (per-plan only):**
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Agent | Tier | Primary | Fallback 1 | Fallback 2 | Fallback 3 | Cost/1K calls |
 |-------|------|---------|------------|------------|------------|--------------|
@@ -945,6 +1049,8 @@ All unique models across 17 plans (23 total):
 
 **Cost per 1000 feature development cycles:**
 
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
+
 | Component | Calls | Model | Cost |
 |-----------|-------|-------|------|
 | Planning (zeus) | 1 | `kimi-k2.5` | $0.01 |
@@ -963,6 +1069,8 @@ All unique models across 17 plans (23 total):
 - **Tier 4 (Fast):** `gpt-5-nano` — Fast (150ms). Good for research/ops.
 
 ## Plan Comparison Summary
+
+> **V1 legacy (frozen)** — does not reflect the v2.3.0 roster (8 canonical agents + ephemeral workers). Historical record.
 
 | Plan | Price | Premium (ELO) | Default (SWE) | Fast (latency) | Total/1K cycles |
 |------|-------|---------------|---------------|----------------|----------------|

@@ -186,6 +186,7 @@ import { buildPrefixCachedPrompt } from './pantheon/prompt-cache-order.ts'
 import { evaluateReproductionGate } from './pantheon/reproduction-gate.ts'
 import { getSharedBoard } from './pantheon/shared-board.ts'
 import { createV2ShellHooks, type V2ShellRunner } from './pantheon/shell-hooks.ts'
+import { wireSwarmWatchdog } from './pantheon/swarm-watchdog.ts'
 import {
   TODO_ENFORCER_DEFAULTS,
   TodoEnforcer,
@@ -3243,6 +3244,7 @@ export const plugin = define({
 
     if (hostLocationDir) {
       activeCleanups.push(wireCockpitBusRecorder(hostLocationDir))
+      activeCleanups.push(wireSwarmWatchdog(hostLocationDir))
     }
 
     // ─── Phase 7: V2 Compaction Hook (best-effort) ───────────────────

@@ -85,10 +85,10 @@ One aggregated `Dispatch` block covers the whole child set:
   `<agent> ×<count>·<kind>  $<sum>` rows and `… +K  $<sum>` beyond — never one
   row per session.
 
-The `·<kind>` suffix says why the child exists: `coun`/`plan`/`revw`/`hot`/
-`disc` from an explicit `[council]`/`[plan]`/`[review]`/`[hotfix]`/`[discovery]`
+The `·<kind>` suffix says why the child exists: `coun`/`plan`/`revw`/`eph`/`swm`/
+`disc` from an explicit `[council]`/`[plan]`/`[review]`/`[ephemeral]`/`[swarm]`/`[discovery]`
 prefix on the `subagent` description, otherwise from the agent
-(`athena`→plan, `themis`→revw, `talos`→hot, `apollo`→disc, anything else→`oth`).
+(`athena`→plan, `themis`→revw, `apollo`→disc, anything else→`oth`).
 `council` is never inferred from an agent. A `~` after the kind marks a
 background child.
 
@@ -110,7 +110,7 @@ a child is never listed twice.
 
 The header is `◈ Dispatch — <session>` (+ `[fullscreen]`) with counters for the
 whole tree (`2 rodando · 70 concluídos · 1 falha · $3.59`; a zero counter is
-omitted) over one row per child — `⠋ prometheus   plan   $0.09  14m34s` — running
+omitted) over one row per child — `⠋ hermes     plan   $0.09  14m34s` — running
 first, then most recent activity, with `✓`/`✗`/`○`/`?` for
 completed/failed/interrupted/unknown. The detail pane shows the selected child's
 title or spawning description, short id, model, in/out/reasoning/cache tokens,

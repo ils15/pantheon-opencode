@@ -1,8 +1,8 @@
-# Tutorial: Fast-Path CLI Utility with @talos
+# Tutorial: Fast-Path CLI Utility with @hermes / Ephemeral Hotfix
 
 > 🇧🇷 **Versão em Português disponível:** [Leia em Português](../pt-BR/guides/cli-tool.md)
 
-In this practical hands-on tutorial, you will learn how to use Pantheon's **Fast Lane** (`@talos`) to build a standalone, zero-dependency command-line utility with automated unit testing.
+In this practical hands-on tutorial, you will learn how to use Pantheon's **Fast Lane** (`@hermes` or `pantheon_step_ledger(action="spawn_ephemeral", role="hotfix")`) to build a standalone, zero-dependency command-line utility with automated unit testing.
 
 ---
 
@@ -19,15 +19,15 @@ flowchart LR
         Hermes --> Themis["⚖️ @themis (Audit)"]
     end
 
-    subgraph FastLane["⚡ Fast Lane (@talos)"]
-        User2["👤 Developer"] --> Talos["🛡️ @talos (Single-Turn Execution)"]
-        Talos --> Result["✅ Done (Sub-second edit & test)"]
+    subgraph FastLane["⚡ Fast Lane (@hermes / ephemeral)"]
+        User2["👤 Developer"] --> HermesFast["🛡️ @hermes (Direct Execution)"]
+        HermesFast --> Result["✅ Done (Sub-second edit & test)"]
     end
 ```
 
-`@talos` is Pantheon's specialized rapid responder:
-- **No subagent overhead:** Operates directly in the primary session.
-- **Single-turn execution:** Formulates code and runs tests immediately.
+`@hermes` (or an ephemeral `hotfix` worker) handles bounded tasks directly:
+- **No Deepwork ceremony:** Skips multi-phase planning for bounded CLI tools.
+- **Direct execution:** Formulates code and runs tests immediately.
 - **Fail-safe edits:** Enforces strict syntax and test verification.
 
 ---
@@ -41,12 +41,12 @@ We will build a CLI utility named `repo-health` that analyzes any Git repository
 
 ---
 
-## 2. Dispatching the Request to @talos
+## 2. Dispatching the Request to @hermes
 
 Start OpenCode and send this prompt:
 
 ```text
-@talos Create a zero-dependency CLI tool in Node.js at bin/repo-health.mjs that inspects the repository health:
+@hermes Create a zero-dependency CLI tool in Node.js at bin/repo-health.mjs that inspects the repository health:
 1. Checks for uncommitted git changes.
 2. Validates package.json syntax and checks for a "test" script.
 3. Checks for README.md.
@@ -58,7 +58,7 @@ Start OpenCode and send this prompt:
 
 ## 3. Implementation Walkthrough
 
-`@talos` immediately writes the test suite and the implementation file.
+`@hermes` immediately writes the test suite and the implementation file.
 
 ### Step 3.1: Unit Test Suite (`tests/cli.test.mjs`)
 

@@ -17,7 +17,7 @@ Artifacts must not pollute the project root. The Pantheon ecosystem persists art
 |---|---|---|---|
 | Architectural Plan & Deepwork | `.pantheon/deepwork/<slug>/PLAN.md` | @athena | Durable across task/sprint |
 | Executive Report & Analysis | `.pantheon/reports/<YYYY-MM-DD>-<topic>.md` | @apollo / @themis | Permanent for audit/history |
-| Architectural Decision Record (ADR) | `docs/adr/<NNN>-<slug>.md` | @mnemosyne | Permanent repository asset |
+| Architectural Decision Record (ADR) | `docs/adr/<NNN>-<slug>.md` | @iris (or `spawn_ephemeral` `memory-adr`) | Permanent repository asset |
 
 Note: Files in `.pantheon/deepwork/` are gitignored by default, while `.pantheon/reports/` and `docs/adr/` can be tracked in version control.
 

@@ -335,13 +335,7 @@ const EXPECTED_TASK_PERMISSIONS = {
   aphrodite: { '*': 'deny' },
   demeter: { '*': 'deny' },
   apollo: { '*': 'deny' },
-  gaia: { '*': 'deny' },
-  prometheus: { '*': 'deny' },
-  hephaestus: { '*': 'deny' },
-  nyx: { '*': 'deny' },
   iris: { '*': 'deny' },
-  talos: { '*': 'deny' },
-  mnemosyne: { '*': 'deny' },
 }
 
 for (const agentName of canonicalFiles) {

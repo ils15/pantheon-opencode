@@ -51,6 +51,7 @@ import { promisify } from 'node:util'
 import { createAgentForgeTool } from './agent-forge-tool.ts'
 import { createAstTools } from './ast-tools.ts'
 import { isDangerousCommand, NON_EDIT_AGENTS, NON_SHELL_AGENTS } from './auto-permissions.ts'
+import { createBoardTool } from './board-messages.ts'
 import { createCodemapTools } from './codemap-tools.ts'
 import { createCostCommand } from './cost-command.ts'
 import type { ShadowSink } from './decision-shadow.ts'
@@ -407,7 +408,7 @@ const MODEL_INPUT: Record<string, unknown> = {
       enum: ['status', 'show', 'set', 'reset'],
       description: 'Operation to perform. Defaults to status when agent/model are absent.',
     },
-    agent: { type: 'string', description: 'Agent name (one of the 14 canonical agents).' },
+    agent: { type: 'string', description: 'Agent name (one of the 8 canonical agents).' },
     model: { type: 'string', description: 'Model in provider/model-id format; used by set.' },
     effort: {
       type: 'string',
@@ -713,6 +714,7 @@ export function createV2ToolDefinitions(
   definitions.push(...createAstTools(hostLocationDirectory))
   definitions.push(createReviewVerdictTool(shadow.sessionDomain))
   definitions.push(createWorktreeTool(hostLocationDirectory))
+  definitions.push(createBoardTool(hostLocationDirectory))
   if (visionRuntime) definitions.push(createV2VisionTool(visionRuntime))
   if (jevRuntime) definitions.push(createV2JevDecisionDefinition(jevRuntime))
   return definitions

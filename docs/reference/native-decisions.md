@@ -565,7 +565,7 @@ The **discovery pipeline** binds these steps into one measured ladder
 4. The winning candidate(s) are PROACTIVELY presented to the user via the
    native `question` tool with 1-click execution options. Zeus never instructs the
    user to run terminal commands; upon the user's approval in the interactive gate,
-   Zeus dispatches an execution specialist with bash permissions (@hermes or @talos)
+   Zeus dispatches an execution specialist with bash permissions (@hermes)
    to execute `npx skills add <owner/repo@skill> -a opencode -y` strictly in the project
    root (`.agents/skills/`). The installed skill joins the local pool that step 1 answers over.
 
