@@ -14,7 +14,18 @@ export interface MigrateLegacyStoresOptions {
   readonly isGlobalConfig?: boolean
   readonly preserveWorkingPythonMcp?: boolean
   readonly cleanCopiedInstallArtifacts?: boolean
+  /** Home whose `~/.npm/_npx` cache is swept for pre-2.3.0 installs. */
+  readonly homeDir?: string
 }
+
+export declare function collectLegacyNpxInstalls(
+  homeDir: string | undefined,
+): Array<{ readonly hashDir: string; readonly version: string }>
+
+export declare function collectLegacyOpenCodeCacheInstalls(
+  homeDir: string | undefined,
+  env?: NodeJS.ProcessEnv,
+): Array<{ readonly cacheDir: string; readonly version: string }>
 
 export interface CleanLegacyConfigsResult {
   readonly hasWorkingPythonMcp: boolean
@@ -32,6 +43,13 @@ export function cleanLegacyOpenCodeConfigs(
 ): CleanLegacyConfigsResult
 
 export function resolveSafeGlobalConfigDir(env?: NodeJS.ProcessEnv): string | undefined
+
+/**
+ * Home directory whose `~/.npm/_npx` cache is swept for pre-2.3.0 Pantheon
+ * installs. `undefined` under Node's test runner unless redirected, so a test
+ * never deletes entries on the machine running it.
+ */
+export function resolveSafeNpmCacheHome(env?: NodeJS.ProcessEnv): string | undefined
 
 export function resetLegacyMigrationCacheForTests(): void
 

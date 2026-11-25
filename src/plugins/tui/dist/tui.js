@@ -4867,6 +4867,60 @@ function isLegacyOrBrokenPantheonMcp(name, entry, configDir) {
 		isPython
 	};
 }
+const MIN_SUPPORTED_AUDIT_VERSION = [
+	2,
+	3,
+	0
+];
+function isBelowMinAuditVersion(spec) {
+	const match = /^v?(\d+)\.(\d+)\.(\d+)/.exec(String(spec ?? "").trim());
+	if (!match) return false;
+	const parts = [
+		Number(match[1]),
+		Number(match[2]),
+		Number(match[3])
+	];
+	for (let i = 0; i < 3; i += 1) {
+		const a = parts[i] ?? 0;
+		const b = MIN_SUPPORTED_AUDIT_VERSION[i] ?? 0;
+		if (a !== b) return a < b;
+	}
+	return false;
+}
+function stripAuditNegation(ref) {
+	return ref.startsWith("!") ? ref.slice(1).trim() : ref.trim();
+}
+function parseAuditPantheonSpec(ref) {
+	const norm = stripAuditNegation(ref).replaceAll("\\", "/");
+	const pkgMatch = /^(pantheon-opencode(?:\/(plugin|tui))?)(?:@([^\s/]+))?$/i.exec(norm);
+	if (pkgMatch) return {
+		kind: "package",
+		base: (pkgMatch[1] ?? "").toLowerCase(),
+		spec: pkgMatch[3] ?? null
+	};
+	const tuiMatch = /^(pantheon-tui)(?:@([^\s/]+))?$/i.exec(norm);
+	if (tuiMatch) return {
+		kind: "legacy-tui",
+		base: "pantheon-tui",
+		spec: tuiMatch[2] ?? null
+	};
+	if (/^npx(?:\s+-y)?\s+pantheon-(?:tui|opencode)(?:@\S+)?$/i.test(norm) || /^npx:pantheon-(?:tui|opencode)(?:@\S+)?$/i.test(norm) || /(?:^|\/)\.npm\/_npx\/[^/]+\/node_modules\/pantheon-(?:tui|opencode)(?:\/|$)/i.test(norm)) return {
+		kind: "npx",
+		base: norm,
+		spec: null
+	};
+	if (/^plugins\/pantheon-tui(?:\/.*)?$/i.test(norm) || /(?:^|\/)plugins\/pantheon-tui(?:\/dist\/tui\.(?:js|tsx))?$/i.test(norm)) return {
+		kind: "copied-tui",
+		base: norm,
+		spec: null
+	};
+	return null;
+}
+function isStaleAuditSpec(spec) {
+	if (!spec) return false;
+	const normalized = spec.trim().toLowerCase();
+	return normalized === "next" || isBelowMinAuditVersion(normalized);
+}
 function getAuditPluginRef(entry) {
 	if (typeof entry === "string") return entry;
 	if (isPlainRecord(entry) && typeof entry.package === "string") return entry.package;
@@ -4874,22 +4928,37 @@ function getAuditPluginRef(entry) {
 }
 function isAuditPantheonPluginRef(ref) {
 	if (!ref) return false;
-	const norm = ref.replaceAll("\\", "/");
-	return /^pantheon-opencode(?:\/.*)?$/i.test(norm) || /^pantheon-tui$/i.test(norm) || /^plugins\/pantheon-tui$/i.test(norm) || /pantheon-hooks(?:\.(?:ts|js|mjs))?$/i.test(norm) || /(?:^|\/)src\/plugin\.ts$/i.test(norm) || /(?:^|\/)pantheon-opencode\/src\/plugin$/i.test(norm) || /(?:^|\/)plugins\/pantheon-tui$/i.test(norm);
+	if (parseAuditPantheonSpec(ref)) return true;
+	const norm = stripAuditNegation(ref).replaceAll("\\", "/");
+	return /pantheon-hooks(?:\.(?:ts|js|mjs))?$/i.test(norm) || /(?:^|\/)src\/plugin\.ts$/i.test(norm) || /(?:^|\/)pantheon-opencode\/src\/plugin$/i.test(norm);
 }
-function isAuditLegacyPluginEntry(entry, configDir, singularKey, hasNpmNativePlugin) {
+function classifyAuditPluginEntry(entry, configDir, singularKey, hasNpmNativePlugin, unpinnedBases, plannedReplacements) {
 	const ref = getAuditPluginRef(entry);
-	if (!ref || !isAuditPantheonPluginRef(ref)) return false;
-	if (singularKey) return true;
-	const norm = ref.replaceAll("\\", "/");
-	if (/pantheon-hooks(?:\.(?:ts|js|mjs))?$/i.test(norm)) return true;
-	if (/(?:^|\/)src\/plugin\.ts$/i.test(norm)) return true;
-	if (hasNpmNativePlugin && (/^pantheon-tui$/i.test(norm) || /^plugins\/pantheon-tui$/i.test(norm) || /(?:^|\/)plugins\/pantheon-tui$/i.test(norm))) return true;
-	if (!(norm === "pantheon-opencode" || norm === "pantheon-opencode/plugin" || norm === "pantheon-opencode/tui") && (norm.startsWith("/") || norm.startsWith(".") || norm.includes("/"))) {
-		const targetPath = isAbsolute(ref) ? ref : resolve(configDir, ref);
-		if (!existsSync(targetPath)) return true;
+	if (!ref || !isAuditPantheonPluginRef(ref)) return null;
+	if (singularKey) return { action: "remove" };
+	const norm = stripAuditNegation(ref).replaceAll("\\", "/");
+	if (/pantheon-hooks(?:\.(?:ts|js|mjs))?$/i.test(norm)) return { action: "remove" };
+	if (/(?:^|\/)src\/plugin\.ts$/i.test(norm)) return { action: "remove" };
+	const parsed = parseAuditPantheonSpec(ref);
+	if (parsed?.kind === "npx" || parsed?.kind === "legacy-tui" || parsed?.kind === "copied-tui") return { action: "remove" };
+	if (parsed?.kind === "package") {
+		if (isStaleAuditSpec(parsed.spec)) {
+			const targetBase = parsed.base === "pantheon-opencode/tui" ? "pantheon-opencode/tui" : "pantheon-opencode";
+			if (unpinnedBases.has(targetBase) || targetBase === "pantheon-opencode" && unpinnedBases.has("pantheon-opencode/plugin") || plannedReplacements.has(targetBase)) return { action: "remove" };
+			plannedReplacements.add(targetBase);
+			return {
+				action: "replace",
+				replacement: targetBase
+			};
+		}
+		return null;
 	}
-	return false;
+	if (norm.startsWith("/") || norm.startsWith(".") || norm.includes("/")) {
+		const targetPath = isAbsolute(ref) ? ref : resolve(configDir, ref);
+		if (!existsSync(targetPath)) return { action: "remove" };
+		if (hasNpmNativePlugin && (norm.includes("/_npx/") || norm.endsWith("/src/plugin"))) return { action: "remove" };
+	}
+	return null;
 }
 function inspectAuditConfigFile(filePath, configDir) {
 	if (!existsSync(filePath)) return null;
@@ -4916,21 +4985,47 @@ function inspectAuditConfigFile(filePath, configDir) {
 				});
 			}
 		}
-		const hasNpmNativePlugin = (Array.isArray(parsed.plugins) ? parsed.plugins : []).some((e) => {
-			const ref = getAuditPluginRef(e)?.trim();
-			return ref === "pantheon-opencode" || ref === "pantheon-opencode/plugin";
-		});
+		const plural = Array.isArray(parsed.plugins) ? parsed.plugins : [];
+		const unpinnedBases = /* @__PURE__ */ new Set();
+		for (const entry of plural) {
+			const parsedRef = parseAuditPantheonSpec(getAuditPluginRef(entry) ?? "");
+			if (parsedRef?.kind === "package" && !isStaleAuditSpec(parsedRef.spec)) unpinnedBases.add(parsedRef.base);
+		}
+		const hasNpmNativePlugin = unpinnedBases.has("pantheon-opencode") || unpinnedBases.has("pantheon-opencode/plugin");
+		const isTuiCfg = basename(filePath) === "tui.json" || basename(filePath) === "cli.json";
 		const legacyPlugins = [];
+		const plannedReplacements = /* @__PURE__ */ new Set();
+		const classifyTui = (entry) => {
+			const ref = getAuditPluginRef(entry);
+			if (!ref) return null;
+			const cleanRef = stripAuditNegation(ref);
+			if (!isAuditPantheonPluginRef(cleanRef)) return null;
+			const parsedRef = parseAuditPantheonSpec(cleanRef);
+			if (parsedRef?.kind === "copied-tui" || parsedRef?.kind === "legacy-tui" || parsedRef?.kind === "npx") return { action: "remove" };
+			if (parsedRef?.kind === "package" && isStaleAuditSpec(parsedRef.spec)) {
+				if (hasNpmNativePlugin || unpinnedBases.has("pantheon-opencode/tui")) return { action: "remove" };
+				return {
+					action: "replace",
+					replacement: "pantheon-opencode/tui"
+				};
+			}
+			if (hasNpmNativePlugin || ref.startsWith("!") || !existsSync(resolve(configDir, cleanRef))) return { action: "remove" };
+			return null;
+		};
 		if (Array.isArray(parsed.plugin)) parsed.plugin.forEach((entry, index) => {
-			if (isAuditLegacyPluginEntry(entry, configDir, true, hasNpmNativePlugin)) legacyPlugins.push({
+			const verdict = isTuiCfg ? classifyTui(entry) : classifyAuditPluginEntry(entry, configDir, true, hasNpmNativePlugin, unpinnedBases, plannedReplacements);
+			if (verdict) legacyPlugins.push({
 				key: "plugin",
-				index
+				index,
+				...verdict
 			});
 		});
 		if (Array.isArray(parsed.plugins)) parsed.plugins.forEach((entry, index) => {
-			if (isAuditLegacyPluginEntry(entry, configDir, false, hasNpmNativePlugin)) legacyPlugins.push({
+			const verdict = isTuiCfg ? classifyTui(entry) : classifyAuditPluginEntry(entry, configDir, false, hasNpmNativePlugin, unpinnedBases, plannedReplacements);
+			if (verdict) legacyPlugins.push({
 				key: "plugins",
-				index
+				index,
+				...verdict
 			});
 		});
 		return {
@@ -4957,9 +5052,21 @@ function cleanAuditConfigFile(filePath, configDir, backupScopeRoot) {
 	}
 	for (const key of ["plugin", "plugins"]) {
 		if (!Array.isArray(cfg[key])) continue;
-		const drop = new Set(inspected.legacyPlugins.filter((p) => p.key === key).map((p) => p.index));
-		if (drop.size === 0) continue;
-		cfg[key] = cfg[key].filter((_, i) => !drop.has(i));
+		const actions = new Map(inspected.legacyPlugins.filter((p) => p.key === key).map((p) => [p.index, p]));
+		if (actions.size === 0) continue;
+		const updated = [];
+		cfg[key].forEach((entry, i) => {
+			const verdict = actions.get(i);
+			if (!verdict) {
+				updated.push(entry);
+				return;
+			}
+			if (verdict.action === "replace" && verdict.replacement) updated.push(isPlainRecord(entry) ? {
+				...entry,
+				package: verdict.replacement
+			} : verdict.replacement);
+		});
+		cfg[key] = updated;
 		if (cfg[key].length === 0 && (key === "plugin" || basename(filePath) === "tui.json" || basename(filePath) === "cli.json")) delete cfg[key];
 	}
 	const next = `${JSON.stringify(cfg, null, 2)}\n`;
@@ -5047,6 +5154,13 @@ function collectCacheAudit(cacheNpmDir, options) {
 		if (runningIsStable && entry.name === "pantheon-opencode@beta") {
 			pushCacheItem(channelDir, "Stale @beta plugin cache coexisting with stable install");
 			continue;
+		}
+		if (entry.name.startsWith("pantheon-opencode@")) {
+			const spec = entry.name.slice(18).trim().toLowerCase();
+			if (spec === "next" || isBelowMinAuditVersion(spec)) {
+				pushCacheItem(channelDir, `Stale legacy plugin cache (${entry.name})`);
+				continue;
+			}
 		}
 		try {
 			const revisions = readdirSync(channelDir, { withFileTypes: true }).filter((sub) => sub.isDirectory() && sub.name !== "node_modules" && !sub.name.startsWith(".")).map((sub) => {
@@ -5256,6 +5370,31 @@ function collectScopeAudit(scope, baseRoot, configRoot, options) {
 			addItem(join(configRoot, "command", cmdFile), "redundantAsset", "Legacy singular command directory copy");
 		}
 		for (const instr of LEGACY_INSTRUCTION_FILES) addItem(join(configRoot, "instructions", instr), "redundantAsset", "Legacy instruction file superseded by AGENTS.global.md");
+		if (!(existsSync(join(configRoot, "src", "mcp", "code_mode.py")) && existsSync(join(configRoot, "package.json")))) {
+			const globalAgentsCopy = join(configRoot, "AGENTS.global.md");
+			if (existsSync(globalAgentsCopy)) try {
+				const st = lstatSync(globalAgentsCopy);
+				if (!st.isSymbolicLink() && st.isFile() && /<!--\s*pantheon:generated:begin|Pantheon Agent System/i.test(readFileSync(globalAgentsCopy, "utf8"))) addItem(globalAgentsCopy, "redundantAsset", "Copied AGENTS.global.md superseded by native reference transform");
+			} catch {}
+			const agentsCopy = join(configRoot, "AGENTS.md");
+			if (existsSync(agentsCopy)) try {
+				const st = lstatSync(agentsCopy);
+				if (!st.isSymbolicLink() && st.isFile()) {
+					const content = readFileSync(agentsCopy, "utf8");
+					if (/<!--\s*pantheon:generated:begin/i.test(content)) {
+						const stripped = content.replace(/<!--\s*pantheon:generated:begin[\s\S]*?<!--\s*pantheon:generated:end[^\n]*-->\r?\n?/gi, "").trim();
+						if (stripped === "") addItem(agentsCopy, "redundantAsset", "Copied global AGENTS.md superseded by native reference transform");
+						else if (stripped !== content.trim()) items.push({
+							path: `${agentsCopy}#pantheon-managed`,
+							scope,
+							category: "redundantAsset",
+							reason: "Stale Pantheon managed region inside AGENTS.md",
+							bytes: 0
+						});
+					}
+				}
+			} catch {}
+		}
 		for (const skillId of CANONICAL_SKILL_IDS) addItem(join(configRoot, "skills", skillId), "redundantAsset", "Bundled Pantheon skill directory provided natively by plugin");
 		const tuiCopyDir = join(configRoot, "plugins", "pantheon-tui");
 		if (existsSync(tuiCopyDir)) {
@@ -5498,6 +5637,36 @@ function cleanLegacyArtifacts(options = {}) {
 		if (scopeFilter && item.scope !== scopeFilter) continue;
 		if (item.path.endsWith("#legacy-vec")) {
 			removed.push(item.path);
+			continue;
+		}
+		if (item.path.endsWith("#pantheon-managed")) {
+			const agentsPath = item.path.slice(0, -17);
+			const scopeRoot = item.scope === "global" ? globalConfigDir : workspaceDir;
+			if (!agentsPath || !scopeRoot || !isConfinedWithin(scopeRoot, agentsPath)) {
+				errors.push({
+					path: item.path,
+					reason: "Path escapes target scope root"
+				});
+				continue;
+			}
+			try {
+				if (existsSync(agentsPath)) {
+					const stripped = readFileSync(agentsPath, "utf8").replace(/<!--\s*pantheon:generated:begin[\s\S]*?<!--\s*pantheon:generated:end[^\n]*-->\r?\n?/gi, "").trim();
+					const st = lstatSync(agentsPath);
+					const tmp = `${agentsPath}.tmp-${process.pid}`;
+					writeFileSync(tmp, stripped === "" ? "" : `${stripped}\n`, {
+						encoding: "utf8",
+						mode: st.mode & 511
+					});
+					renameSync(tmp, agentsPath);
+				}
+				removed.push(item.path);
+			} catch (err) {
+				errors.push({
+					path: item.path,
+					reason: err instanceof Error ? err.message : String(err)
+				});
+			}
 			continue;
 		}
 		if (item.path.includes("#legacy-mcp:") || item.path.endsWith("#legacy-plugin")) {
@@ -6072,7 +6241,7 @@ async function readChangelogForBundle(bundleUrl) {
 }
 /** The ambient build-time version, or null outside a tsdown build. */
 function embeddedVersion() {
-	return "2.3.0";
+	return "2.3.1";
 }
 /**
 * Resolve the running Pantheon version for the what's-new window: the plugin
@@ -6314,7 +6483,7 @@ function persistUpdateCheckState(previous, latest) {
 	} catch {}
 }
 function resolveRunningVersion() {
-	return "2.3.0";
+	return "2.3.1";
 }
 const VALUE_WIDTH = 32;
 function SettingsWindow(props) {
@@ -8560,6 +8729,22 @@ async function maybeShowWhatsNew(context, options = {}) {
 //#region src/index.tsx
 /** @jsxImportSource @opentui/solid */
 const SINGLETON = Symbol.for("pantheon.tui.v2.loaded");
+function resolveSiblingCoreVersion() {
+	try {
+		const candidates = [
+			new URL("../../package.json", import.meta.url),
+			new URL("../../../package.json", import.meta.url),
+			new URL("../../../../package.json", import.meta.url)
+		];
+		for (const candidate of candidates) try {
+			const parsed = JSON.parse(readFileSync(candidate, "utf8"));
+			if (parsed.name === "pantheon-opencode" && typeof parsed.version === "string") {
+				const trimmed = parsed.version.trim();
+				if (trimmed) return trimmed;
+			}
+		} catch {}
+	} catch {}
+}
 /** How often the sidebar re-reads .pantheon/active-preset.json (V1 parity) so
 *  `set-tier` changes made while opencode is open show up within ~30s. */
 const PRESET_REFRESH_MS = 3e4;
@@ -11417,7 +11602,7 @@ function updateCheckStateFile() {
 *  version via toast, and keeps the persistent Home/Sidebar badge updated. */
 async function checkForPantheonUpdate(context) {
 	const { statePath, readState } = updateCheckStateFile();
-	const currentVersion = "2.3.0";
+	const currentVersion = "2.3.1";
 	const initialState = readState();
 	setAvailableUpdateVersion(resolveCachedAvailableUpdate(currentVersion, initialState));
 	const nowMs = Date.now();
@@ -12274,7 +12459,7 @@ function Sidebar(props) {
 			setProp(_el$13, "paddingLeft", 1);
 			setProp(_el$13, "paddingRight", 1);
 			setProp(_el$14, "attributes", 1);
-			insert(_el$14, `Pantheon v2.3.0`);
+			insert(_el$14, `Pantheon v2.3.1`);
 			insert(_el$15, () => `Erro no painel: ${err?.message ?? "desconhecido"}`);
 			effect((_p$) => {
 				var _v$3 = text(), _v$4 = muted();
@@ -12328,9 +12513,9 @@ function SidebarInner(props) {
 	};
 	const failedSuffix = () => failedSuffixText(dispatchView()?.failures);
 	const header = () => tuiPrefs().sidebar.header;
-	const availableUpdate = useAvailableUpdate("2.3.0");
+	const availableUpdate = useAvailableUpdate("2.3.1");
 	const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
-	const updateBadge = () => formatUpdateBadge("2.3.0", availableUpdate(), { isPt: isPt() });
+	const updateBadge = () => formatUpdateBadge("2.3.1", availableUpdate(), { isPt: isPt() });
 	const artifacts = useWorkspaceArtifacts(context);
 	const activePlan = () => artifacts().find((entry) => entry.kind === "plan");
 	return (() => {
@@ -12350,7 +12535,7 @@ function SidebarInner(props) {
 			get children() {
 				var _el$18 = createElement("text");
 				setProp(_el$18, "attributes", 1);
-				insert(_el$18, `Pantheon v2.3.0`);
+				insert(_el$18, `Pantheon v2.3.1`);
 				effect((_$p) => setProp(_el$18, "fg", text(), _$p));
 				return _el$18;
 			}
@@ -13460,13 +13645,13 @@ function useWorkspaceArtifacts(context) {
 *  this keeps a compact Pantheon line visible on the home footer meanwhile. */
 function HomeStatus(props) {
 	const preset = useActivePreset(props.context).preset;
-	const availableUpdate = useAvailableUpdate("2.3.0");
+	const availableUpdate = useAvailableUpdate("2.3.1");
 	const artifacts = useWorkspaceArtifacts(props.context);
 	const activePlan = () => artifacts().find((entry) => entry.kind === "plan");
 	const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
 	const accent = () => resolveAccentColor(tuiDraftPreview()?.theme?.accent ?? tuiPrefs().theme?.accent, props.context.theme);
 	const muted = () => props.context.theme?.text?.muted ?? props.context.theme?.text?.base;
-	const updateBadge = () => formatUpdateBadge("2.3.0", availableUpdate(), {
+	const updateBadge = () => formatUpdateBadge("2.3.1", availableUpdate(), {
 		isPt: isPt(),
 		compact: true
 	});
@@ -13479,7 +13664,7 @@ function HomeStatus(props) {
 			insertNode(_el$128, _el$129);
 			insertNode(_el$128, _el$132);
 			setProp(_el$128, "flexDirection", "row");
-			insert(_el$129, () => `Pantheon v2.3.0${preset().name ? ` ▸ ${preset().name}` : ""}`);
+			insert(_el$129, () => `Pantheon v2.3.1${preset().name ? ` ▸ ${preset().name}` : ""}`);
 			insert(_el$128, createComponent(Show, {
 				get when() {
 					return updateBadge();
@@ -13612,9 +13797,35 @@ function PromptFooter(props) {
 const plugin = Plugin.define({
 	id: "pantheon.tui",
 	setup(context) {
+		const currentVer = "2.3.1";
 		const globalState = globalThis;
-		if (globalState[SINGLETON]) return;
-		globalState[SINGLETON] = true;
+		const existing = globalState[SINGLETON];
+		if (existing) {
+			if (typeof existing === "object" && existing !== null) {
+				const existingVer = typeof existing.version === "string" ? existing.version : "";
+				if (existingVer && comparePantheonVersions(currentVer, existingVer) > 0 && typeof existing.dispose === "function") try {
+					existing.dispose();
+				} catch {}
+				else return;
+			} else {
+				try {
+					context.ui.toast?.show?.({
+						variant: "warning",
+						title: "Pantheon TUI",
+						message: "Legacy Pantheon TUI conflict detected — remove `plugins/pantheon-tui` from tui.json or run `/pantheon-settings` -> Clean legacy, then restart OpenCode."
+					});
+				} catch {}
+				return;
+			}
+		}
+		const coreVer = resolveSiblingCoreVersion();
+		if (coreVer && coreVer !== currentVer) try {
+			context.ui.toast?.show?.({
+				variant: "warning",
+				title: "Pantheon Version Drift",
+				message: `TUI v${currentVer} mismatches core v${coreVer}. Run \`opencode plugin update pantheon-opencode\` and restart OpenCode.`
+			});
+		} catch {}
 		initTuiPrefs(context);
 		warmUpSidebarData(context, resolveLocation(context));
 		const unregisterSidebar = context.ui.slot({
@@ -13630,7 +13841,7 @@ const plugin = Plugin.define({
 			append: "home.footer.status",
 			render: () => createComponent(HomeStatus, { context })
 		});
-		setAvailableUpdateVersion(resolveCachedAvailableUpdate("2.3.0", updateCheckStateFile().readState()));
+		setAvailableUpdateVersion(resolveCachedAvailableUpdate(currentVer, updateCheckStateFile().readState()));
 		const updateNoticeTimer = setTimeout(() => {
 			checkForPantheonUpdate(context).catch(() => {});
 		}, 3e3);
@@ -13684,7 +13895,10 @@ const plugin = Plugin.define({
 			})
 		});
 		maybeShowWhatsNew(context);
-		return () => {
+		let disposed = false;
+		const cleanup = () => {
+			if (disposed) return;
+			disposed = true;
 			clearTimeout(updateNoticeTimer);
 			clearInterval(updateNoticeInterval);
 			if (typeof unregisterSidebar === "function") unregisterSidebar();
@@ -13694,8 +13908,14 @@ const plugin = Plugin.define({
 			if (typeof unregisterSettingsSlot === "function") unregisterSettingsSlot();
 			if (typeof unregisterCommands === "function") unregisterCommands();
 			if (typeof unregisterSettingsCommands === "function") unregisterSettingsCommands();
-			delete globalState[SINGLETON];
+			if (globalState[SINGLETON] === handle) delete globalState[SINGLETON];
 		};
+		const handle = {
+			version: currentVer,
+			dispose: cleanup
+		};
+		globalState[SINGLETON] = handle;
+		return cleanup;
 	}
 });
 //#endregion
