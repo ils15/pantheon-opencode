@@ -17,7 +17,7 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
 import { getSharedBus } from './bus.ts'
-import { spawnEphemeralWorker } from './ephemeral-worker.ts'
+import { deriveEphemeralRoleSlug, spawnEphemeralWorker } from './ephemeral-worker.ts'
 import { createExecutionReceipt } from './execution-receipt.ts'
 import { captureGitCheckpoint, restoreGitCheckpoint } from './git-checkpoint.ts'
 import { runAtomicStepSubSession, type SubSessionDomainLike } from './step-runner.ts'
@@ -332,7 +332,7 @@ export function createStepLedgerTool(
           const role =
             typeof input.role === 'string' && input.role.trim()
               ? input.role.trim()
-              : `worker-${key}`
+              : deriveEphemeralRoleSlug(`worker-${key}`)
           const parentSid =
             typeof (context as { sessionID?: unknown } | undefined)?.sessionID === 'string'
               ? ((context as { sessionID?: string }).sessionID ?? undefined)

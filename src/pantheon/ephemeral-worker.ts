@@ -134,6 +134,25 @@ export interface SpawnEphemeralWorkerResult {
 }
 
 const SAFE_EPHEMERAL_ROLE_RE = /^[a-z0-9][a-z0-9-]{0,31}$/
+const EPHEMERAL_ROLE_MAX_LENGTH = 32
+const FALLBACK_EPHEMERAL_ROLE = 'worker'
+
+/**
+ * Derive a validator-safe role slug (see `SAFE_EPHEMERAL_ROLE_RE`) from an
+ * arbitrary label such as a step key. Lowercases, maps every character outside
+ * `[a-z0-9-]` to `-`, collapses repeated separators, trims edge separators,
+ * truncates to 32 chars, and guarantees a non-empty alnum-leading result.
+ */
+export function deriveEphemeralRoleSlug(label: string): string {
+  const slug = label
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, EPHEMERAL_ROLE_MAX_LENGTH)
+    .replace(/-+$/, '')
+  return SAFE_EPHEMERAL_ROLE_RE.test(slug) ? slug : FALLBACK_EPHEMERAL_ROLE
+}
 
 export async function spawnEphemeralWorker(
   input: SpawnEphemeralWorkerInput,

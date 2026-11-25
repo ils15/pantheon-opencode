@@ -14078,6 +14078,12 @@ function resolveEphemeralArchetype(roleOrAlias) {
   return void 0;
 }
 var SAFE_EPHEMERAL_ROLE_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+var EPHEMERAL_ROLE_MAX_LENGTH = 32;
+var FALLBACK_EPHEMERAL_ROLE = "worker";
+function deriveEphemeralRoleSlug(label) {
+  const slug = label.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/-{2,}/g, "-").replace(/^-+|-+$/g, "").slice(0, EPHEMERAL_ROLE_MAX_LENGTH).replace(/-+$/, "");
+  return SAFE_EPHEMERAL_ROLE_RE.test(slug) ? slug : FALLBACK_EPHEMERAL_ROLE;
+}
 async function spawnEphemeralWorker(input) {
   const rawRole = typeof input.role === "string" ? input.role.trim().toLowerCase() : "";
   if (!SAFE_EPHEMERAL_ROLE_RE.test(rawRole)) {
@@ -14642,7 +14648,7 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
           }
           const objective = typeof input.objective === "string" && input.objective.trim() ? input.objective.trim() : store2.steps[key]?.objective ?? "";
           if (!objective) return jsonResult3({ ok: false, error: "objective is required" });
-          const role = typeof input.role === "string" && input.role.trim() ? input.role.trim() : `worker-${key}`;
+          const role = typeof input.role === "string" && input.role.trim() ? input.role.trim() : deriveEphemeralRoleSlug(`worker-${key}`);
           const parentSid = typeof context?.sessionID === "string" ? context.sessionID ?? void 0 : void 0;
           const ephOut = await spawnEphemeralWorker({
             sessionDomain,

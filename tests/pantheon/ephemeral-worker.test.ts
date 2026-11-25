@@ -7,6 +7,7 @@ import test from 'node:test'
 import { readBoardMessages } from '../../src/pantheon/board-messages.ts'
 import { type EphemeralWorkerEventPayload, getSharedBus } from '../../src/pantheon/bus.ts'
 import {
+  deriveEphemeralRoleSlug,
   resolveEphemeralArchetype,
   spawnEphemeralWorker,
 } from '../../src/pantheon/ephemeral-worker.ts'
@@ -160,6 +161,60 @@ test('pantheon_step_ledger spawn_ephemeral rejects invalid role slug and support
     ) as { ok: boolean; baseAgent: string; claimSeq?: number }
     assert.equal(roOut.baseAgent, 'apollo')
     assert.equal(roOut.claimSeq, 1)
+  } finally {
+    rmSync(parent, { recursive: true, force: true })
+  }
+})
+
+test('deriveEphemeralRoleSlug sanitizes arbitrary labels into validator-safe role slugs', () => {
+  const safe = /^[a-z0-9][a-z0-9-]{0,31}$/
+  assert.equal(deriveEphemeralRoleSlug('worker-eph-step-1'), 'worker-eph-step-1')
+  assert.equal(
+    deriveEphemeralRoleSlug('worker-Data.Migrate:Auth_V2'),
+    'worker-data-migrate-auth-v2',
+  )
+  assert.equal(deriveEphemeralRoleSlug('worker-___..--'), 'worker')
+  assert.equal(deriveEphemeralRoleSlug(''), 'worker')
+  assert.equal(deriveEphemeralRoleSlug('-'.repeat(8)), 'worker')
+
+  const longKey = `worker-${'A_b:C.'.repeat(18)}`
+  const longSlug = deriveEphemeralRoleSlug(longKey)
+  assert.equal(longSlug.length, 32)
+  assert.match(longSlug, safe)
+  assert.equal(longSlug.endsWith('-'), false)
+  assert.match(deriveEphemeralRoleSlug(longKey), safe)
+})
+
+test('pantheon_step_ledger spawn_ephemeral derives a safe role slug when role is omitted', async () => {
+  const parent = mkdtempSync(join(tmpdir(), 'pantheon-eph-default-role-'))
+  const repoDir = join(parent, 'repo')
+  try {
+    initGitRepo(repoDir)
+    const sessionDomain = {
+      create: async () => ({ id: 'ses-default-role-1' }),
+      prompt: async () => ({ ok: true }),
+      wait: async () => ({ status: 'completed' }),
+      remove: async () => {},
+    }
+    const ledger = createStepLedgerTool(repoDir, sessionDomain)
+    const out = JSON.parse(
+      (
+        await ledger.execute(
+          {
+            action: 'spawn_ephemeral',
+            stepKey: 'Data.Migrate:Auth_V2',
+            objective: 'Default-role slice',
+            isolateWorktree: false,
+          },
+          { directory: repoDir },
+        )
+      ).output,
+    ) as { role?: string; claimSeq?: number; finalSeq?: number; error?: string }
+    assert.equal(out.error, undefined)
+    assert.equal(out.role, 'worker-data-migrate-auth-v2')
+    assert.match(out.role ?? '', /^[a-z0-9][a-z0-9-]{0,31}$/)
+    assert.equal(out.claimSeq, 1)
+    assert.equal(out.finalSeq, 2)
   } finally {
     rmSync(parent, { recursive: true, force: true })
   }
