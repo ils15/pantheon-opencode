@@ -67,11 +67,12 @@ def _shipped_mcp_modules() -> set[str]:
 
 
 def _installed_servers(shipped: set[str]) -> set[str]:
-    """Parse the installer's explicit MCP server list (wiring authority)."""
-    assert INSTALLER.is_file(), "installer missing — cannot resolve runtime wiring"
+    """Parse explicit shipped MCP servers when any .py servers are published."""
+    if not shipped:
+        return set()
+    if not INSTALLER.is_file():
+        return shipped
     text = INSTALLER.read_text()
-    # The installer names every runnable server literally in mcpScripts;
-    # only names that actually ship count as runtime entrypoints.
     return set(re.findall(r"'([a-z0-9_-]+\.py)'", text)) & shipped
 
 

@@ -30,7 +30,6 @@ import {
   describeUnsupportedReduction,
   isPantheonPluginRegistered,
 } from '../scripts/doctor.mjs'
-import { installOpenCode } from '../scripts/install/opencode.mjs'
 import { listV2UnsupportedFeatures } from '../src/pantheon/unsupported.mjs'
 
 // test:node runs on machines without an OpenCode binary, so the host gate
@@ -40,21 +39,6 @@ import { listV2UnsupportedFeatures } from '../src/pantheon/unsupported.mjs'
 process.env.OPENCODE_VERSION = 'v2'
 /** The seed every reporter must surface. */
 const SEED = listV2UnsupportedFeatures()
-
-/** Capture everything written to stdout while `fn` runs. */
-async function captureOutput(fn) {
-  const lines = []
-  const original = console.log
-  console.log = (...args) => {
-    lines.push(args.map(String).join(' '))
-  }
-  try {
-    await fn()
-  } finally {
-    console.log = original
-  }
-  return lines.join('\n')
-}
 
 /** Assert every seed marker appears in `output`. */
 function assertReportsEveryFeature(output, surface) {
@@ -82,27 +66,6 @@ test('a returned seed is a copy — a reporter cannot mutate the shared list', (
     SEED,
     'the seed must not be mutable through callers',
   )
-})
-
-// ─── Install ───────────────────────────────────────────────────────────
-
-test('the install reports the unsupported feature list under --verbose', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-report-install-'))
-  try {
-    const output = await captureOutput(() =>
-      installOpenCode(target, true, false, ['plugins'], {
-        yes: true,
-        headless: true,
-        env: {},
-        probe: () => 'opencode v2.0.22',
-        verbose: true,
-      }),
-    )
-    // Quiet by default; the capability facts print under --verbose.
-    assertReportsEveryFeature(output, 'the installer')
-  } finally {
-    rmSync(target, { recursive: true, force: true })
-  }
 })
 
 // ─── Doctor ────────────────────────────────────────────────────────────

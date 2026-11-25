@@ -3,11 +3,14 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { load } from 'js-yaml'
-import {
-  deriveNativeSkillPermissions,
-  mergeAgentSkillPermissions,
-} from '../scripts/install/opencode.mjs'
-import { parseFrontmatter, ROOT } from '../scripts/install/shared.mjs'
+
+const ROOT = process.cwd()
+
+function parseFrontmatter(content) {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+  if (!match) return null
+  return { fm: load(match[1]) ?? {} }
+}
 
 const AGENTS_DIR = join(ROOT, 'src', 'agents')
 const SKILLS_DIR = join(ROOT, 'src', 'skills')
@@ -83,20 +86,6 @@ test('skill metadata uses the OpenCode V2 frontmatter contract', () => {
       )
     }
   }
-})
-
-test('agent skill permissions default deny and grant only declared IDs', () => {
-  assert.deepEqual(deriveNativeSkillPermissions(['memory-bank', 'simplify']), {
-    '*': 'deny',
-    'memory-bank': 'allow',
-    simplify: 'allow',
-  })
-  assert.throws(() => deriveNativeSkillPermissions(['missing skill']), /skill ID is invalid/i)
-  assert.throws(() => deriveNativeSkillPermissions(['simplify', 'simplify']), /duplicate skill/i)
-  assert.throws(
-    () => mergeAgentSkillPermissions({ skill: { '*': 'allow' } }, ['simplify']),
-    /only through the skills list/i,
-  )
 })
 
 test('SKILL.md cores stay under the progressive-disclosure budget (120 lines)', () => {

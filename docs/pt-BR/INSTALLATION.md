@@ -4,27 +4,26 @@
 
 O Pantheon 2.2 **requer o OpenCode 2.x** como host (o contrato da geração OpenCode 1.x foi completamente removido).
 
-**Instalação recomendada (boa prática via plugin nativo):** instalar com `opencode plugin add pantheon-opencode` registra nativamente os **14 agentes, 25 skills, 8 comandos, 26 tools nativas em TypeScript e a TUI** direto do pacote npm, **sem copiar arquivos duplicados para o disco**. Funciona imediatamente em **qualquer pasta** (com ou sem Git, worktrees ou diretórios novos) e evita arquivos legados/cópias antigas coexistindo após atualizações.
-
-O instalador CLI (`npx pantheon-opencode init`) continua disponível como opção para quem deseja materializar arquivos locais em `.opencode/`, injetar `AGENTS.md` ou configurar MCPs Python legados. Se você migrar de uma instalação antiga via `init`, use `/pantheon-settings` → **Atualizações** (**Legados, Drift & Limpeza**) para limpar cópias redundantes e caches antigos com segurança.
+**Instalação nativa via plugin (`opencode plugin add`):** a partir da v2.2.2, instalar pelo gerenciador nativo de plugins do OpenCode é o **único** método oficial — o instalador legado `npx pantheon-opencode` foi aposentado. O OpenCode registra em memória os **14 agentes, 25 skills, 9 comandos, 30 tools nativas em TypeScript e a TUI**, **sem copiar arquivos redundantes para o disco**, funcionando em **qualquer pasta** e removendo automaticamente MCPs Python legados, cópias antigas da TUI (`plugins/pantheon-tui/`) e `.venv`/`.py` no `postinstall` e na inicialização. Você também pode abrir `/pantheon-settings` → **Atualizações** (**Legados, Drift & Limpeza**) para escanear ou purgar os stores `.pantheon/` dentro do próprio OpenCode.
 
 ---
 
 ## Início Rápido (TL;DR)
 
 ```bash
-# Recomendado: plugin nativo do OpenCode 2.x (zero cópias redundantes, funciona em qualquer pasta)
+# Instalar o plugin nativo do OpenCode 2.x (zero cópias redundantes, funciona em qualquer pasta)
 opencode plugin add pantheon-opencode
 
 # Atualizar depois (ou direto pela TUI em /pantheon-settings -> Atualizações)
 opencode plugin update pantheon-opencode
 
-# Opcional (CLI): materializar configs locais, AGENTS.md ou flags de projeto
-npx pantheon-opencode init --project --no-mcp
-npx pantheon-opencode init --headless --yes
+# Remover:
+opencode plugin remove pantheon-opencode
+# (Opcional: use "Apagar dados (.pantheon)" em /pantheon-settings -> Atualizações antes de remover)
 
-# Diagnóstico de Integridade e Saúde
-npx pantheon-opencode doctor
+# Validação local em sandbox (desenvolvimento neste repositório):
+npm run doctor
+bash scripts/test-opencode-sandbox.sh --prepare && bash scripts/test-opencode-sandbox.sh --run v2
 ```
 
 ---

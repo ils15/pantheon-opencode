@@ -1,6 +1,6 @@
 {
   "name": "pantheon-opencode",
-  "version": "2.2.1",
+  "version": "2.2.2",
   "description": "Multi-agent orchestration for OpenCode \u2014 14 specialized agents, TDD, Themis review gates.",
   "type": "module",
   "workspaces": [
@@ -20,9 +20,8 @@
     "./plugin": "./src/plugin.ts"
   },
   "scripts": {
-    "postinstall": "node scripts/postinstall.mjs && node scripts/sync-tui.mjs",
+    "postinstall": "node scripts/postinstall.mjs",
     "prepare": "git rev-parse --is-inside-work-tree >/dev/null 2>&1 && husky",
-    "setup": "node scripts/setup.mjs",
     "build:agents-md": "node scripts/build-agents-md.mjs",
     "build:roster": "node scripts/build-roster.mjs",
     "check:roster": "node scripts/build-roster.mjs --check",
@@ -30,10 +29,7 @@
     "build:plugin": "node scripts/build-plugin.mjs",
     "check:decision-router": "node scripts/build-decision-router.mjs --check",
     "skills:lock": "node scripts/update-skills-lock.mjs",
-    "setup:lite": "node bin/pantheon-init.mjs init --yes --clean --components agents,skills,instructions",
     "doctor": "node scripts/doctor.mjs",
-    "prune": "node scripts/prune.mjs",
-    "init": "node bin/pantheon-init.mjs init --yes",
     "opencode": "OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true opencode",
     "start": "OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true opencode",
     "prepack": "npm run build:plugin && npm run check:decision-router && npm run check:roster && npm run version:check",
@@ -59,9 +55,9 @@
     "test:security": "npm run secret-scan",
     "test:quick": "node --test tests/skill-decision-proactive.test.mjs tests/plan-visibility-contract.test.mjs tests/proportional-execution-contract.test.mjs tests/memory-delegation-prompt.test.mjs tests/tui-settings-draft.test.mjs tests/tui-settings-i18n.test.mjs tests/test-slicing-contract.test.mjs",
     "test:slice": "node scripts/test-slice.mjs",
-    "test:node": "node scripts/run-node-tests.mjs --label 'test:node' --exclude 'tests/install-opencode.test.mjs' --exclude 'tests/install-e2e.test.mjs' 'tests/*.mjs' 'tests/pantheon/*.mjs' 'tests/eval/*.mjs'",
-    "test:install": "PANTHEON_RUN_INSTALL_TESTS=1 node scripts/run-node-tests.mjs --label 'test:install' 'tests/install-opencode.test.mjs' 'tests/install-e2e.test.mjs'",
-    "coverage": "echo 'Node coverage (report-only, NO threshold is enforced).' && echo 'Covers: the .mjs/.js modules under scripts/, src/ and bin/ that test:node exercises.' && echo 'Does NOT cover: test:ts (hand-rolled tsx loop, no node --test runner) and test:ci (pytest).' && echo '             TypeScript under src/ (41 files) is therefore entirely unmeasured here.' && echo '' && node scripts/run-node-tests.mjs --label 'coverage' --exclude 'tests/install-opencode.test.mjs' --exclude 'tests/install-e2e.test.mjs' -- --experimental-test-coverage --test-coverage-include='scripts/**/*.mjs' --test-coverage-include='src/**/*.mjs' --test-coverage-include='src/**/*.js' --test-coverage-include='bin/**/*.mjs' 'tests/*.mjs' 'tests/pantheon/*.mjs'",
+    "test:node": "node scripts/run-node-tests.mjs --label 'test:node' 'tests/*.mjs' 'tests/pantheon/*.mjs' 'tests/eval/*.mjs'",
+    "test:install": "node scripts/run-node-tests.mjs --label 'test:install' 'tests/install-modernization-cleanup.test.mjs' 'tests/opencode-sandbox.test.mjs' 'tests/validate-sandbox-install.test.mjs'",
+    "coverage": "echo 'Node coverage (report-only, NO threshold is enforced).' && echo 'Covers: the .mjs/.js modules under scripts/ and src/ that test:node exercises.' && echo 'Does NOT cover: test:ts (hand-rolled tsx loop, no node --test runner) and test:ci (pytest).' && echo '             TypeScript under src/ (41 files) is therefore entirely unmeasured here.' && echo '' && node scripts/run-node-tests.mjs --label 'coverage' -- --experimental-test-coverage --test-coverage-include='scripts/**/*.mjs' --test-coverage-include='src/**/*.mjs' --test-coverage-include='src/**/*.js' 'tests/*.mjs' 'tests/pantheon/*.mjs'",
     "coverage:plugin": "node scripts/check-plugin-coverage.mjs",
     "test:ts": "for f in tests/pantheon/*.test.ts; do if [ \"$f\" = tests/pantheon/plugin-contract.test.ts ]; then NODE_OPTIONS=--conditions=import tsx \"$f\"; else tsx \"$f\"; fi || exit 1; done",
     "test:hooks": "node scripts/run-node-tests.mjs --label 'test:hooks' 'tests/pantheon/plugin-hook-canary.test.mjs'",
@@ -70,15 +66,13 @@
     "test": "npm run test:all",
     "test:ci": "PANTHEON_PY=${PANTHEON_PYTHON:-${PYTHON:-python3}}; if [ -z \"${PANTHEON_PYTHON:-}\" ] && [ -x .venv/bin/python3 ]; then PANTHEON_PY=.venv/bin/python3; fi; $PANTHEON_PY -m pytest -q --tb=short 2>&1"
   },
-  "bin": {
-    "pantheon-opencode": "bin/pantheon-init.mjs"
-  },
   "files": [
     "LICENSE",
     "package-lock.json",
     "plugin.json",
     "pyproject.toml",
     "scripts/install/*.mjs",
+    "scripts/install/*.d.mts",
     "scripts/*.py",
     "src/plugin",
     "src/plugin.ts",
@@ -91,7 +85,6 @@
     "src/agents/*.md",
     "src/agents/roster.json",
     "!src/agents/README.md",
-    "bin/*.mjs",
     "AGENTS.md",
     "AGENTS.global.md",
     "CHANGELOG.md",
@@ -164,6 +157,5 @@
   "license": "MIT",
   "engines": {
     "node": ">=26.4.0"
-  },
-  "preferGlobal": true
+  }
 }

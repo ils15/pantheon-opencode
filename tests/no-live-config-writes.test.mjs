@@ -77,7 +77,7 @@ const SELF = 'no-live-config-writes.test.mjs'
  * writes agents, routing.yml, skills, AGENTS.md, commands, MCP scripts and the
  * code-mode payload into configDir.
  */
-const SIDE_EFFECTING_SCRIPTS = ['sync-tui.mjs', 'sync-artifacts.mjs']
+const SIDE_EFFECTING_SCRIPTS = ['postinstall.mjs']
 
 /** Env var that actually redirects the config dir for the scripts above. */
 const REDIRECT_KEY = 'XDG_CONFIG_HOME'
@@ -330,19 +330,19 @@ test('detector flags the direct array-form shapes', () => {
   )
   assert.equal(
     findViolations(
-      `spawnSync(process.execPath, [join(ROOT, 'scripts', 'sync-tui.mjs')], { encoding: 'utf8' })`,
+      `spawnSync(process.execPath, [join(ROOT, 'scripts', 'postinstall.mjs')], { encoding: 'utf8' })`,
     ).violations.length,
     1,
   )
   assert.equal(
-    findViolations(`spawnSync(node, [join(ROOT,'scripts','sync-artifacts.mjs')], {})`).violations
+    findViolations(`spawnSync(node, [join(ROOT,'scripts','postinstall.mjs')], {})`).violations
       .length,
     1,
   )
 })
 
 test('detector flags the shell-string and alias/wrapper idioms', () => {
-  // The same shape sync-tui.mjs:176 uses.
+  // The same shape postinstall.mjs uses when invoked from npm lifecycle.
   assert.equal(
     findViolations(`execSync('npm install ' + tarball, { cwd: pluginDir })`).violations.length,
     1,
@@ -363,17 +363,15 @@ test('detector flags the shell-string and alias/wrapper idioms', () => {
 })
 
 test('detector does NOT accept a redirect the scripts ignore', () => {
-  // PANTHEON_HOME is honored by prune/uninstall/doctor/_pantheon_paths, but NOT
-  // by sync-tui.mjs or sync-artifacts.mjs, so it must not pass here.
   const withPantheonHome = findViolations(
-    `spawnSync(process.execPath, [join(ROOT, 'scripts', 'sync-tui.mjs')], {
+    `spawnSync(process.execPath, [join(ROOT, 'scripts', 'postinstall.mjs')], {
       env: { ...process.env, PANTHEON_HOME: sandbox },
     })`,
   )
   assert.equal(
     withPantheonHome.violations.length,
     1,
-    'PANTHEON_HOME does not redirect sync-tui.mjs and must not be accepted',
+    'XDG_CONFIG_HOME is required as redirect by no-live-config-writes',
   )
   const npmWithPantheonHome = findViolations(
     `execFileSync('npm', ['install', tarball], { env: { ...process.env, PANTHEON_HOME: sandbox } })`,
@@ -381,7 +379,7 @@ test('detector does NOT accept a redirect the scripts ignore', () => {
   assert.equal(
     npmWithPantheonHome.violations.length,
     1,
-    'the npm lifecycle reaches sync-tui, which ignores PANTHEON_HOME',
+    'npm lifecycle must redirect via XDG_CONFIG_HOME',
   )
 })
 
@@ -392,8 +390,9 @@ test('--ignore-scripts only excuses npm, never a direct script spawn', () => {
     [],
   )
   assert.equal(
-    findViolations(`spawnSync(node, [join(ROOT,'scripts','sync-tui.mjs'), '--ignore-scripts'], {})`)
-      .violations.length,
+    findViolations(
+      `spawnSync(node, [join(ROOT,'scripts','postinstall.mjs'), '--ignore-scripts'], {})`,
+    ).violations.length,
     1,
     '--ignore-scripts is meaningless to a direct node spawn and must not excuse it',
   )
@@ -408,7 +407,7 @@ test('detector accepts a real XDG_CONFIG_HOME redirect', () => {
     [],
   )
   assert.deepEqual(
-    findViolations(`spawnSync(process.execPath, [join(ROOT,'scripts','sync-tui.mjs')], {
+    findViolations(`spawnSync(process.execPath, [join(ROOT,'scripts','postinstall.mjs')], {
       env: { ...process.env, XDG_CONFIG_HOME: sandboxConfig },
     })`).violations,
     [],
@@ -416,9 +415,8 @@ test('detector accepts a real XDG_CONFIG_HOME redirect', () => {
 })
 
 test('detector does not flag inert shapes', () => {
-  // postinstall.mjs prints a banner and checks the Node major; it writes nothing.
   assert.deepEqual(
-    findViolations(`spawnSync(node, [join(ROOT,'scripts','postinstall.mjs')], {})`).violations,
+    findViolations(`spawnSync(node, [join(ROOT,'scripts','doctor.mjs')], {})`).violations,
     [],
   )
   // npm pack runs prepack, which builds; it writes no config dir.
@@ -454,7 +452,7 @@ subprocess.run(['npm', 'install', tarball], check=True)
 `
   assert.equal(findPythonViolations(bad).violations.length, 1)
   const badScript = `import subprocess
-subprocess.run(['node', 'scripts/sync-tui.mjs'], check=True)
+subprocess.run(['node', 'scripts/postinstall.mjs'], check=True)
 `
   assert.equal(findPythonViolations(badScript).violations.length, 1)
   const good = `import os, subprocess

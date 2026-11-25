@@ -53,6 +53,8 @@ export interface UpdatesSectionInput {
   legacyScanning?: boolean
   /** Whether a legacy cleanup is currently running. */
   legacyCleaning?: boolean
+  /** Whether destructive store purge is armed for confirmation. */
+  confirmPurge?: boolean
   /** Outcome notice from the last scan/clean action. */
   legacyNotice?: string
   nowMs?: number
@@ -219,6 +221,25 @@ export function buildUpdatesTab(input: UpdatesSectionInput): SettingsTab {
       note: isPt
         ? 'migra memória/contexto/goals antes; preserva agentes/skills custom'
         : 'migrates memory/context/goals first · preserves custom agents/skills',
+    },
+    {
+      id: 'legacy.purge',
+      name: isPt ? 'Apagar dados (.pantheon)' : 'Purge Pantheon data',
+      value: input.confirmPurge
+        ? isPt
+          ? 'CONFIRMAR: Enter apaga tudo'
+          : 'CONFIRM: Enter deletes stores'
+        : isPt
+          ? 'resetar dados locais'
+          : 'reset local stores',
+      action: 'legacy-purge',
+      note: input.confirmPurge
+        ? isPt
+          ? 'pressione Enter de novo para apagar .pantheon (memória, goals, backups); mude de linha para cancelar'
+          : 'press Enter again to erase .pantheon (memory, goals, backups); move selection to cancel'
+        : isPt
+          ? 'remove .pantheon/ (memória, goals, backups) + configs legadas; desinstale o plugin com `opencode plugin remove pantheon-opencode`'
+          : 'removes .pantheon/ (memory, goals, backups) + legacy configs; remove plugin via `opencode plugin remove pantheon-opencode`',
     },
   ]
 

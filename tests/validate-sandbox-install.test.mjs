@@ -67,10 +67,30 @@ test('sandbox install proof rejects a stale npm package ref even when the packag
   }
 })
 
-test('sandbox install proof rejects a same-version package with stale installer source', () => {
+test('sandbox install proof accepts native package specifier as well as installed plugin dir', () => {
   const paths = fixture()
   try {
-    writeFileSync(join(paths.install, 'scripts/install/opencode.mjs'), 'stale installer source\n')
+    writeFileSync(paths.config, JSON.stringify({ plugins: ['pantheon-opencode'] }))
+    assert.equal(
+      validateSandboxInstall({
+        repoDir: paths.repo,
+        installDir: paths.install,
+        projectConfig: paths.config,
+      }).status,
+      'PASS',
+    )
+  } finally {
+    rmSync(paths.root, { recursive: true, force: true })
+  }
+})
+
+test('sandbox install proof rejects a stale same-version package with drifted migration source', () => {
+  const paths = fixture()
+  try {
+    writeFileSync(
+      join(paths.install, 'src/pantheon/legacy-store-migration.mjs'),
+      'stale migration source\n',
+    )
     assert.throws(
       () =>
         validateSandboxInstall({
@@ -78,7 +98,7 @@ test('sandbox install proof rejects a same-version package with stale installer 
           installDir: paths.install,
           projectConfig: paths.config,
         }),
-      /installed package source differs from checkout: scripts\/install\/opencode\.mjs/,
+      /installed package source differs from checkout: src\/pantheon\/legacy-store-migration\.mjs/,
     )
   } finally {
     rmSync(paths.root, { recursive: true, force: true })

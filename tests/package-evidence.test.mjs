@@ -95,8 +95,8 @@ function makeFixture() {
   for (const path of [
     'src/plugins/tui/dist/tui.js',
     'src/plugins/tui/dist/server.js',
-    'src/plugins/tui/dist/server.js',
-    'bin/pantheon-init.mjs',
+    'src/plugin/index.js',
+    'scripts/postinstall.mjs',
     'scripts/doctor.mjs',
     'scripts/node-engine-policy.mjs',
     'scripts/validate-node-engine-policy.mjs',

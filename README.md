@@ -32,15 +32,17 @@ Requirements: [OpenCode](https://opencode.ai/docs/) **2.x** and Node.js **≥ 26
 ([compatibility](docs/COMPATIBILITY.md)).
 
 ```bash
-# Primary (Recommended) — native OpenCode 2.x plugin (works in any directory, no init required)
+# Native OpenCode 2.x plugin (zero copied clutter, works in any directory)
 opencode plugin add pantheon-opencode
 
-# Check health, updates & clean legacy/stale caches inside OpenCode:
-#   /pantheon-settings -> Updates (or Legacy & Drift Cleanup), /pantheon-updates, /pantheon-whats-new
+# Upgrade later:
+opencode plugin update pantheon-opencode
 
-# Deprecated legacy CLI fallback (optional Python MCP runtime only):
-# npm install -g pantheon-opencode && pantheon-opencode init --yes
+# Check health, clean legacy Python MCPs/TUI copies, or purge .pantheon stores inside OpenCode:
+#   /pantheon-settings -> Updates (Legacy, Drift & Cleanup), /pantheon-updates, /pantheon-whats-new
 ```
+
+> **Note:** The legacy `npx pantheon-opencode` CLI installer was retired in v2.2.2 in favor of OpenCode's native plugin manager. Existing legacy Python MCPs, old copied TUI folders, and `.venv`/`.py` artifacts are cleaned automatically on install/boot.
 
 ## Usage
 

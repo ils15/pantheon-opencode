@@ -109,30 +109,16 @@ test('runner script exists and is executable, with valid bash syntax', () => {
   assert.equal(res.status, 0, `bash -n failed:\n${res.stderr}`)
 })
 
-test('sandbox global and project init opt into runtime without dropping default components', () => {
-  const globalInitCommands =
-    RUNNER_SRC.match(
-      /^[ \t]*(?:pantheon-opencode|"\$pan") init --headless[^\\\n]*(?:\\\n[^\n]*)?/gm,
-    ) ?? []
-  assert.equal(globalInitCommands.length, 2, 'both sandbox global-init paths must be covered')
-  for (const command of globalInitCommands) {
-    assert.match(
-      command,
-      /--components(?:=|\s+)agents,skills,instructions,commands,plugins,runtime(?:\s|$)/,
-      `sandbox global init must preserve default components and explicitly add runtime: ${command}`,
-    )
-  }
-
-  const projectInitCommands =
-    RUNNER_SRC.match(/^[ \t]*\(cd "\$dir" && "\$pan" init --project[^\n]*$/gm) ?? []
-  assert.equal(projectInitCommands.length, 1, 'project initialization path must be covered')
-  for (const command of projectInitCommands) {
-    assert.match(
-      command,
-      /--components(?:=|\s+)agents,skills,instructions,commands,plugins,runtime(?:\s|\)|$)/,
-      `sandbox project init must preserve default components and explicitly add runtime: ${command}`,
-    )
-  }
+test('sandbox uses native plugin-only configuration without invoking retired pantheon-opencode init', () => {
+  const legacyInitInvocations =
+    RUNNER_SRC.match(/^[ \t]*(?:pantheon-opencode|"\$pan") init\b/gm) ?? []
+  assert.equal(
+    legacyInitInvocations.length,
+    0,
+    `sandbox must not invoke retired CLI init: ${legacyInitInvocations.join(', ')}`,
+  )
+  assert.match(RUNNER_SRC, /Legacy Upgrade Auto-Cleanup Verification/)
+  assert.match(RUNNER_SRC, /scripts\/doctor\.mjs/)
 })
 
 test('sandbox overrides inherited XDG paths including runtime and polls its private OpenCode log', (t) => {
@@ -284,7 +270,24 @@ test('direct CI prepare-and-run keeps the launched V2 process and MCP log on the
     chmodSync(path, 0o755)
   }
 
-  writeExecutable('npm', '#!/bin/sh\nexit 0\n')
+  writeExecutable(
+    'npm',
+    `#!/bin/sh
+set -eu
+if [ "\${1:-}" = install ] && [ "\${2:-}" = -g ]; then
+  pkg_dir="$npm_config_prefix/lib/node_modules/pantheon-opencode"
+  mkdir -p "$pkg_dir/src/pantheon" "$pkg_dir/src/plugin" "$pkg_dir/src/agents" "$pkg_dir/scripts"
+  cp "${ROOT}/package.json" "$pkg_dir/package.json"
+  cp "${ROOT}/scripts/postinstall.mjs" "$pkg_dir/scripts/postinstall.mjs"
+  cp "${ROOT}/scripts/validate-sandbox-install.mjs" "$pkg_dir/scripts/validate-sandbox-install.mjs"
+  cp "${ROOT}/src/pantheon/legacy-store-migration.mjs" "$pkg_dir/src/pantheon/legacy-store-migration.mjs"
+  cp "${ROOT}/src/plugin.ts" "$pkg_dir/src/plugin.ts"
+  cp "${ROOT}/src/agents/roster.json" "$pkg_dir/src/agents/roster.json"
+  printf '#!/usr/bin/env sh\\nexit 0\\n' > "$pkg_dir/scripts/doctor.mjs"
+fi
+exit 0
+`,
+  )
   writeExecutable('node', '#!/bin/sh\nexit 0\n')
   writeExecutable(
     'curl',

@@ -37,6 +37,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { load } from 'js-yaml'
+import { cleanLegacyOpenCodeConfigs } from '../src/pantheon/legacy-store-migration.mjs'
 import { listV2UnsupportedFeatures } from '../src/pantheon/unsupported.mjs'
 import { resolveLocalDecisionBudgetDbPath } from './decision-router-budget.mjs'
 import { inspectDecisionBudget } from './decision-router-budget-gates.mjs'
@@ -47,9 +48,44 @@ import {
   resolveUserDecisionRouterConfigPath,
 } from './install/decision-router-config.mjs'
 import { classifyFileInventory } from './install/file-inventory.mjs'
-import { staleTuiRefs } from './install/plugin.mjs'
 import { readState } from './install/state.mjs'
 import { isSupportedNodeVersion, MIN_SUPPORTED_NODE_VERSION } from './node-engine-policy.mjs'
+
+const TUI_STALE_SUFFIXES = new Set([
+  'plugins/pantheon-tui',
+  'plugins/pantheon-tui/dist/tui.tsx',
+  'plugins/pantheon-tui/dist/tui.js',
+  'npx pantheon-tui',
+  'npx -y pantheon-tui',
+  'npx:pantheon-tui',
+])
+
+function staleTuiRefs(pluginArray, knownPantheonPaths = []) {
+  const known = new Set(
+    [
+      join(ROOT, 'src', 'plugins', 'tui'),
+      join(ROOT, 'src', 'plugins', 'tui', 'dist', 'tui.tsx'),
+      join(ROOT, 'src', 'plugins', 'tui', 'dist', 'tui.js'),
+      ...knownPantheonPaths,
+    ]
+      .filter((p) => typeof p === 'string')
+      .map((p) => p.replaceAll('\\', '/')),
+  )
+  return (Array.isArray(pluginArray) ? pluginArray : []).filter((ref) => {
+    if (typeof ref !== 'string') return false
+    const norm = ref.replaceAll('\\', '/')
+    if (TUI_STALE_SUFFIXES.has(norm)) return true
+    if (
+      /^npx(?:\s+-y)?\s+pantheon-tui(?:@[A-Za-z0-9._-]+)?$/i.test(norm) ||
+      /^npx:pantheon-tui(?:@[A-Za-z0-9._-]+)?$/i.test(norm) ||
+      /(?:^|\/)\.npm\/_npx\/[^/]+\/node_modules\/pantheon-tui(?:\/|$)/i.test(norm)
+    ) {
+      return true
+    }
+    if (known.has(norm)) return true
+    return isAbsolute(norm) && known.has(resolve(norm).replaceAll('\\', '/'))
+  })
+}
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -279,10 +315,69 @@ function getCanonicalAgentNames() {
  * @param {string} filePath
  * @returns {object|null}
  */
+function stripJsoncComments(text) {
+  let out = ''
+  let inString = false
+  let quote = ''
+  let escaped = false
+  let inLineComment = false
+  let inBlockComment = false
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    const next = text[i + 1]
+    if (inLineComment) {
+      if (ch === '\n') {
+        inLineComment = false
+        out += ch
+      }
+      continue
+    }
+    if (inBlockComment) {
+      if (ch === '*' && next === '/') {
+        inBlockComment = false
+        i++
+      }
+      continue
+    }
+    if (inString) {
+      out += ch
+      if (escaped) {
+        escaped = false
+      } else if (ch === '\\') {
+        escaped = true
+      } else if (ch === quote) {
+        inString = false
+      }
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      inString = true
+      quote = ch
+      out += ch
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      inLineComment = true
+      i++
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      inBlockComment = true
+      i++
+      continue
+    }
+    out += ch
+  }
+  return out.replace(/,\s*([}\]])/g, '$1')
+}
+
 function readJson(filePath) {
   try {
     if (!existsSync(filePath)) return null
     const raw = readFileSync(filePath, 'utf8')
+    if (filePath.endsWith('.jsonc')) {
+      return JSON.parse(stripJsoncComments(raw))
+    }
     return JSON.parse(raw)
   } catch {
     return null
@@ -337,12 +432,17 @@ export function resolveOpenCodeConfigDir(env = process.env) {
  * @returns {{label:string, path:string, data:object}[]}
  */
 export function collectMcpConfigs(args) {
-  const candidates = [{ label: 'project root', path: join(args.target, 'opencode.json') }]
+  const candidates = [
+    { label: 'project root', path: join(args.target, 'opencode.json') },
+    { label: 'project root (jsonc)', path: join(args.target, 'opencode.jsonc') },
+  ]
   // The package's own template is useful when doctor is run from the
   // repository, but must not be treated as a user's config from an installed
   // package. Otherwise every global/project sandbox reports false MCP errors.
-  if (resolve(args.target) === resolve(ROOT))
+  if (resolve(args.target) === resolve(ROOT)) {
     candidates.push({ label: 'repository root', path: join(ROOT, 'opencode.json') })
+    candidates.push({ label: 'repository root (jsonc)', path: join(ROOT, 'opencode.jsonc') })
+  }
 
   // OpenCode resolves user configuration independently of cwd. Keep the
   // project-local .opencode config for repository checks, but always include
@@ -352,8 +452,17 @@ export function collectMcpConfigs(args) {
     path: join(args.target, '.opencode', 'opencode.json'),
   })
   candidates.push({
+    label: 'project .opencode config (jsonc)',
+    path: join(args.target, '.opencode', 'opencode.jsonc'),
+  })
+  const userConfigDir = resolveOpenCodeConfigDir(args.env ?? process.env)
+  candidates.push({
     label: 'user config',
-    path: join(resolveOpenCodeConfigDir(args.env ?? process.env), 'opencode.json'),
+    path: join(userConfigDir, 'opencode.json'),
+  })
+  candidates.push({
+    label: 'user config (jsonc)',
+    path: join(userConfigDir, 'opencode.jsonc'),
   })
 
   const configs = []
@@ -513,14 +622,98 @@ function isValidMcpServerEntry(entry, layout) {
   )
 }
 
+function isPythonMcpCommand(command) {
+  if (!Array.isArray(command) || command.length === 0) return false
+  const exe = typeof command[0] === 'string' ? command[0] : ''
+  const base = basename(exe).toLowerCase()
+  const usesPythonExe =
+    base === 'python' ||
+    base === 'python3' ||
+    base === 'python.exe' ||
+    base.startsWith('python3.') ||
+    exe.replaceAll('\\', '/').includes('.venv')
+  const hasPyArg = command.slice(1).some((arg) => typeof arg === 'string' && arg.endsWith('.py'))
+  return usesPythonExe || hasPyArg
+}
+
+function hasConfiguredPythonMcp(configs) {
+  for (const cfg of configs) {
+    for (const [, { entry, layout }] of getMcpServerEntryRecords(cfg.data?.mcp)) {
+      if (!isValidMcpServerEntry(entry, layout) || entry.type !== 'local') continue
+      if (isPythonMcpCommand(entry.command)) return true
+    }
+  }
+  return false
+}
+
+function hasConfiguredMcpServer(configs, serverName) {
+  return configs.some((cfg) => getMcpServerEntryRecords(cfg.data?.mcp).has(serverName))
+}
+
+export function checkLegacyConfigs(args) {
+  section('B.0 Legacy MCP & Plugin Config Hygiene')
+  const env = args.env ?? process.env
+  const target = resolve(args.target)
+  const initialConfigs = collectMcpConfigs(args)
+  const hasNativePlugin = isPantheonPluginRegistered(initialConfigs)
+
+  const roots = []
+  const seen = new Set()
+  const addRoot = (dir) => {
+    const resolved = resolve(dir)
+    if (seen.has(resolved) || !existsSync(resolved)) return
+    seen.add(resolved)
+    roots.push(resolved)
+  }
+
+  addRoot(resolveOpenCodeConfigDir(env))
+  if (target !== resolve(ROOT)) {
+    addRoot(join(target, '.opencode'))
+    addRoot(target)
+  }
+
+  let totalMcp = 0
+  let totalPlugins = 0
+  for (const rootDir of roots) {
+    const res = cleanLegacyOpenCodeConfigs(rootDir, {
+      dryRun: !args.fix,
+      preserveWorkingPythonMcp: !hasNativePlugin,
+    })
+    for (const fileResult of res.files ?? []) {
+      const mcpCount = fileResult.removedMcp?.length ?? 0
+      const pluginCount = fileResult.removedPlugins?.length ?? 0
+      totalMcp += mcpCount
+      totalPlugins += pluginCount
+      if (args.fix && fileResult.changed) {
+        pass(
+          `Cleaned legacy config entries in ${fileResult.path} (MCP: ${mcpCount}, plugins: ${pluginCount})`,
+        )
+      } else if (mcpCount > 0 || pluginCount > 0) {
+        warn(
+          `${fileResult.path}: found deprecated/broken Pantheon entries (MCP: ${fileResult.removedMcp.join(', ') || 'none'}; plugins: ${pluginCount}) — run \`npx pantheon-opencode doctor --fix\` or \`npx pantheon-opencode prune --python --apply\``,
+        )
+      }
+    }
+  }
+
+  if (totalMcp === 0 && totalPlugins === 0) {
+    pass('No deprecated or broken Pantheon MCP/plugin config entries detected')
+  }
+}
+
 function checkMcpConfig(args) {
   section('B. MCP Configuration')
 
   const configs = collectMcpConfigs(args)
+  const hasNativePlugin = isPantheonPluginRegistered(configs)
   // This required-server check tests config-entry presence only. It does not
   // verify enabled state, command/transport usability, connectivity, or health.
+  // When the native OpenCode 2.x plugin is registered, all core tools run
+  // in-process so external Pantheon MCPs are optional.
   const requiredMcpNames =
-    args.profile === 'lite' ? [] : ['pantheon-memory', 'pantheon-resources', 'pantheon-persistence']
+    args.profile === 'lite' || hasNativePlugin
+      ? []
+      : ['pantheon-memory', 'pantheon-resources', 'pantheon-persistence']
 
   if (configs.length === 0) {
     if (requiredMcpNames.length > 0) {
@@ -540,7 +733,10 @@ function checkMcpConfig(args) {
     if (!rawMcp || typeof rawMcp !== 'object' || Array.isArray(rawMcp)) {
       if (requiredMcpNames.length > 0)
         error(`${cfg.label}: required MCPs missing — no "mcp" section`)
-      else info(`${cfg.label}: no "mcp" section (${args.profile} profile — optional)`)
+      else
+        info(
+          `${cfg.label}: no "mcp" section (${hasNativePlugin ? 'native plugin active — MCPs optional' : `${args.profile} profile — optional`})`,
+        )
       continue
     }
     const mcpRecords = getMcpServerEntryRecords(rawMcp)
@@ -769,8 +965,9 @@ function mcpInitializeSmoke(command, cwd, timeoutMs) {
 async function checkMcpRuntimeSmoke(args) {
   section('B.6 MCP Runtime Smoke')
 
+  const configs = collectMcpConfigs(args)
   const local = []
-  for (const cfg of collectMcpConfigs(args)) {
+  for (const cfg of configs) {
     for (const [name, { entry, layout }] of getMcpServerEntryRecords(cfg.data.mcp)) {
       if (!isValidMcpServerEntry(entry, layout) || entry.type !== 'local') continue
       const cwd = resolveMcpCwd(entry, cfg.path)
@@ -782,8 +979,13 @@ async function checkMcpRuntimeSmoke(args) {
   }
 
   if (local.length === 0) {
-    if (args.profile === 'lite') {
-      info('No local MCP servers found in lite profile — smoke test skipped')
+    const hasNativePlugin = isPantheonPluginRegistered(configs)
+    if (args.profile === 'lite' || hasNativePlugin) {
+      info(
+        hasNativePlugin
+          ? 'Native pantheon-opencode plugin active with no external local MCPs — smoke test skipped'
+          : 'No local MCP servers found in lite profile — smoke test skipped',
+      )
     } else {
       error('No local MCP servers found in any config — required runtime MCPs are missing')
     }
@@ -1164,6 +1366,17 @@ export function validateRequiredRuntimeFile(filePath) {
 function checkVenvLayer(args) {
   section('F. Runtime Layer — Runtime Python & Dependencies')
 
+  const env = args.env ?? process.env
+  const explicitPython =
+    typeof env.PANTHEON_PYTHON === 'string' && env.PANTHEON_PYTHON.trim() !== ''
+  const configs = collectMcpConfigs(args)
+  if (!explicitPython && !hasConfiguredPythonMcp(configs)) {
+    info(
+      'No Python MCP servers configured (using native Node.js / plugin tools) — Python runtime check skipped',
+    )
+    return
+  }
+
   const runtimePython = resolveRuntimePython(args)
 
   if (!isAbsolute(runtimePython) || !existsSync(runtimePython)) {
@@ -1279,10 +1492,14 @@ export function checkCodeModeDir(args) {
     pass(`Code-mode scripts directory exists: ${codeModeDir}`)
     return codeModeDir
   }
+  if (!args.fix) {
+    warn(`Code-mode scripts directory missing: ${codeModeDir}`)
+    return codeModeDir
+  }
   warn(`Code-mode scripts directory missing — creating empty ${codeModeDir}`)
   try {
     mkdirSync(codeModeDir, { recursive: true })
-    info(`Created ${codeModeDir} (run \`pantheon-opencode init --components runtime\` to seed it)`)
+    info(`Created ${codeModeDir} (for legacy pantheon-code-mode setups)`)
   } catch (err) {
     error(`Cannot create code-mode directory ${codeModeDir}: ${err.message}`)
   }
@@ -1652,7 +1869,9 @@ const INSTALLED_PACKAGE_MARKER = '/node_modules/pantheon-opencode/'
  */
 export function resolveInstalledPackageRoot(pluginPath) {
   if (typeof pluginPath !== 'string') return null
-  const normalized = pluginPath.replaceAll('\\', '/')
+  const normalized = pluginPath.replaceAll('\\', '/').replace(/\/$/, '')
+  const bareMarker = '/node_modules/pantheon-opencode'
+  if (normalized.toLowerCase().endsWith(bareMarker)) return normalized
   const index = normalized.toLowerCase().lastIndexOf(INSTALLED_PACKAGE_MARKER.toLowerCase())
   if (index === -1) return null
   return normalized.slice(0, index + INSTALLED_PACKAGE_MARKER.length - 1)
@@ -1900,6 +2119,7 @@ function isManagedRegistrationRef(ref) {
   const normalized = candidate.replaceAll('\\', '/').replace(/\/$/, '')
   if (MANAGED_PLUGIN_IDENTITIES.has(normalized)) return true
   if (pantheonPackageSpecifier(normalized) !== null) return true
+  if (normalized.toLowerCase().endsWith('/node_modules/pantheon-opencode')) return true
   const marker = '/node_modules/pantheon-opencode/'
   if (normalized.toLowerCase().includes(marker)) {
     const suffix = normalized.slice(
@@ -2092,13 +2312,13 @@ export function checkUnsupportedFeatures(args) {
  * @returns {Promise<{isGlobal: boolean, configDir: string, copyDir: string, tuiJsonPath: string}>}
  */
 export async function resolveTuiInstallPaths(args) {
-  const { isGlobalConfigDir, resolveTuiCopyTarget } = await import('./install/opencode.mjs')
-  const isGlobal = isGlobalConfigDir(args.target)
+  const name = basename(resolve(args.target))
+  const isGlobal = name === '.opencode' || name === 'opencode'
   const configDir = isGlobal ? args.target : join(args.target, '.opencode')
   return {
     isGlobal,
     configDir,
-    copyDir: resolveTuiCopyTarget(configDir),
+    copyDir: join(configDir, 'plugins', 'pantheon-tui'),
     tuiJsonPath: join(configDir, 'tui.json'),
   }
 }
@@ -2873,30 +3093,13 @@ async function checkInstallerFileInventory(args) {
     'plugins',
     'runtime',
   ]
-  let desiredFiles = new Map()
-  let desiredUnavailable = true
-  let selectedLayouts = {}
-  try {
-    const { installOpenCode, isGlobalConfigDir } = await import('./install/opencode.mjs')
-    const preview = await installOpenCode(args.target, true, false, selectedComponents, {
-      env: { ...process.env, OPENCODE_VERSION: 'v2' },
-      quiet: true,
-      quietPlan: true,
-      planOnly: true,
-      headless: true,
-    })
-    desiredFiles = new Map(
-      (preview?.files ?? [])
-        .filter((file) => typeof file.outputFingerprint === 'string')
-        .map((file) => [file.path, { sha256: file.outputFingerprint }]),
-    )
-    const layout = isGlobalConfigDir(args.target) ? 'global' : 'project-v2'
-    selectedLayouts = Object.fromEntries(selectedComponents.map((component) => [component, layout]))
-    desiredUnavailable = false
-  } catch {
-    // Doctor remains advisory if a source/layout preview cannot be computed.
-    // The fallback labels equal recorded hashes explicitly, never as current.
-  }
+  const desiredFiles = new Map()
+  const desiredUnavailable = true
+  const name = basename(resolve(args.target))
+  const layout = name === '.opencode' || name === 'opencode' ? 'global' : 'project-v2'
+  const selectedLayouts = Object.fromEntries(
+    selectedComponents.map((component) => [component, layout]),
+  )
   let report
   try {
     report = classifyFileInventory(args.target, state, {
@@ -3156,10 +3359,20 @@ async function main() {
   // Run checks (layer order: Config → Venv → spawn paths → runtime smoke)
   checkNodeRuntime(args)
   checkAgentFiles(args)
+  checkLegacyConfigs(args)
   checkMcpConfig(args)
   checkVenvLayer(args)
-  checkCodeModeDir(args)
-  checkCodeModeManifest(args)
+  const postConfigChecks = collectMcpConfigs(args)
+  if (
+    isPantheonPluginRegistered(postConfigChecks) &&
+    !hasConfiguredMcpServer(postConfigChecks, 'pantheon-code-mode')
+  ) {
+    section('F.2 Code-Mode Scripts')
+    info('Native pantheon-opencode plugin active without external pantheon-code-mode MCP — skipped')
+  } else {
+    checkCodeModeDir(args)
+    checkCodeModeManifest(args)
+  }
   checkInstallVersionDrift(args)
   checkPathShadowing(args)
   checkPluginVersionDrift(args)

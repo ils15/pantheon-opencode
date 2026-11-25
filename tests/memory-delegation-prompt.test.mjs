@@ -23,7 +23,6 @@ const architectureGuide = readPrompt('../docs/ARCHITECTURE.md')
 const memoryGuide = readPrompt('../docs/MEMORY.md')
 const mcpGuide = readPrompt('../docs/mcp-tools.md')
 const agentMcpGuide = readPrompt('../docs/MCP.md')
-const memoryInstaller = readPrompt('../scripts/install-mcp.mjs')
 const generatedAgents = readPrompt('../AGENTS.md')
 const delegationRoleDocs = Object.fromEntries(
   ['athena', 'hermes', 'demeter', 'hephaestus'].map((agent) => [
@@ -227,9 +226,6 @@ test('memory docs and prompts state the current storage, privacy, and grant cont
   assert.doesNotMatch(zeusMemoryOps, /The Zeus root\s+in this session exposes/i)
 
   assert.match(agentMcpGuide, /installed per-agent allowlists[\s\S]*not[\s\S]*guarantee/i)
-  assert.match(memoryInstaller, /SQLite memory with FTS5\/BM25 keyword search/i)
-  assert.match(memoryInstaller, /no embedding\/vector search/i)
-  assert.doesNotMatch(memoryInstaller, /semantic search|knowledge graph|compression|verification/i)
 })
 
 test('Mnemosyne MCP allowlist names only the registered memory tools', () => {

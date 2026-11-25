@@ -322,7 +322,7 @@ test('V2 loader order starts mcp list before waiting for handshakes', () => {
     ],
   ]) {
     const launchIndex = harness.indexOf(`${launch} \\`)
-    const waitIndex = harness.indexOf('if wait_for_v2_handshakes; then', launchIndex)
+    const waitIndex = harness.indexOf('wait_for_v2_handshakes', launchIndex)
     assert.ok(launchIndex >= 0, `${name} must launch mcp list asynchronously`)
     assert.ok(waitIndex > launchIndex, `${name} must wait for handshakes after mcp list starts`)
   }

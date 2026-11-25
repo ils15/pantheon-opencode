@@ -13,16 +13,19 @@
  */
 
 import {
+  chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 export type LegacyScope = 'global' | 'project'
@@ -95,8 +98,10 @@ const CANONICAL_AGENT_MD_FILES: readonly string[] = Object.freeze([
 const CANONICAL_COMMAND_MD_FILES: readonly string[] = Object.freeze([
   'pantheon.md',
   'pantheon-audit.md',
+  'pantheon-consolidate.md',
   'pantheon-deepwork.md',
   'pantheon-focus.md',
+  'pantheon-forge.md',
   'pantheon-model.md',
   'pantheon-optimize.md',
   'pantheon-settings.md',
@@ -136,6 +141,289 @@ const LEGACY_INSTRUCTION_FILES: readonly string[] = Object.freeze([
   'zeus-orchestration.instructions.md',
   'zeus-workflow.instructions.md',
 ])
+
+const PANTHEON_LEGACY_MCP_NAMES = new Set([
+  'pantheon-resources',
+  'pantheon-code-mode',
+  'pantheon-memory',
+  'pantheon-persistence',
+  'pantheon-vision',
+])
+
+const LEGACY_PYTHON_MCP_SCRIPTS = new Set([
+  'mcp_resources.py',
+  'mcp_resources_server.py',
+  'code_mode.py',
+  'code_mode_server.py',
+  'memory_mcp.py',
+  'memory_mcp_server.py',
+  'mcp_persistence.py',
+  'mcp_persistence_server.py',
+  'pantheon_vision.py',
+  'pantheon_vision_server.py',
+])
+
+const LEGACY_PYTHON_RUNTIME_SCRIPTS: readonly string[] = Object.freeze([
+  ...LEGACY_PYTHON_MCP_SCRIPTS,
+  '_pantheon_paths.py',
+  'eval_store.py',
+  'mcp_codemap_module.py',
+  'themis_heuristic_scan.py',
+  'scrub-secrets.py',
+])
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function stripJsonCommentsAndTrailingCommas(raw: string): string {
+  let out = ''
+  let inString = false
+  let escaped = false
+  for (let i = 0; i < raw.length; i += 1) {
+    const ch = raw[i]
+    if (inString) {
+      out += ch
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+      out += ch
+      continue
+    }
+    if (ch === '/' && raw[i + 1] === '/') {
+      while (i < raw.length && raw[i] !== '\n') i += 1
+      if (i < raw.length) out += '\n'
+      continue
+    }
+    if (ch === '/' && raw[i + 1] === '*') {
+      i += 2
+      while (i < raw.length && !(raw[i] === '*' && raw[i + 1] === '/')) i += 1
+      i += 1
+      continue
+    }
+    out += ch
+  }
+  return out.replace(/,\s*([}\]])/g, '$1')
+}
+
+function isPantheonMcpServer(name: string, entry: unknown): boolean {
+  if (PANTHEON_LEGACY_MCP_NAMES.has(name)) return true
+  if (!isPlainRecord(entry)) return false
+  return ['managed-by', 'managedBy', 'owner'].some(
+    (k) => typeof entry[k] === 'string' && /^pantheon(?:-|$)/i.test(String(entry[k])),
+  )
+}
+
+function isLegacyOrBrokenPantheonMcp(
+  name: string,
+  entry: unknown,
+  configDir: string,
+): { remove: boolean; isPython: boolean } {
+  if (!isPantheonMcpServer(name, entry) || !isPlainRecord(entry)) {
+    return { remove: false, isPython: false }
+  }
+  const cmdList = Array.isArray(entry.command)
+    ? entry.command.filter((x): x is string => typeof x === 'string')
+    : typeof entry.command === 'string'
+      ? [entry.command]
+      : []
+  const argList = Array.isArray(entry.args)
+    ? entry.args.filter((x): x is string => typeof x === 'string')
+    : []
+  const parts = [...cmdList, ...argList]
+  const isPythonScript = parts.some((p) =>
+    LEGACY_PYTHON_MCP_SCRIPTS.has(basename(p.replaceAll('\\', '/'))),
+  )
+  const exe = parts[0]
+  const isPythonBin =
+    typeof exe === 'string' && /(?:^|[\\/])python(?:\d+(?:\.\d+)*)?(?:\.exe)?$/i.test(exe)
+  const isVenvPath = parts.some((p) => /(?:^|[\\/])\.venv(?:[\\/]|$)/.test(p))
+  const isPython = isPythonScript || isPythonBin || isVenvPath
+
+  const cwd =
+    typeof entry.cwd === 'string' && entry.cwd.trim() !== ''
+      ? resolve(configDir, entry.cwd)
+      : configDir
+  const hasMissingExe =
+    typeof exe === 'string' &&
+    (exe.includes('/') || exe.includes('\\')) &&
+    !existsSync(isAbsolute(exe) ? exe : resolve(cwd, exe))
+  const hasMissingScript = parts.slice(1).some((p) => {
+    if (!/\.(?:py|mjs|js|ts)$/i.test(p) || p.startsWith('-')) return false
+    return !existsSync(isAbsolute(p) ? p : resolve(cwd, p))
+  })
+  const isLocal = entry.type === 'local' || entry.type === 'stdio' || entry.type === undefined
+  const isBrokenLocal = isLocal && (hasMissingExe || hasMissingScript)
+  return { remove: isPython || isBrokenLocal, isPython }
+}
+
+function getAuditPluginRef(entry: unknown): string | null {
+  if (typeof entry === 'string') return entry
+  if (isPlainRecord(entry) && typeof entry.package === 'string') return entry.package
+  return null
+}
+
+function isAuditPantheonPluginRef(ref: string | null): boolean {
+  if (!ref) return false
+  const norm = ref.replaceAll('\\', '/')
+  return (
+    /^pantheon-opencode(?:\/.*)?$/i.test(norm) ||
+    /^pantheon-tui$/i.test(norm) ||
+    /^plugins\/pantheon-tui$/i.test(norm) ||
+    /pantheon-hooks(?:\.(?:ts|js|mjs))?$/i.test(norm) ||
+    /(?:^|\/)src\/plugin\.ts$/i.test(norm) ||
+    /(?:^|\/)pantheon-opencode\/src\/plugin$/i.test(norm) ||
+    /(?:^|\/)plugins\/pantheon-tui$/i.test(norm)
+  )
+}
+
+function isAuditLegacyPluginEntry(
+  entry: unknown,
+  configDir: string,
+  singularKey: boolean,
+  hasNpmNativePlugin: boolean,
+): boolean {
+  const ref = getAuditPluginRef(entry)
+  if (!ref || !isAuditPantheonPluginRef(ref)) return false
+  if (singularKey) return true
+  const norm = ref.replaceAll('\\', '/')
+  if (/pantheon-hooks(?:\.(?:ts|js|mjs))?$/i.test(norm)) return true
+  if (/(?:^|\/)src\/plugin\.ts$/i.test(norm)) return true
+  if (
+    hasNpmNativePlugin &&
+    (/^pantheon-tui$/i.test(norm) ||
+      /^plugins\/pantheon-tui$/i.test(norm) ||
+      /(?:^|\/)plugins\/pantheon-tui$/i.test(norm))
+  ) {
+    return true
+  }
+  const isPackageSubpath =
+    norm === 'pantheon-opencode' ||
+    norm === 'pantheon-opencode/plugin' ||
+    norm === 'pantheon-opencode/tui'
+  if (!isPackageSubpath && (norm.startsWith('/') || norm.startsWith('.') || norm.includes('/'))) {
+    const targetPath = isAbsolute(ref) ? ref : resolve(configDir, ref)
+    if (!existsSync(targetPath)) return true
+  }
+  return false
+}
+
+function inspectAuditConfigFile(filePath: string, configDir: string) {
+  if (!existsSync(filePath)) return null
+  try {
+    const st = lstatSync(filePath)
+    if (st.isSymbolicLink() || !st.isFile()) return null
+    const raw = readFileSync(filePath, 'utf8')
+    const parsed = JSON.parse(
+      filePath.endsWith('.jsonc') ? stripJsonCommentsAndTrailingCommas(raw) : raw,
+    ) as unknown
+    if (!isPlainRecord(parsed)) return null
+
+    const legacyMcps: Array<{ layout: 'v1' | 'v2'; name: string }> = []
+    if (basename(filePath) !== 'tui.json' && isPlainRecord(parsed.mcp)) {
+      const servers = isPlainRecord(parsed.mcp.servers) ? parsed.mcp.servers : null
+      if (servers) {
+        for (const [name, entry] of Object.entries(servers)) {
+          if (isLegacyOrBrokenPantheonMcp(name, entry, configDir).remove) {
+            legacyMcps.push({ layout: 'v2', name })
+          }
+        }
+      }
+      for (const [name, entry] of Object.entries(parsed.mcp)) {
+        if (servers && name === 'servers') continue
+        if (isLegacyOrBrokenPantheonMcp(name, entry, configDir).remove) {
+          legacyMcps.push({ layout: 'v1', name })
+        }
+      }
+    }
+
+    const plural = Array.isArray(parsed.plugins) ? parsed.plugins : []
+    const hasNpmNativePlugin = plural.some((e) => {
+      const ref = getAuditPluginRef(e)?.trim()
+      return ref === 'pantheon-opencode' || ref === 'pantheon-opencode/plugin'
+    })
+    const legacyPlugins: Array<{ key: 'plugin' | 'plugins'; index: number }> = []
+    if (Array.isArray(parsed.plugin)) {
+      parsed.plugin.forEach((entry, index) => {
+        if (isAuditLegacyPluginEntry(entry, configDir, true, hasNpmNativePlugin)) {
+          legacyPlugins.push({ key: 'plugin', index })
+        }
+      })
+    }
+    if (Array.isArray(parsed.plugins)) {
+      parsed.plugins.forEach((entry, index) => {
+        if (isAuditLegacyPluginEntry(entry, configDir, false, hasNpmNativePlugin)) {
+          legacyPlugins.push({ key: 'plugins', index })
+        }
+      })
+    }
+    return { filePath, raw, parsed, legacyMcps, legacyPlugins }
+  } catch {
+    return null
+  }
+}
+
+function cleanAuditConfigFile(filePath: string, configDir: string, backupScopeRoot: string): void {
+  const inspected = inspectAuditConfigFile(filePath, configDir)
+  if (!inspected || (inspected.legacyMcps.length === 0 && inspected.legacyPlugins.length === 0)) {
+    return
+  }
+  const cfg = structuredClone(inspected.parsed) as Record<string, unknown>
+  if (isPlainRecord(cfg.mcp)) {
+    const mcpObj = cfg.mcp as Record<string, unknown>
+    for (const item of inspected.legacyMcps) {
+      if (item.layout === 'v2' && isPlainRecord(mcpObj.servers)) {
+        delete (mcpObj.servers as Record<string, unknown>)[item.name]
+      } else if (item.layout === 'v1') {
+        delete mcpObj[item.name]
+      }
+    }
+    if (isPlainRecord(mcpObj.servers) && Object.keys(mcpObj.servers).length === 0) {
+      delete mcpObj.servers
+    }
+    if (Object.keys(mcpObj).length === 0) delete cfg.mcp
+  }
+  for (const key of ['plugin', 'plugins'] as const) {
+    if (!Array.isArray(cfg[key])) continue
+    const drop = new Set(inspected.legacyPlugins.filter((p) => p.key === key).map((p) => p.index))
+    if (drop.size === 0) continue
+    cfg[key] = (cfg[key] as unknown[]).filter((_, i) => !drop.has(i))
+    if (
+      (cfg[key] as unknown[]).length === 0 &&
+      (key === 'plugin' || basename(filePath) === 'tui.json' || basename(filePath) === 'cli.json')
+    ) {
+      delete cfg[key]
+    }
+  }
+  const next = `${JSON.stringify(cfg, null, 2)}\n`
+  if (next === inspected.raw) return
+  try {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const bdir = join(backupScopeRoot, '.pantheon', 'backups', `legacy-migration-${stamp}`)
+    mkdirSync(bdir, { recursive: true, mode: 0o700 })
+    chmodSync(bdir, 0o700)
+    const bfile = join(bdir, basename(filePath))
+    writeFileSync(bfile, inspected.raw, { encoding: 'utf8', mode: 0o600 })
+    chmodSync(bfile, 0o600)
+  } catch {
+    /* best effort */
+  }
+  if (
+    (basename(filePath) === 'tui.json' || basename(filePath) === 'cli.json') &&
+    Object.keys(cfg).length === 0
+  ) {
+    rmSync(filePath, { force: true })
+    return
+  }
+  const st = lstatSync(filePath)
+  const tmpPath = `${filePath}.tmp-${process.pid}`
+  writeFileSync(tmpPath, next, { encoding: 'utf8', mode: st.mode & 0o777 })
+  renameSync(tmpPath, filePath)
+}
 
 export function resolveAuditCacheDir(
   env: Record<string, string | undefined> = process.env,
@@ -361,12 +649,71 @@ function collectScopeAudit(
     })
   }
 
-  // 1. Dead V1 hooks & obsolete config files
+  // 1. Dead V1 hooks, obsolete config files, legacy Python MCPs & runtime
   for (const hookName of ['pantheon-hooks.ts', 'pantheon-hooks.js', 'pantheon-hooks.mjs']) {
     addItem(join(configRoot, 'plugins', hookName), 'hooks', 'Obsolete OpenCode V1 hook plugin')
   }
   addItem(join(configRoot, 'tiers.json'), 'v1Obsolete', 'Obsolete V1 model tiers registry')
   addItem(join(baseRoot, 'tiers.json'), 'v1Obsolete', 'Obsolete V1 model tiers registry')
+
+  const configCandidates = new Set<string>()
+  for (const dir of [baseRoot, configRoot]) {
+    for (const fileName of ['opencode.json', 'opencode.jsonc', 'tui.json']) {
+      configCandidates.add(resolve(join(dir, fileName)))
+    }
+  }
+  let removedPythonMcpInConfig = false
+  for (const cfgPath of configCandidates) {
+    const inspected = inspectAuditConfigFile(cfgPath, dirname(cfgPath))
+    if (!inspected) continue
+    for (const mcp of inspected.legacyMcps) {
+      removedPythonMcpInConfig = true
+      items.push({
+        path: `${cfgPath}#legacy-mcp:${mcp.name}`,
+        scope,
+        category: 'v1Obsolete',
+        reason: `Legacy or broken MCP entry (${mcp.name}) in ${basename(cfgPath)}`,
+        bytes: 0,
+      })
+    }
+    if (inspected.legacyPlugins.length > 0) {
+      items.push({
+        path: `${cfgPath}#legacy-plugin`,
+        scope,
+        category: 'hooks',
+        reason: `Legacy or broken Pantheon plugin entry in ${basename(cfgPath)}`,
+        bytes: 0,
+      })
+    }
+  }
+
+  const isRepoCheckout =
+    existsSync(join(configRoot, 'src', 'mcp', 'code_mode.py')) &&
+    existsSync(join(configRoot, 'package.json'))
+  if (!isRepoCheckout && existsSync(configRoot)) {
+    const scriptsDir = join(configRoot, 'scripts')
+    const hasPyScripts =
+      existsSync(scriptsDir) &&
+      LEGACY_PYTHON_RUNTIME_SCRIPTS.some((name) => existsSync(join(scriptsDir, name)))
+    if (existsSync(scriptsDir)) {
+      for (const name of LEGACY_PYTHON_RUNTIME_SCRIPTS) {
+        addItem(
+          join(scriptsDir, name),
+          'v1Obsolete',
+          'Obsolete legacy Python MCP script (replaced by native tools / Node MCP)',
+        )
+      }
+    }
+    const reqVision = join(configRoot, 'requirements-vision.txt')
+    addItem(reqVision, 'v1Obsolete', 'Obsolete Python vision requirements file')
+    const configVenv = join(configRoot, '.venv')
+    if (
+      existsSync(configVenv) &&
+      (hasPyScripts || existsSync(reqVision) || removedPythonMcpInConfig)
+    ) {
+      addItem(configVenv, 'v1Obsolete', 'Obsolete Python virtual environment for legacy MCPs')
+    }
+  }
 
   const pantheonDir = join(baseRoot, '.pantheon')
   addItem(join(pantheonDir, 'fastembed_cache'), 'v1Obsolete', 'Unused legacy fastembed cache')
@@ -507,6 +854,46 @@ function collectScopeAudit(
           ? `Copied TUI plugin v${copiedVersion} drifts from v${runningVersion}`
           : 'Copied TUI directory superseded by npm package export',
       )
+    }
+
+    const routingPath = join(configRoot, 'routing.yml')
+    if (existsSync(routingPath)) {
+      try {
+        if (/pantheon|zeus:|athena:|apollo:/i.test(readFileSync(routingPath, 'utf8'))) {
+          addItem(routingPath, 'redundantAsset', 'Copied routing.yml superseded by bundled roster')
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    const isRepoRoot =
+      existsSync(join(baseRoot, 'package.json')) &&
+      existsSync(join(baseRoot, 'src', 'plugin.ts')) &&
+      existsSync(join(baseRoot, 'src', 'agents', 'roster.json'))
+    const statePaths = [join(configRoot, '.pantheon', 'install-state.json')]
+    if (!isRepoRoot) statePaths.push(join(pantheonDir, 'install-state.json'))
+    for (const statePath of statePaths) {
+      addItem(statePath, 'redundantAsset', 'Legacy CLI installer manifest')
+    }
+    const codeModeDirs = [join(configRoot, '.pantheon', 'code-mode')]
+    if (!isRepoRoot && join(pantheonDir, 'code-mode') !== codeModeDirs[0]) {
+      codeModeDirs.push(join(pantheonDir, 'code-mode'))
+    }
+    for (const cmDir of codeModeDirs) {
+      if (!existsSync(cmDir)) continue
+      try {
+        for (const entry of readdirSync(cmDir)) {
+          if (entry.endsWith('.py') || entry.endsWith('.sh') || entry === 'manifest.json') {
+            addItem(
+              join(cmDir, entry),
+              'v1Obsolete',
+              'Obsolete Python code-mode script (replaced by native tools)',
+            )
+          }
+        }
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -821,11 +1208,33 @@ export function cleanLegacyArtifacts(
   const removed: string[] = []
   const errors: Array<{ readonly path: string; readonly reason: string }> = []
   let reclaimedBytes = 0
+  const cleanedConfigs = new Set<string>()
 
   for (const item of scan.items) {
     if (scopeFilter && item.scope !== scopeFilter) continue
     if (item.path.endsWith('#legacy-vec')) {
       removed.push(item.path)
+      continue
+    }
+    if (item.path.includes('#legacy-mcp:') || item.path.endsWith('#legacy-plugin')) {
+      const cfgPath = item.path.split('#')[0] ?? ''
+      const scopeRoot = item.scope === 'global' ? globalConfigDir : workspaceDir
+      if (!cfgPath || !scopeRoot || !isConfinedWithin(scopeRoot, cfgPath)) {
+        errors.push({ path: item.path, reason: 'Path escapes target scope root' })
+        continue
+      }
+      try {
+        if (!cleanedConfigs.has(cfgPath)) {
+          cleanedConfigs.add(cfgPath)
+          cleanAuditConfigFile(cfgPath, dirname(cfgPath), scopeRoot)
+        }
+        removed.push(item.path)
+      } catch (err) {
+        errors.push({
+          path: item.path,
+          reason: err instanceof Error ? err.message : String(err),
+        })
+      }
       continue
     }
     const scopeRoot = item.scope === 'global' ? globalConfigDir : workspaceDir
@@ -866,6 +1275,73 @@ export function cleanLegacyArtifacts(
     removed,
     reclaimedBytes,
     migratedRecords,
+    errors,
+  }
+}
+
+export function purgeAllPantheonData(
+  options: LegacyAuditOptions & {
+    readonly scope?: 'all' | LegacyScope
+    readonly dryRun?: boolean
+  } = {},
+): LegacyCleanResult {
+  const dryRun = options.dryRun === true
+  const workspaceDir = options.workspaceDir ? resolve(options.workspaceDir) : undefined
+  const globalConfigDir = options.globalConfigDir
+    ? resolve(options.globalConfigDir)
+    : resolveAuditGlobalDir(options.env)
+  const scopeFilter = options.scope && options.scope !== 'all' ? options.scope : null
+
+  const scan = scanLegacyArtifacts({ ...options, includeRedundantCopiedAssets: true })
+  const removed: string[] = []
+  const errors: Array<{ readonly path: string; readonly reason: string }> = []
+  let reclaimedBytes = 0
+
+  if (!dryRun) {
+    const cleanRes = cleanLegacyArtifacts({ ...options, includeRedundantCopiedAssets: true })
+    removed.push(...cleanRes.removed)
+    reclaimedBytes += cleanRes.reclaimedBytes
+    errors.push(...cleanRes.errors)
+  }
+
+  const purgeRoot = (rootDir: string, configRoot: string) => {
+    if (!rootDir || rootDir === '/' || !existsSync(rootDir)) return
+    const isRepo =
+      existsSync(join(rootDir, 'src', 'mcp', 'code_mode.py')) &&
+      existsSync(join(rootDir, 'package.json'))
+    if (isRepo) return
+    for (const store of [join(rootDir, '.pantheon'), join(configRoot, '.pantheon')]) {
+      if (!existsSync(store) || !isConfinedWithin(rootDir, store)) continue
+      const bytes = measurePathBytes(store)
+      try {
+        if (!dryRun) rmSync(store, { recursive: true, force: true })
+        removed.push(store)
+        reclaimedBytes += bytes
+      } catch (err) {
+        errors.push({ path: store, reason: err instanceof Error ? err.message : String(err) })
+      }
+    }
+  }
+
+  if (scopeFilter !== 'project' && globalConfigDir) {
+    purgeRoot(globalConfigDir, globalConfigDir)
+  }
+  if (
+    scopeFilter !== 'global' &&
+    workspaceDir &&
+    (!globalConfigDir || !samePath(workspaceDir, globalConfigDir))
+  ) {
+    purgeRoot(workspaceDir, join(workspaceDir, '.opencode'))
+  }
+  if (dryRun) {
+    for (const item of scan.items) removed.push(item.path)
+    reclaimedBytes += scan.summary.totalBytes
+  }
+
+  return {
+    removed: [...new Set(removed)],
+    reclaimedBytes,
+    migratedRecords: 0,
     errors,
   }
 }

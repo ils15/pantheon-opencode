@@ -568,29 +568,8 @@ test('wiring: the close bind is a gated keymap layer, dismissal marks seen', asy
   assert.match(glue, /enabled: \(\) => open\(\)/, 'the layer is inert while the window is closed')
 })
 
-test('installer: both plugin copies ship CHANGELOG.md at the copy root', async () => {
-  const source = join(root, 'src', 'plugins', 'tui')
-  const expected = readFileSync(join(root, 'CHANGELOG.md'), 'utf8')
-
-  const { copyPluginFiles: syncCopy } = await import(
-    pathToFileURL(join(root, 'scripts/sync-tui.mjs')).href
-  )
-  const syncTarget = tmpDir('sync-copy')
-  try {
-    syncCopy(source, syncTarget)
-    assert.equal(readFileSync(join(syncTarget, 'CHANGELOG.md'), 'utf8'), expected)
-  } finally {
-    rmSync(syncTarget, { recursive: true, force: true })
-  }
-
-  const { copyPluginFiles: installCopy } = await import(
-    pathToFileURL(join(root, 'scripts/install/plugin.mjs')).href
-  )
-  const installTarget = tmpDir('install-copy')
-  try {
-    installCopy(source, installTarget)
-    assert.equal(readFileSync(join(installTarget, 'CHANGELOG.md'), 'utf8'), expected)
-  } finally {
-    rmSync(installTarget, { recursive: true, force: true })
-  }
+test('package: CHANGELOG.md is included in npm files allowlist for WhatsNew', () => {
+  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+  assert.ok(Array.isArray(pkg.files) && pkg.files.includes('CHANGELOG.md'))
+  assert.ok(readFileSync(join(root, 'CHANGELOG.md'), 'utf8').length > 0)
 })

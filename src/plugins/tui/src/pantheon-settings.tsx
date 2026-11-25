@@ -51,6 +51,7 @@ import {
   cleanLegacyArtifacts,
   formatBytes,
   type LegacyAuditSummary,
+  purgeAllPantheonData,
   scanLegacyArtifacts,
 } from './legacy-audit.ts'
 import { handleMouseClick, stopMouseEvent } from './mouse-click'
@@ -897,6 +898,7 @@ function createWindowController(
   const [legacyScanning, setLegacyScanning] = createSignal(false)
   const [legacyCleaning, setLegacyCleaning] = createSignal(false)
   const [legacyNotice, setLegacyNotice] = createSignal<string | undefined>(undefined)
+  const [confirmPurge, setConfirmPurge] = createSignal(false)
   const [changelogItems, setChangelogItems] = createSignal<ChangelogHighlightItem[]>([])
   const [draft, setDraft] = createSignal<SettingsDraft>({})
   const [notice, setNotice] = createSignal<string | undefined>(undefined)
@@ -968,6 +970,7 @@ function createWindowController(
       legacyAudit: legacyAudit(),
       legacyScanning: legacyScanning(),
       legacyCleaning: legacyCleaning(),
+      confirmPurge: confirmPurge(),
       ...(noticeMsg !== undefined ? { legacyNotice: noticeMsg } : {}),
       nowMs: Date.now(),
     }
@@ -1025,6 +1028,7 @@ function createWindowController(
 
   const move = (delta: number) => {
     if (confirmExit()) setConfirmExit(false)
+    if (confirmPurge()) setConfirmPurge(false)
     const list = rows()
     if (list.length === 0) return
     setSelected((current) => Math.min(Math.max(current + delta, 0), list.length - 1))
@@ -1174,6 +1178,48 @@ function createWindowController(
       } catch {}
     } catch {
       setNotice(isPt ? 'falha ao limpar arquivos legados' : 'legacy cleanup failed')
+    } finally {
+      setLegacyCleaning(false)
+    }
+  }
+
+  const purgeLegacyNow = () => {
+    if (legacyCleaning() || legacyScanning()) return
+    const isPt = resolveLanguage(tuiPrefs().layout?.language) === 'pt-BR'
+    if (!confirmPurge()) {
+      setConfirmPurge(true)
+      setNotice(
+        isPt
+          ? '⚠️ Confirmação armada: pressione Enter de novo em "Apagar dados (.pantheon)" para confirmar'
+          : '⚠️ Armed: press Enter again on "Purge Pantheon data" to erase local .pantheon stores',
+      )
+      return
+    }
+    setConfirmPurge(false)
+    setLegacyCleaning(true)
+    try {
+      const auditOpts = {
+        workspaceDir,
+        runningVersion: currentVersion,
+        ...(activeBundlePath ? { activeBundlePath } : {}),
+      }
+      const res = purgeAllPantheonData(auditOpts)
+      const after = scanLegacyArtifacts(auditOpts)
+      setLegacyAudit(after.summary)
+      setLoad(readOverridesLoad(workspaceDir))
+      const msg = isPt
+        ? `purgados ${res.removed.length} item(ns) (${formatBytes(res.reclaimedBytes)}) — use \`opencode plugin remove pantheon-opencode\` para desinstalar`
+        : `purged ${res.removed.length} item(s) (${formatBytes(res.reclaimedBytes)}) — run \`opencode plugin remove pantheon-opencode\` to uninstall`
+      setLegacyNotice(msg)
+      setNotice(`[OK] ${msg}`)
+      try {
+        context.ui.toast?.show?.({
+          variant: res.errors.length > 0 ? 'warning' : 'info',
+          message: msg,
+        })
+      } catch {}
+    } catch {
+      setNotice(isPt ? 'falha ao apagar dados do Pantheon' : 'Pantheon data purge failed')
     } finally {
       setLegacyCleaning(false)
     }
@@ -1467,9 +1513,15 @@ function createWindowController(
       const row = list[index]
       if (row?.action === 'update-check') checkUpdatesNow()
       else if (row?.action === 'update-run') runUpdateNow()
-      else if (row?.action === 'legacy-scan') scanLegacyNow()
-      else if (row?.action === 'legacy-clean') cleanLegacyNow()
-      else if (row) {
+      else if (row?.action === 'legacy-scan') {
+        setConfirmPurge(false)
+        scanLegacyNow()
+      } else if (row?.action === 'legacy-clean') {
+        setConfirmPurge(false)
+        cleanLegacyNow()
+      } else if (row?.action === 'legacy-purge') {
+        purgeLegacyNow()
+      } else if (row) {
         setNotice(undefined)
         setDraft(stageValue(draft(), row, direction))
       }
@@ -1486,9 +1538,15 @@ function createWindowController(
       const row = rows()[selected()]
       if (row?.action === 'update-check') checkUpdatesNow()
       else if (row?.action === 'update-run') runUpdateNow()
-      else if (row?.action === 'legacy-scan') scanLegacyNow()
-      else if (row?.action === 'legacy-clean') cleanLegacyNow()
-      else step(1)
+      else if (row?.action === 'legacy-scan') {
+        setConfirmPurge(false)
+        scanLegacyNow()
+      } else if (row?.action === 'legacy-clean') {
+        setConfirmPurge(false)
+        cleanLegacyNow()
+      } else if (row?.action === 'legacy-purge') {
+        purgeLegacyNow()
+      } else step(1)
     },
     nextTab,
     prevTab: () => {

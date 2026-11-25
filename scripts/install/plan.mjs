@@ -260,11 +260,15 @@ export function formatChangePlan(target, plan, { perFile = true } = {}) {
     lines.push(`  MCP servers (${names.length}): ${servers}`)
   }
   if (plan.runtimeEffects) {
-    const { venv, dependencies } = plan.runtimeEffects
-    lines.push(`  Python virtual environment: ${venv}`)
-    lines.push(
-      `  MCP dependencies: ${dependencies === 'install' ? 'install (may download packages)' : dependencies}`,
-    )
+    const { mode, venv, dependencies } = plan.runtimeEffects
+    if (mode === 'node-native') {
+      lines.push('  Runtime: Node.js native MCP server (zero Python dependencies)')
+    } else {
+      lines.push(`  Python virtual environment: ${venv}`)
+      lines.push(
+        `  MCP dependencies: ${dependencies === 'install' ? 'install (may download packages)' : dependencies}`,
+      )
+    }
   }
   lines.push('  No files were written.')
   return lines.join('\n')

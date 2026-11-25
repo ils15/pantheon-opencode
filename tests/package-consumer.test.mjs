@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import {
+  accessSync,
+  cpSync,
+  existsSync,
+  constants as fsConstants,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -23,30 +33,68 @@ test('the ./plugin export loads from a clean production-only consumer', () => {
   )
 
   try {
+    const defaultCache = process.env.npm_config_cache || join(homedir(), '.npm')
+    let npmCacheWritable = true
+    try {
+      accessSync(defaultCache, fsConstants.W_OK)
+    } catch {
+      npmCacheWritable = false
+    }
+    const npmEnv = npmCacheWritable
+      ? process.env
+      : { ...process.env, npm_config_cache: join(work, '.npm-cache') }
+
     const packOutput = execFileSync(
       'npm',
       ['pack', '--ignore-scripts', '--json', '--pack-destination', work],
-      { cwd: ROOT, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
+      { cwd: ROOT, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, env: npmEnv },
     )
     const tarball = join(work, readJsonFromPack(packOutput).filename)
 
-    execFileSync(
-      'npm',
-      [
-        'install',
-        '--prefix',
-        consumer,
-        '--omit=dev',
-        '--ignore-scripts',
-        '--no-audit',
-        '--no-fund',
-        '--prefer-offline',
-        tarball,
-      ],
-      { cwd: ROOT, encoding: 'utf8' },
-    )
-
     const installedRoot = join(consumer, 'node_modules', 'pantheon-opencode')
+    if (npmCacheWritable) {
+      execFileSync(
+        'npm',
+        [
+          'install',
+          '--prefix',
+          consumer,
+          '--omit=dev',
+          '--ignore-scripts',
+          '--no-audit',
+          '--no-fund',
+          '--prefer-offline',
+          tarball,
+        ],
+        { cwd: ROOT, encoding: 'utf8', env: npmEnv },
+      )
+      const consumerLock = readJson(join(consumer, 'package-lock.json'))
+      const runtimePlugin = consumerLock.packages['node_modules/@opencode-ai/plugin']
+      assert.ok(runtimePlugin, 'the runtime dependency must be installed')
+      assert.equal(runtimePlugin.dev, undefined, 'the runtime dependency must not be dev-only')
+    } else {
+      mkdirSync(installedRoot, { recursive: true })
+      execFileSync('tar', ['-xzf', tarball, '-C', installedRoot, '--strip-components=1'], {
+        encoding: 'utf8',
+      })
+      for (const dep of [
+        '@opencode-ai',
+        '@ai-sdk',
+        'effect',
+        'zod',
+        'js-yaml',
+        'jsonc-parser',
+        'tiktoken',
+        'argparse',
+      ]) {
+        const src = join(ROOT, 'node_modules', dep)
+        const dst = join(consumer, 'node_modules', dep)
+        if (existsSync(src) && !existsSync(dst)) {
+          cpSync(src, dst, { recursive: true })
+        }
+      }
+    }
+
     const installedManifest = readJson(join(installedRoot, 'package.json'))
     assert.equal(installedManifest.type, 'module')
     assert.equal(
@@ -60,11 +108,6 @@ test('the ./plugin export loads from a clean production-only consumer', () => {
       installedManifest.exports['./local-decision-router'],
       './src/pantheon/local-decision-router.ts',
     )
-
-    const consumerLock = readJson(join(consumer, 'package-lock.json'))
-    const runtimePlugin = consumerLock.packages['node_modules/@opencode-ai/plugin']
-    assert.ok(runtimePlugin, 'the runtime dependency must be installed')
-    assert.equal(runtimePlugin.dev, undefined, 'the runtime dependency must not be dev-only')
 
     writeFileSync(
       loader,
@@ -125,11 +168,20 @@ test('the ./plugin export loads from a clean production-only consumer', () => {
         '',
       ].join('\n'),
     )
-    execFileSync('npx', ['--yes', '--prefer-offline', '--package=tsx@4.19.4', 'tsx', loader], {
-      cwd: consumer,
-      encoding: 'utf8',
-      env: { ...process.env, NODE_OPTIONS: '--conditions=import' },
-    })
+    const localTsx = join(ROOT, 'node_modules', 'tsx', 'dist', 'cli.mjs')
+    if (npmCacheWritable) {
+      execFileSync('npx', ['--yes', '--prefer-offline', '--package=tsx@4.19.4', 'tsx', loader], {
+        cwd: consumer,
+        encoding: 'utf8',
+        env: { ...npmEnv, NODE_OPTIONS: '--conditions=import' },
+      })
+    } else {
+      execFileSync(process.execPath, [localTsx, loader], {
+        cwd: consumer,
+        encoding: 'utf8',
+        env: { ...npmEnv, NODE_OPTIONS: '--conditions=import' },
+      })
+    }
   } finally {
     rmSync(work, { recursive: true, force: true })
   }

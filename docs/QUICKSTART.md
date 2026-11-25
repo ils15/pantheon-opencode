@@ -18,39 +18,25 @@ Ensure your environment satisfies the following requirements:
 
 ## 1. Installation
 
-### Native OpenCode Plugin Install (Recommended — Works Anywhere)
+### Native OpenCode Plugin Install (Only Supported Flow in v2.2.2+)
 
-One command registers the 14 agents, 25 skills, 8 slash commands, 26 native TypeScript tools, and TUI in-process with zero copied files on disk:
+One command registers the 14 agents, 25 skills, 9 slash commands, 30 native TypeScript tools, and TUI in-process with zero copied files on disk (and automatically cleans legacy Python MCPs and old TUI/CLI copies):
 
 ```bash
 opencode plugin add pantheon-opencode
 ```
 
-Why this is the best practice:
-- Works in **any directory** immediately (existing repos, git worktrees, or new folders) with no `init` step.
+Why this is the cleanest approach:
+- Works in **any directory** immediately (existing repos, git worktrees, or new folders) with no `init` step or `npx` cache clutter.
 - Updates cleanly via `opencode plugin update pantheon-opencode` (or `/pantheon-updates`) without leaving stale copied `.opencode/agents/` or `plugins/pantheon-tui/` files behind.
-
-### Optional CLI Setup (`init`)
-
-Use the CLI installer only when you specifically want project `AGENTS.md` injection, isolated `.opencode/` overrides, or optional legacy Python MCPs:
-
-```bash
-npx pantheon-opencode init --project --no-mcp
-```
 
 ---
 
 ## 2. Validate Health & Clean Stale Caches
 
-Inside OpenCode, run `/pantheon-settings` (or `/pantheon-updates`) to inspect **Doctor** health checks and **Legacy & Drift Cleanup** (which scans and removes stale coexisting `@beta`/older plugin caches and redundant copied files).
+Inside OpenCode, run `/pantheon-settings` (or `/pantheon-updates`) to inspect **Doctor** health checks and **Legacy & Drift Cleanup** (which scans/removes stale caches, legacy Python MCPs, and obsolete `.pantheon/` stores on demand).
 
-From the terminal, you can also run:
-
-```bash
-npx pantheon-opencode doctor
-```
-
-A healthy installation outputs a **PASS** verdict with zero blocking errors.
+From a repo checkout during local development, you can also run `npm run doctor`.
 
 ---
 
