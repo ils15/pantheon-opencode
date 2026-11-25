@@ -51,7 +51,6 @@ O **Pantheon** é um framework de orquestração multi-agente para o **OpenCode*
 
 | Tópico | Documento |
 |---|---|
-| Roteamento inteligente de modelos e fallbacks automáticos | [Roteamento de Modelos](../reference/model-routing.md) |
 | Roteador de Decisões Local | [Roteador Local](../reference/local-decision-router.md) |
 | Ferramenta nativa de decisão Jev | [Decisões Nativas](../reference/native-decisions.md) |
 | Protocolo de avaliação offline de complexidade de tarefas | [Avaliação Offline](../reference/offline-evaluation.md) |

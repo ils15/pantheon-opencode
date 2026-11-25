@@ -1,6 +1,6 @@
 # Agent Reference — Pantheon
 
-This directory indexes the definitions for all 8 canonical Pantheon agents (plus `spawn_ephemeral` slice archetypes: `hotfix`, `infra-ci`, `ai-pipeline`, `observability`, `geospatial`, `memory-adr`). The canonical files live in `src/agents/` and use the `.md` extension; their frontmatter specifies tools, model tier, capabilities, and delegation rules.
+This directory indexes the definitions for all 8 canonical Pantheon agents. Beyond them, `spawn_ephemeral` spawns a short-lived worker for any valid role slug (`^[a-z0-9][a-z0-9-]{0,31}$`); 7 built-in archetype presets supply defaults for `hotfix`, `infra-ci`, `ai-pipeline`, `observability`, `geospatial`, `memory-adr` and `memory-consolidate`, but they are presets, not an allowlist. The canonical files live in `src/agents/` and use the `.md` extension; their frontmatter specifies tools, model tier, capabilities, and delegation rules.
 
 ## Agents
 

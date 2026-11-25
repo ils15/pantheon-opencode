@@ -48,7 +48,6 @@ of repeating it.
 
 | Topic | Page |
 |---|---|
-| Model routing analysis and per-agent fallbacks | [Model Routing](reference/model-routing.md) |
 | Local decision router (per-turn advisory selector) | [Local Decision Router](reference/local-decision-router.md) |
 | Native Jev Decisions tool and gate chain | [Native Decisions](reference/native-decisions.md) |
 | Offline protocol for evaluating agent routing and task complexity | [Offline Evaluation](reference/offline-evaluation.md) |

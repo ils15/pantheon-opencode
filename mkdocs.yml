@@ -1,8 +1,14 @@
 site_name: Pantheon
 site_url: https://ils15.github.io/pantheon-opencode/
-site_description: Multi-agent orchestration framework for OpenCode — 14 specialized agents and 25 skills
+site_description: Multi-agent orchestration framework for OpenCode — 8 canonical agents, on-demand ephemeral workers, and 26 skills
 repo_url: https://github.com/ils15/pantheon-opencode
 edit_uri: edit/main/docs/
+
+# Retired/superseded material kept in-repo for history only. MkDocs builds every
+# Markdown file under docs/ regardless of nav, so without this the archived V1
+# routing analysis would still be published and indexed.
+exclude_docs: |
+  archive/
 
 theme:
   name: material
@@ -93,7 +99,6 @@ nav:
   - Memory: MEMORY.md
   - Platforms: PLATFORMS.md
   - Reference:
-      - Model Routing: reference/model-routing.md
       - Local Decision Router: reference/local-decision-router.md
       - Native Decisions (Jev): reference/native-decisions.md
       - Offline Evaluation: reference/offline-evaluation.md

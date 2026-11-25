@@ -18,7 +18,7 @@ Protocol for `#seq`-indexed council deliberations, targeted rebuttals, peer veri
 ## 2. Agreement Rate & Targeted `#seq` Rebuttal
 
 - Group substantive positions by issue and compute `agreement_rate = agreeing_pairs / total_comparable_pairs` (`n*(n-1)/2` per comparable issue; exclude issues with `< 2` positions; never trigger rebuttal from an indeterminate zero denominator).
-- Resolve divergences first via **Domain Authority Precedence** (`@themis`, `@demeter`, `@aphrodite`, `@prometheus`, `@hermes`, `@athena`) or **JEV Arbitration** (`pantheon_jev_decide`).
+- Resolve divergences first via **Domain Authority Precedence** (`@themis`, `@demeter`, `@aphrodite`, `spawn_ephemeral` role `infra-ci`, `@hermes`, `@athena`) or **JEV Arbitration** (`pantheon_jev_decide`).
 - If `agreement_rate < 0.5` (with zero timeouts) and an unverified factual contradiction remains, run **one targeted rebuttal round**:
   - Pass visible Round 1 positions with their exact `#seq` IDs.
   - Specialists cite peer `#seq` via `replyToSeq` / `@agent #seq` and declare `[consensus]` or `[deadlock]`.

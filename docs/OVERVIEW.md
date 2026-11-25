@@ -66,4 +66,4 @@ flowchart LR
 
 - [Execution modes](guides/execution-modes.md) — Fast-Track, Council and Deepwork in detail
 - [Settings & TUI window](SETTINGS.md) — gates, presets, updates, personalization
-- [Agent Capability Matrix](AGENT-CAPABILITY-MATRIX.md) — what each of the 14 agents can and cannot do
+- [Agent Capability Matrix](AGENT-CAPABILITY-MATRIX.md) — what each of the 8 canonical agents can and cannot do

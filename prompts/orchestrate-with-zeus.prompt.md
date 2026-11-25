@@ -112,7 +112,7 @@ Iris creates: The requested ADR, task record, or GitHub operation.
 
 #### When to Spawn Ephemeral Workers (`spawn_ephemeral`)
 ```
-For isolated short-lived slices (`hotfix`, `infra-ci`, `ai-pipeline`, `observability`, `geospatial`, `memory-adr`):
+For isolated short-lived slices — `role` accepts any valid slug (`^[a-z0-9][a-z0-9-]{0,31}$`); the built-in archetype presets (`hotfix`, `infra-ci`, `ai-pipeline`, `observability`, `geospatial`, `memory-adr`, `memory-consolidate`) are defaults, not an allowlist:
 Invoke: pantheon_step_ledger(action="spawn_ephemeral", role=..., stepKey=...)
 Wait for: Verified slice + automatic worktree/sub-session cleanup.
 ```
