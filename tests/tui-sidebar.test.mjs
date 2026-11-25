@@ -3270,23 +3270,27 @@ test('Dispatch kind: the description prefix wins, the agent is only the fallback
 
   // Every declared prefix, mapped to its short label.
   assert.deepEqual(
-    ['[council]', '[plan]', '[review]', '[hotfix]', '[discovery]'].map((prefix) =>
-      classifyDispatchKind({ description: `${prefix} task`, agent: 'aphrodite' }),
+    ['[council]', '[plan]', '[review]', '[ephemeral]', '[hotfix]', '[swarm]', '[discovery]'].map(
+      (prefix) => classifyDispatchKind({ description: `${prefix} task`, agent: 'aphrodite' }),
     ),
     [
       { kind: 'coun', origin: 'prefix' },
       { kind: 'plan', origin: 'prefix' },
       { kind: 'revw', origin: 'prefix' },
-      { kind: 'hot', origin: 'prefix' },
+      { kind: 'eph', origin: 'prefix' },
+      { kind: 'eph', origin: 'prefix' },
+      { kind: 'swm', origin: 'prefix' },
       { kind: 'disc', origin: 'prefix' },
     ],
-    'council/plan/review/hotfix/discovery → coun/plan/revw/hot/disc',
+    'council/plan/review/ephemeral/hotfix/swarm/discovery → coun/plan/revw/eph/eph/swm/disc',
   )
 
   // Case-insensitive and space-tolerant inside the brackets.
   assert.equal(dispatchKindFromPrefix('  [REVIEW] audit auth'), 'revw')
   assert.equal(dispatchKindFromPrefix('[  Council  ] round'), 'coun')
-  assert.equal(dispatchKindFromPrefix('[HotFix] css'), 'hot')
+  assert.equal(dispatchKindFromPrefix('[HotFix] css'), 'eph')
+  assert.equal(dispatchKindFromPrefix('[Ephemeral] hotfix'), 'eph')
+  assert.equal(dispatchKindFromPrefix('[Swarm] workers'), 'swm')
 
   // The prefix is the declared intent, so it beats the agent it was sent to.
   assert.deepEqual(
@@ -3299,18 +3303,19 @@ test('Dispatch kind: the description prefix wins, the agent is only the fallback
     { kind: 'coun', origin: 'prefix' },
   )
 
-  // No prefix → the agent decides.
+  // No prefix → the agent decides (8-agent roster: athena, themis, apollo).
   assert.deepEqual(
-    ['athena', 'themis', 'talos', 'apollo'].map((agent) =>
+    ['athena', 'themis', 'apollo', 'hermes'].map((agent) =>
       classifyDispatchKind({ description: 'no prefix here', agent }),
     ),
     [
       { kind: 'plan', origin: 'agent' },
       { kind: 'revw', origin: 'agent' },
-      { kind: 'hot', origin: 'agent' },
       { kind: 'disc', origin: 'agent' },
+      { kind: 'oth', origin: 'agent' },
     ],
   )
+  assert.equal(dispatchKindFromAgent('talos'), null)
 
   // An agent that implies nothing is still a real dispatch: `oth`, never null.
   assert.deepEqual(classifyDispatchKind({ description: 'build it', agent: 'zeus' }), {
@@ -3591,7 +3596,7 @@ test('Dispatch rows carry the kind glued to the label, and a group only when it 
   )
 
   // The width budget holds for every combination, model present or not.
-  const kinds = [null, 'coun', 'plan', 'revw', 'hot', 'disc', 'oth']
+  const kinds = [null, 'coun', 'plan', 'revw', 'eph', 'swm', 'disc', 'oth']
   const widths = []
   for (const kind of kinds) {
     for (const background of [true, false]) {
@@ -3647,7 +3652,7 @@ test('Dispatch rows carry the kind glued to the label, and a group only when it 
 
   const mixed = collectChildAgentUsage([
     finished('iris', 'revw', false),
-    finished('iris', 'hot', false),
+    finished('iris', 'eph', false),
   ])
   assert.equal(mixed[0].kind, null, 'a mixed group has no single purpose')
   assert.equal(

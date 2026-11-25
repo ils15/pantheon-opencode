@@ -139,6 +139,8 @@ test('index.tsx wires /pantheon-artifacts command, Sidebar/Home artifact links, 
   assert.match(indexSrc, /useWorkspaceArtifacts/)
   assert.match(indexSrc, /initialArtifactId:\s*plan\(\)\.id/)
   assert.match(artifactsSrc, /initialArtifactId\?: string/)
+  assert.match(artifactsSrc, /\(@iris\)/)
+  assert.doesNotMatch(artifactsSrc, /@mnemosyne/)
   assert.match(settingsSrc, /\(viewMode === 'fullscreen' \|\| !sessionID\) && routerAvailable/)
 })
 

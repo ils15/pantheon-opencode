@@ -26,6 +26,7 @@ describe('tui legacy-audit scanner & cleaner', () => {
       mkdirSync(join(globalDir, 'plugins', 'pantheon-tui'), { recursive: true })
       mkdirSync(join(globalDir, '.pantheon'), { recursive: true })
       mkdirSync(join(globalDir, 'skills', 'session-goal'), { recursive: true })
+      mkdirSync(join(globalDir, 'skills', 'council-agora'), { recursive: true })
       mkdirSync(join(globalDir, 'skills', 'user-only-skill'), { recursive: true })
       mkdirSync(join(projectDir, '.opencode', 'agents'), { recursive: true })
       mkdirSync(join(projectDir, '.pantheon'), { recursive: true })
@@ -36,8 +37,10 @@ describe('tui legacy-audit scanner & cleaner', () => {
       )
       writeFileSync(join(globalDir, 'plugins', 'pantheon-hooks.ts'), '// dead v1 hook')
       writeFileSync(join(globalDir, 'skills', 'session-goal', 'SKILL.md'), '# bundled copy')
+      writeFileSync(join(globalDir, 'skills', 'council-agora', 'SKILL.md'), '# bundled copy')
       writeFileSync(join(globalDir, 'skills', 'user-only-skill', 'SKILL.md'), '# keep me')
       writeFileSync(join(projectDir, '.opencode', 'agents', 'hermes.md'), '# canonical copy')
+      writeFileSync(join(projectDir, '.opencode', 'agents', 'talos.md'), '# retired canonical copy')
       writeFileSync(join(projectDir, '.opencode', 'agents', 'custom-ml.md'), '# forged agent')
 
       // Unmigrated flat memory.db in globalDir
@@ -88,7 +91,9 @@ describe('tui legacy-audit scanner & cleaner', () => {
       assert.equal(existsSync(join(globalDir, 'plugins', 'pantheon-tui')), false)
       assert.equal(existsSync(join(globalDir, 'plugins', 'pantheon-hooks.ts')), false)
       assert.equal(existsSync(join(globalDir, 'skills', 'session-goal')), false)
+      assert.equal(existsSync(join(globalDir, 'skills', 'council-agora')), false)
       assert.equal(existsSync(join(projectDir, '.opencode', 'agents', 'hermes.md')), false)
+      assert.equal(existsSync(join(projectDir, '.opencode', 'agents', 'talos.md')), false)
 
       // Custom user files untouched
       assert.equal(existsSync(join(globalDir, 'skills', 'user-only-skill', 'SKILL.md')), true)

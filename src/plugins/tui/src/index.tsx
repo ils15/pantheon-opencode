@@ -2026,14 +2026,14 @@ export function presetHeaderLine(presetName: string, providerID: string | null):
  * child exists. Only two evidence sources are allowed here, and neither is
  * invented: the `description` the parent typed for the `subagent` call (a
  * bracketed prefix such as `[review]`), and — when the prefix is absent — the
- * agent that owns the child (athena plans, themis reviews, talos hotfixes,
- * apollo scouts). `council` is the single exception: a round of specialists is
+ * agent that owns the child (athena plans, themis reviews, apollo scouts).
+ * `council` is the single exception: a round of specialists is
  * a declared intent, not an agent identity, so it is *never* inferred from the
  * agent. Every classification carries the `origin` of its evidence, and a child
  * that cannot be correlated to a call degrades to `{ null, 'unavailable' }`
  * instead of a guess. Pure. */
 
-export type DispatchKind = 'coun' | 'plan' | 'revw' | 'hot' | 'disc' | 'oth'
+export type DispatchKind = 'coun' | 'plan' | 'revw' | 'eph' | 'swm' | 'disc' | 'oth'
 export type DispatchKindOrigin = 'prefix' | 'agent' | 'unavailable'
 
 /** One classification plus the evidence that produced it. */
@@ -2043,9 +2043,11 @@ export type DispatchKindLabel = { kind: DispatchKind | null; origin: DispatchKin
 const DISPATCH_PREFIX_KINDS: ReadonlyArray<readonly [string, DispatchKind]> = [
   ['council', 'coun'],
   ['discovery', 'disc'],
-  ['hotfix', 'hot'],
+  ['ephemeral', 'eph'],
+  ['hotfix', 'eph'],
   ['plan', 'plan'],
   ['review', 'revw'],
+  ['swarm', 'swm'],
 ]
 
 /** Agent → kind, consulted only when the description declares no prefix.
@@ -2053,7 +2055,6 @@ const DISPATCH_PREFIX_KINDS: ReadonlyArray<readonly [string, DispatchKind]> = [
 const DISPATCH_AGENT_KINDS: Readonly<Record<string, DispatchKind>> = {
   apollo: 'disc',
   athena: 'plan',
-  talos: 'hot',
   themis: 'revw',
 }
 
@@ -3202,7 +3203,7 @@ export function dispatchPanelCell(value: unknown, width: number): string {
   return padCell(text === '' ? DISPATCH_PANEL_DASH : text, cells)
 }
 
-/** One list row: `⠋ prometheus   plan   $0.09  14m34s`. The agent cell absorbs
+/** One list row: `⠋ hermes       plan   $0.09  14m34s`. The agent cell absorbs
  *  the width difference (down to `DISPATCH_PANEL_MIN_AGENT_WIDTH`), so a narrow
  *  panel truncates the label rather than the numbers; the cost column grows by
  *  itself for a sub-cent value so the row never spends more than its budget.

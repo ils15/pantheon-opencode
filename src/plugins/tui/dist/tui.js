@@ -1628,7 +1628,7 @@ function ArtifactsDialogContent(props) {
 								insert(_el$29, () => props.isPt ? "Onde o Pantheon salva artefatos:" : "Where Pantheon stores artifacts:");
 								insertNode(_el$30, createTextNode(`• .pantheon/deepwork/&lt;slug>/PLAN.md  (/pantheon-deepwork / @athena)`));
 								insertNode(_el$32, createTextNode(`• .pantheon/reports/*.md             (@apollo / @themis)`));
-								insertNode(_el$34, createTextNode(`• docs/adr/*.md                      (@mnemosyne)`));
+								insertNode(_el$34, createTextNode(`• docs/adr/*.md                      (@iris)`));
 								effect((_p$) => {
 									var _v$9 = props.fg, _v$0 = props.muted, _v$1 = props.muted, _v$10 = props.muted, _v$11 = props.muted;
 									_v$9 !== _p$.e && (_p$.e = setProp(_el$28, "fg", _v$9, _p$.e));
@@ -4746,6 +4746,7 @@ const CANONICAL_SKILL_IDS = Object.freeze([
 	"code-review-checklist",
 	"codemap",
 	"context-compression",
+	"council-agora",
 	"fast-path-execution",
 	"git-workflow-and-versioning",
 	"incremental-implementation",
@@ -10072,16 +10073,17 @@ function presetHeaderLine(presetName, providerID) {
 const DISPATCH_PREFIX_KINDS = [
 	["council", "coun"],
 	["discovery", "disc"],
-	["hotfix", "hot"],
+	["ephemeral", "eph"],
+	["hotfix", "eph"],
 	["plan", "plan"],
-	["review", "revw"]
+	["review", "revw"],
+	["swarm", "swm"]
 ];
 /** Agent → kind, consulted only when the description declares no prefix.
 *  `council` is deliberately absent — see the section comment. */
 const DISPATCH_AGENT_KINDS = {
 	apollo: "disc",
 	athena: "plan",
-	talos: "hot",
 	themis: "revw"
 };
 /** Kind declared by a leading `[prefix]` on the description: case-insensitive
@@ -10914,7 +10916,7 @@ function dispatchPanelCell(value, width) {
 	const text = typeof value === "string" ? value.trim() : "";
 	return padCell(text === "" ? "—" : text, cells);
 }
-/** One list row: `⠋ prometheus   plan   $0.09  14m34s`. The agent cell absorbs
+/** One list row: `⠋ hermes       plan   $0.09  14m34s`. The agent cell absorbs
 *  the width difference (down to `DISPATCH_PANEL_MIN_AGENT_WIDTH`), so a narrow
 *  panel truncates the label rather than the numbers; the cost column grows by
 *  itself for a sub-cent value so the row never spends more than its budget.
