@@ -316,6 +316,27 @@ test('cockpit-state ranks attention queue decision > failure > review > stuck > 
 
     const eventLines = [
       JSON.stringify({
+        kind: 'board:message',
+        timestamp: 100,
+        agent: 'apollo',
+        seq: 1,
+        threadId: 'thr-resolved',
+        attentionCategory: 'decision',
+        detail: '[deadlock] Postgres vs SQLite',
+        severity: 'warn',
+      }),
+      JSON.stringify({
+        kind: 'board:message',
+        timestamp: 2000,
+        agent: 'athena',
+        seq: 6,
+        threadId: 'thr-open-deadlock',
+        stepKey: 'step-agora',
+        attentionCategory: 'decision',
+        detail: '[deadlock] Need user tie-break on rebuttal cap',
+        severity: 'warn',
+      }),
+      JSON.stringify({
         kind: 'review:verdict',
         timestamp: 9000,
         agent: 'themis',

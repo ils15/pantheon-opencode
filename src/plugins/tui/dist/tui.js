@@ -2317,9 +2317,13 @@ function buildRankedAttentionQueue(params) {
 			...refs.threadId !== void 0 ? { threadId: refs.threadId } : {}
 		});
 	};
+	const resolvedSeqs = /* @__PURE__ */ new Set();
 	const orderedMsgs = [...messages].sort((a, b) => a.seq - b.seq);
 	for (const m of orderedMsgs) {
-		if (isBoardMessageResolved(m, orderedMsgs)) continue;
+		if (isBoardMessageResolved(m, orderedMsgs)) {
+			resolvedSeqs.add(m.seq);
+			continue;
+		}
 		if (m.tag === "deadlock") pushItem("decision", isPt ? "Impasse no conselho" : "Council deadlock", m.body, m.from, m.timestamp, {
 			seq: m.seq,
 			threadId: m.threadId,
@@ -2349,6 +2353,7 @@ function buildRankedAttentionQueue(params) {
 		});
 	}
 	for (const ev of events) {
+		if (ev.seq !== void 0 && resolvedSeqs.has(ev.seq)) continue;
 		const category = inferEventAttentionCategory(ev);
 		if (!category) continue;
 		pushItem(category, ev.kind, ev.detail, ev.agent, ev.timestamp, {

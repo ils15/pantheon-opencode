@@ -688,9 +688,13 @@ function buildRankedAttentionQueue(params: {
     })
   }
 
+  const resolvedSeqs = new Set<number>()
   const orderedMsgs = [...messages].sort((a, b) => a.seq - b.seq)
   for (const m of orderedMsgs) {
-    if (isBoardMessageResolved(m, orderedMsgs)) continue
+    if (isBoardMessageResolved(m, orderedMsgs)) {
+      resolvedSeqs.add(m.seq)
+      continue
+    }
     if (m.tag === 'deadlock') {
       pushItem(
         'decision',
@@ -767,6 +771,7 @@ function buildRankedAttentionQueue(params: {
   }
 
   for (const ev of events) {
+    if (ev.seq !== undefined && resolvedSeqs.has(ev.seq)) continue
     const category = inferEventAttentionCategory(ev)
     if (!category) continue
     pushItem(category, ev.kind, ev.detail, ev.agent, ev.timestamp, {
