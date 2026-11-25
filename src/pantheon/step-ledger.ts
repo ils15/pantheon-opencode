@@ -17,6 +17,7 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
 import { getSharedBus } from './bus.ts'
+import { spawnEphemeralWorker } from './ephemeral-worker.ts'
 import { createExecutionReceipt } from './execution-receipt.ts'
 import { captureGitCheckpoint, restoreGitCheckpoint } from './git-checkpoint.ts'
 import { runAtomicStepSubSession, type SubSessionDomainLike } from './step-runner.ts'
@@ -141,6 +142,7 @@ export function createStepLedgerTool(
           enum: [
             'init_step',
             'execute_step',
+            'spawn_ephemeral',
             'record_reproduction',
             'record_mutation',
             'record_verification',
@@ -149,7 +151,7 @@ export function createStepLedgerTool(
             'status',
           ],
           description:
-            'Ledger operation (init_step | execute_step | record_reproduction | record_mutation | record_verification | complete_step | rollback_step | status)',
+            'Ledger operation (init_step | execute_step | spawn_ephemeral | record_reproduction | record_mutation | record_verification | complete_step | rollback_step | status)',
         },
         stepKey: {
           type: 'string',
@@ -158,6 +160,37 @@ export function createStepLedgerTool(
         },
         objective: { type: 'string', description: 'Bounded step objective' },
         agent: { type: 'string', description: 'Assigned specialist agent' },
+        role: {
+          type: 'string',
+          description: 'Dynamic ephemeral worker role slug (for spawn_ephemeral)',
+        },
+        baseAgent: {
+          type: 'string',
+          description:
+            'Canonical base agent for spawn_ephemeral (default hermes, or apollo when readOnly)',
+        },
+        readOnly: {
+          type: 'boolean',
+          description: 'When true on spawn_ephemeral, defaults baseAgent to apollo',
+        },
+        isolateWorktree: {
+          type: 'boolean',
+          description: 'Create disposable sibling git worktree for spawn_ephemeral (default true)',
+        },
+        keepWorktree: {
+          type: 'boolean',
+          description: 'Retain disposable worktree after spawn_ephemeral finishes (default false)',
+        },
+        reuseSessionID: {
+          type: 'string',
+          description: 'Existing caller-owned session ID to reuse on execute_step',
+        },
+        maxTurns: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 10,
+          description: 'Max continuation turns for execute_step/spawn_ephemeral (default 1)',
+        },
         extraContext: {
           type: 'string',
           description: 'Optional bounded context for isolated execute_step sub-session',
@@ -277,8 +310,56 @@ export function createStepLedgerTool(
             ...(typeof input.cleanupSession === 'boolean'
               ? { cleanupSession: input.cleanupSession }
               : {}),
+            ...(typeof input.reuseSessionID === 'string' && input.reuseSessionID.trim()
+              ? { reuseSessionID: input.reuseSessionID.trim() }
+              : {}),
+            ...(typeof input.maxTurns === 'number' && Number.isInteger(input.maxTurns)
+              ? { maxTurns: input.maxTurns }
+              : {}),
           })
           return jsonResult(runOut)
+        }
+
+        if (action === 'spawn_ephemeral') {
+          if (!sessionDomain) {
+            return jsonResult({ ok: false, error: 'host session domain unavailable' })
+          }
+          const objective =
+            typeof input.objective === 'string' && input.objective.trim()
+              ? input.objective.trim()
+              : (store.steps[key]?.objective ?? '')
+          if (!objective) return jsonResult({ ok: false, error: 'objective is required' })
+          const role =
+            typeof input.role === 'string' && input.role.trim()
+              ? input.role.trim()
+              : `worker-${key}`
+          const parentSid =
+            typeof (context as { sessionID?: unknown } | undefined)?.sessionID === 'string'
+              ? ((context as { sessionID?: string }).sessionID ?? undefined)
+              : undefined
+          const ephOut = await spawnEphemeralWorker({
+            sessionDomain,
+            cwd,
+            stepKey: key,
+            role,
+            objective,
+            ...(typeof input.baseAgent === 'string' && input.baseAgent.trim()
+              ? { baseAgent: input.baseAgent.trim() }
+              : {}),
+            ...(typeof input.readOnly === 'boolean' ? { readOnly: input.readOnly } : {}),
+            ...(typeof input.isolateWorktree === 'boolean'
+              ? { isolateWorktree: input.isolateWorktree }
+              : {}),
+            ...(typeof input.keepWorktree === 'boolean'
+              ? { keepWorktree: input.keepWorktree }
+              : {}),
+            ...(parentSid ? { parentSessionID: parentSid } : {}),
+            ...(typeof input.extraContext === 'string' ? { extraContext: input.extraContext } : {}),
+            ...(typeof input.maxTurns === 'number' && Number.isInteger(input.maxTurns)
+              ? { maxTurns: input.maxTurns }
+              : {}),
+          })
+          return jsonResult(ephOut)
         }
 
         const step = store.steps[key]

@@ -24,6 +24,10 @@ export const PANTHEON_SKILL_CATALOG: readonly DecisionCatalogEntry[] = Object.fr
   { id: 'codemap', description: 'Map repository structure before deep reading.' },
   { id: 'context-compression', description: 'Explicit compaction and resumable checkpoints.' },
   {
+    id: 'council-agora',
+    description: 'Structured #seq council synthesis, targeted rebuttals, and swarm board handoffs.',
+  },
+  {
     id: 'fast-path-execution',
     description: 'Fast-track execution protocol for bounded micro-edits.',
   },

@@ -83,6 +83,55 @@ export interface ReproductionGateEventPayload {
   readonly timestamp: number
 }
 
+export type BoardMessageTag =
+  | 'claim'
+  | 'handoff'
+  | 'question'
+  | 'rebuttal'
+  | 'consensus'
+  | 'deadlock'
+  | 'done'
+  | 'blocker'
+  | 'alert'
+  | 'note'
+
+export interface BoardMessageEventPayload {
+  readonly seq: number
+  readonly channel: string
+  readonly threadId: string
+  readonly from: string
+  readonly mentions: readonly string[]
+  readonly replyToSeq?: number
+  readonly tag?: BoardMessageTag
+  readonly stepKey?: string
+  readonly summary: string
+  readonly timestamp: number
+}
+
+export interface SwarmStallDetectedEventPayload {
+  readonly taskID: string
+  readonly alias: string
+  readonly agent: string
+  readonly parentSessionID: string
+  readonly reason: 'no_progress' | 'unreconciled_terminal' | 'quota_exhausted'
+  readonly idleMs: number
+  readonly attempt: number
+  readonly stepKey?: string
+  readonly timestamp: number
+}
+
+export interface EphemeralWorkerEventPayload {
+  readonly workerId: string
+  readonly role: string
+  readonly baseAgent: string
+  readonly stepKey: string
+  readonly action: 'spawned' | 'completed' | 'failed' | 'cleaned'
+  readonly sessionID?: string
+  readonly worktreeDir?: string
+  readonly seq?: number
+  readonly timestamp: number
+}
+
 export interface PantheonEventMap {
   'job:created': JobEventPayload
   'job:updated': JobEventPayload
@@ -96,6 +145,9 @@ export interface PantheonEventMap {
   'review:verdict': ReviewVerdictEventPayload
   'step:rollback': StepRollbackEventPayload
   'reproduction:gate': ReproductionGateEventPayload
+  'board:message': BoardMessageEventPayload
+  'swarm:stall:detected': SwarmStallDetectedEventPayload
+  'ephemeral:worker': EphemeralWorkerEventPayload
 }
 
 export type PantheonEventName = keyof PantheonEventMap

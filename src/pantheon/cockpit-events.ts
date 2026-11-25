@@ -3,7 +3,8 @@
  *
  * Bridges the server plugin's in-memory `PantheonBus` (`getSharedBus()`) to
  * `.pantheon/telemetry/cockpit-events.ndjson` so the TUI plugin (`/pantheon-cockpit`
- * Flightdeck Semantic Event Stream) displays live bus events across isolated runtimes.
+ * Flightdeck Semantic Event Stream & Attention Queue) displays live bus events
+ * across isolated runtimes.
  */
 
 import {
@@ -15,8 +16,10 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
-import { getSharedBus } from './bus.ts'
+import { type BoardMessageTag, getSharedBus } from './bus.ts'
 import { resolveSharedPantheonRoot } from './tool-context.ts'
+
+export type AttentionCategory = 'decision' | 'failure' | 'review' | 'stuck' | 'quota'
 
 export interface PersistedCockpitEvent {
   readonly kind: string
@@ -24,9 +27,23 @@ export interface PersistedCockpitEvent {
   readonly agent: string
   readonly detail: string
   readonly severity: 'info' | 'ok' | 'warn' | 'error'
+  readonly seq?: number
+  readonly threadId?: string
+  readonly stepKey?: string
+  readonly attentionCategory?: AttentionCategory
 }
 
 const MAX_RETAINED_EVENTS = 160
+
+function isAttentionCategory(value: unknown): value is AttentionCategory {
+  return (
+    value === 'decision' ||
+    value === 'failure' ||
+    value === 'review' ||
+    value === 'stuck' ||
+    value === 'quota'
+  )
+}
 
 function resolveCockpitTelemetryPath(workspaceDir: string): string {
   const root = resolveSharedPantheonRoot(workspaceDir)
@@ -77,6 +94,18 @@ export function readCockpitBusEvents(workspaceDir: string, limit = 40): Persiste
               parsed.severity === 'ok' || parsed.severity === 'warn' || parsed.severity === 'error'
                 ? parsed.severity
                 : 'info',
+            ...(typeof parsed.seq === 'number' && Number.isInteger(parsed.seq)
+              ? { seq: parsed.seq }
+              : {}),
+            ...(typeof parsed.threadId === 'string' && parsed.threadId
+              ? { threadId: parsed.threadId }
+              : {}),
+            ...(typeof parsed.stepKey === 'string' && parsed.stepKey
+              ? { stepKey: parsed.stepKey }
+              : {}),
+            ...(isAttentionCategory(parsed.attentionCategory)
+              ? { attentionCategory: parsed.attentionCategory }
+              : {}),
           })
         }
       } catch {
@@ -86,6 +115,27 @@ export function readCockpitBusEvents(workspaceDir: string, limit = 40): Persiste
     return out
   } catch {
     return []
+  }
+}
+
+function classifyBoardTag(tag: BoardMessageTag | undefined): {
+  severity: PersistedCockpitEvent['severity']
+  attentionCategory?: AttentionCategory
+} {
+  switch (tag) {
+    case 'deadlock':
+      return { severity: 'warn', attentionCategory: 'decision' }
+    case 'question':
+      return { severity: 'info', attentionCategory: 'decision' }
+    case 'blocker':
+      return { severity: 'error', attentionCategory: 'failure' }
+    case 'alert':
+      return { severity: 'warn', attentionCategory: 'stuck' }
+    case 'consensus':
+    case 'done':
+      return { severity: 'ok' }
+    default:
+      return { severity: 'info' }
   }
 }
 
@@ -110,6 +160,7 @@ export function wireCockpitBusRecorder(workspaceDir: string): () => void {
         detail: `${ev.verdict}: ${ev.summary}`,
         severity:
           ev.verdict === 'BLOCK' ? 'error' : ev.verdict === 'APPROVE_WITH_NOTES' ? 'warn' : 'ok',
+        attentionCategory: 'review',
       })
     }),
     bus.on('step:rollback', (ev) => {
@@ -119,6 +170,8 @@ export function wireCockpitBusRecorder(workspaceDir: string): () => void {
         agent: 'ledger',
         detail: `${ev.stepKey} (${ev.reason}) -> ${ev.success ? 'restored' : 'failed'}`,
         severity: ev.success ? 'warn' : 'error',
+        stepKey: ev.stepKey,
+        ...(ev.success ? {} : { attentionCategory: 'failure' as const }),
       })
     }),
     bus.on('reproduction:gate', (ev) => {
@@ -128,6 +181,7 @@ export function wireCockpitBusRecorder(workspaceDir: string): () => void {
         agent: ev.agent,
         detail: `${ev.stepKey} [${ev.tool}] -> ${ev.allowed ? 'allowed' : 'blocked (RED required)'}`,
         severity: ev.allowed ? 'ok' : 'warn',
+        stepKey: ev.stepKey,
       })
     }),
     bus.on('themis:reflex:escalated', (ev) => {
@@ -137,6 +191,8 @@ export function wireCockpitBusRecorder(workspaceDir: string): () => void {
         agent: ev.agent,
         detail: `${ev.taskID} (${ev.error})`,
         severity: 'error',
+        stepKey: ev.taskID,
+        attentionCategory: 'failure',
       })
     }),
     bus.on('agent:execution:receipt', (ev) => {
@@ -146,6 +202,52 @@ export function wireCockpitBusRecorder(workspaceDir: string): () => void {
         agent: ev.agent,
         detail: `${ev.taskID} receipt=${ev.receiptId}`,
         severity: 'ok',
+        stepKey: ev.taskID,
+      })
+    }),
+    bus.on('swarm:stall:detected', (ev) => {
+      appendCockpitBusEvent(workspaceDir, {
+        kind: 'swarm:stall:detected',
+        timestamp: ev.timestamp,
+        agent: ev.agent,
+        detail: `${ev.alias} (${ev.reason}, idle=${Math.round(ev.idleMs / 1000)}s, attempt=${ev.attempt})`,
+        severity: 'warn',
+        attentionCategory: ev.reason === 'quota_exhausted' ? 'quota' : 'stuck',
+        ...(ev.stepKey !== undefined ? { stepKey: ev.stepKey } : {}),
+      })
+    }),
+    bus.on('board:message', (ev) => {
+      const classified = classifyBoardTag(ev.tag)
+      const tagPrefix = ev.tag ? `[${ev.tag}] ` : ''
+      appendCockpitBusEvent(workspaceDir, {
+        kind: 'board:message',
+        timestamp: ev.timestamp,
+        agent: ev.from,
+        detail: `#${ev.seq} ${ev.channel}/${ev.threadId} ${tagPrefix}${ev.summary}`,
+        severity: classified.severity,
+        seq: ev.seq,
+        threadId: ev.threadId,
+        ...(ev.stepKey !== undefined ? { stepKey: ev.stepKey } : {}),
+        ...(classified.attentionCategory !== undefined
+          ? { attentionCategory: classified.attentionCategory }
+          : {}),
+      })
+    }),
+    bus.on('ephemeral:worker', (ev) => {
+      appendCockpitBusEvent(workspaceDir, {
+        kind: 'ephemeral:worker',
+        timestamp: ev.timestamp,
+        agent: ev.baseAgent,
+        detail: `ephemeral/${ev.role} (${ev.action}) step=${ev.stepKey}`,
+        severity:
+          ev.action === 'failed'
+            ? 'error'
+            : ev.action === 'completed' || ev.action === 'cleaned'
+              ? 'ok'
+              : 'info',
+        stepKey: ev.stepKey,
+        ...(ev.seq !== undefined ? { seq: ev.seq } : {}),
+        ...(ev.action === 'failed' ? { attentionCategory: 'failure' as const } : {}),
       })
     }),
   ]
