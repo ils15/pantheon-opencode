@@ -230,6 +230,76 @@ export const I18N = {
       pt: 'Portão de segurança',
     },
   },
+  cockpit: {
+    attentionQueue: {
+      en: 'Attention Queue',
+      pt: 'Fila de Atenção',
+    },
+    noAttentionItems: {
+      en: '  (no pending attention items)',
+      pt: '  (nenhum item pendente de atenção)',
+    },
+    outcomeThreads: {
+      en: 'Outcome Threads (Goal -> Threads -> Workstreams)',
+      pt: 'Threads por Objetivo (Goal -> Threads -> Workstreams)',
+    },
+    noThreads: {
+      en: '  (no board threads recorded yet)',
+      pt: '  (nenhuma thread registrada no board ainda)',
+    },
+    workersGantt: {
+      en: 'Workers & Concurrency Gantt',
+      pt: 'Workers & Linha do Tempo Gantt',
+    },
+    noSubagents: {
+      en: 'No subagent delegations recorded in this session yet.',
+      pt: 'Nenhum subagente registrado nesta sessão ainda.',
+    },
+    tokenMeter: {
+      en: 'Token Meter & Context',
+      pt: 'Medidor de Tokens & Contexto',
+    },
+    runtimeSurfaces: {
+      en: 'Runtime Surfaces & Health',
+      pt: 'Superfícies de Execução & Saúde',
+    },
+    workMap: {
+      en: 'Work Map (Topology)',
+      pt: 'Mapa de Trabalho (Topologia)',
+    },
+    stepLedgerTitle: {
+      en: 'Step-Ledger & Active Tasks',
+      pt: 'Step-Ledger & Tarefas Ativas',
+    },
+    eventStreamTitle: {
+      en: 'Semantic Event Stream',
+      pt: 'Fluxo de Eventos Semânticos',
+    },
+    generalGoal: {
+      en: 'General',
+      pt: 'Geral',
+    },
+    catDecision: {
+      en: 'DECISION',
+      pt: 'DECISÃO',
+    },
+    catFailure: {
+      en: 'FAILURE',
+      pt: 'FALHA',
+    },
+    catReview: {
+      en: 'REVIEW',
+      pt: 'REVISÃO',
+    },
+    catStuck: {
+      en: 'STUCK',
+      pt: 'TRAVADO',
+    },
+    catQuota: {
+      en: 'QUOTA',
+      pt: 'COTA',
+    },
+  },
 } as const
 
 /** Helper to get localized text */

@@ -715,6 +715,250 @@ function resolveLanguage(preference = "auto", env = process.env) {
 	} catch {}
 	return "en";
 }
+const I18N = {
+	tabs: {
+		decision: {
+			en: "Decision (Jev)",
+			pt: "Decisão (Jev)"
+		},
+		autonomy: {
+			en: "Autonomy",
+			pt: "Autonomia"
+		},
+		safety: {
+			en: "Safety (J1)",
+			pt: "Segurança (J1)"
+		},
+		tui: {
+			en: "TUI",
+			pt: "TUI"
+		}
+	},
+	decision: {
+		groupRouter: {
+			en: "Decision Router (Jev Assistant)",
+			pt: "Assistente de Decisão (Jev)"
+		},
+		groupCredentials: {
+			en: "Credentials (status only — values never enter the window)",
+			pt: "Credenciais (apenas status — valores protegidos)"
+		},
+		routerName: {
+			en: "Router (Decision Assistant)",
+			pt: "Assistente Jev"
+		},
+		routerNote: {
+			en: "applies live — enables intelligent route arbitration and candidate ranking",
+			pt: "aplica em tempo real — motor de arbitragem inteligente e ranking de rotas"
+		},
+		modelName: {
+			en: "Decision model",
+			pt: "Modelo de Decisão"
+		},
+		modelNote: {
+			en: "local routes on-device (free); auto/explicit pick a remote decision model",
+			pt: "local decide no seu PC (grátis); auto/explícito usa modelo nuvem (OpenRouter)"
+		},
+		selectionModeName: {
+			en: "Selection mode",
+			pt: "Modo de operação"
+		},
+		selectionModeNote: {
+			en: "local routes on-device; auto/explicit pick a remote decision model",
+			pt: "local decide no dispositivo; auto/explícito usa modelo remoto"
+		},
+		egressName: {
+			en: "Cloud API access (Egress)",
+			pt: "Acesso à Nuvem (Egress)"
+		},
+		egressNoteGranted: {
+			en: "granted = remote decision routes may call their gateway (budget-capped)",
+			pt: "permitido = rotas remotas podem consultar a API (com limite de orçamento)"
+		},
+		egressNoteNotGranted: {
+			en: "not granted = remote routes blocked; local heuristic decisions only",
+			pt: "não permitido = chamadas remotas bloqueadas; apenas heurística local"
+		},
+		candidatesName: {
+			en: "Active candidates",
+			pt: "Candidatos ativos"
+		}
+	},
+	autonomy: {
+		groupGoalLoop: {
+			en: "Goal loop (multi-turn session auto-continuation)",
+			pt: "Execução Contínua (Goal Loop)"
+		},
+		goalLoopName: {
+			en: "Goal loop",
+			pt: "Loop contínuo"
+		},
+		goalLoopNote: {
+			en: "auto-continues multi-turn tasks when session goes idle · applies after OpenCode restart",
+			pt: "continua tarefas de múltiplos passos automaticamente · requer reinício"
+		},
+		maxContinuationsName: {
+			en: "Max continuations",
+			pt: "Limite de turnos"
+		},
+		maxContinuationsNote: {
+			en: "1..200 — safety ceiling to prevent runaway tasks",
+			pt: "1..200 — teto de segurança contra tarefas infinitas"
+		},
+		cooldownName: {
+			en: "Cooldown (ms)",
+			pt: "Intervalo (ms)"
+		},
+		cooldownNote: {
+			en: "delay between autonomous turns (min 1000ms)",
+			pt: "tempo de espera entre turnos autônomos (mín 1000ms)"
+		},
+		groupBudgets: {
+			en: "Decision budgets (applies live per gated call)",
+			pt: "Orçamento Jev (teto financeiro de proteção)"
+		},
+		monthlyCapName: {
+			en: "Monthly cap",
+			pt: "Teto mensal (USD)"
+		},
+		monthlyCapNote: {
+			en: "monthly USD ceiling for gated arbitrator decisions",
+			pt: "teto mensal em dólares para decisões do assistente Jev"
+		},
+		perDecisionCapName: {
+			en: "Per-decision cap",
+			pt: "Teto por consulta (USD)"
+		},
+		perDecisionCapNote: {
+			en: "price cap — gated decisions above this are refused",
+			pt: "teto por decisão — consultas remotas que excederem são recusadas"
+		},
+		groupGradient: {
+			en: "Decision gradient (reference policy · J1 owns the risk axis)",
+			pt: "Níveis de Decisão & Segurança (Referência)"
+		},
+		soloName: {
+			en: "Decide solo",
+			pt: "Decisão direta"
+		},
+		soloNote: {
+			en: "reversible & low-risk edits, routine fixes (no gate)",
+			pt: "edições reversíveis e baixo risco, sem portão de bloqueio"
+		},
+		jevName: {
+			en: "Jev decides",
+			pt: "Decisão Jev"
+		},
+		jevNote: {
+			en: "typed ambiguity & candidate ranking (budget-capped)",
+			pt: "ambiguidade e ranking de skills com teto de orçamento"
+		},
+		humanName: {
+			en: "Human decides",
+			pt: "Aprovação humana"
+		},
+		humanNote: {
+			en: "high-risk & destructive operations (J1 gate)",
+			pt: "ações de alto risco e destrutivas (portão de segurança J1)"
+		}
+	},
+	safety: {
+		groupSafety: {
+			en: "Safety & Risk Level (J1 Gate)",
+			pt: "Nível de Proteção & Portão de Risco (J1)"
+		},
+		modeName: {
+			en: "Protection mode",
+			pt: "Modo de proteção"
+		},
+		thresholdName: {
+			en: "Enforce threshold",
+			pt: "Teto para bloqueio"
+		},
+		thresholdNote: {
+			en: "deny at or above · 0..1 · default 0.8",
+			pt: "bloqueia em ou acima de · 0..1 · padrão 0.8"
+		},
+		gateName: {
+			en: "Safety gate",
+			pt: "Portão de segurança"
+		}
+	},
+	cockpit: {
+		attentionQueue: {
+			en: "Attention Queue",
+			pt: "Fila de Atenção"
+		},
+		noAttentionItems: {
+			en: "  (no pending attention items)",
+			pt: "  (nenhum item pendente de atenção)"
+		},
+		outcomeThreads: {
+			en: "Outcome Threads (Goal -> Threads -> Workstreams)",
+			pt: "Threads por Objetivo (Goal -> Threads -> Workstreams)"
+		},
+		noThreads: {
+			en: "  (no board threads recorded yet)",
+			pt: "  (nenhuma thread registrada no board ainda)"
+		},
+		workersGantt: {
+			en: "Workers & Concurrency Gantt",
+			pt: "Workers & Linha do Tempo Gantt"
+		},
+		noSubagents: {
+			en: "No subagent delegations recorded in this session yet.",
+			pt: "Nenhum subagente registrado nesta sessão ainda."
+		},
+		tokenMeter: {
+			en: "Token Meter & Context",
+			pt: "Medidor de Tokens & Contexto"
+		},
+		runtimeSurfaces: {
+			en: "Runtime Surfaces & Health",
+			pt: "Superfícies de Execução & Saúde"
+		},
+		workMap: {
+			en: "Work Map (Topology)",
+			pt: "Mapa de Trabalho (Topologia)"
+		},
+		stepLedgerTitle: {
+			en: "Step-Ledger & Active Tasks",
+			pt: "Step-Ledger & Tarefas Ativas"
+		},
+		eventStreamTitle: {
+			en: "Semantic Event Stream",
+			pt: "Fluxo de Eventos Semânticos"
+		},
+		generalGoal: {
+			en: "General",
+			pt: "Geral"
+		},
+		catDecision: {
+			en: "DECISION",
+			pt: "DECISÃO"
+		},
+		catFailure: {
+			en: "FAILURE",
+			pt: "FALHA"
+		},
+		catReview: {
+			en: "REVIEW",
+			pt: "REVISÃO"
+		},
+		catStuck: {
+			en: "STUCK",
+			pt: "TRAVADO"
+		},
+		catQuota: {
+			en: "QUOTA",
+			pt: "COTA"
+		}
+	}
+};
+/** Helper to get localized text */
+function t(entry, lang) {
+	return lang === "pt-BR" ? entry.pt : entry.en;
+}
 //#endregion
 //#region src/tui-prefs.ts
 const PREFS_SYMBOL = Symbol.for("pantheon.tui.prefs.v1");
@@ -1825,21 +2069,75 @@ function resolveSharedTelemetryRoot(workspaceDir) {
 	} catch {}
 	return workspaceDir;
 }
-function loadPersistedCockpitEvents(workspaceDir) {
+const VALID_BOARD_TAGS = /* @__PURE__ */ new Set([
+	"claim",
+	"handoff",
+	"question",
+	"rebuttal",
+	"consensus",
+	"deadlock",
+	"done",
+	"blocker",
+	"alert",
+	"note"
+]);
+const VALID_ATTENTION_CATEGORIES = /* @__PURE__ */ new Set([
+	"decision",
+	"failure",
+	"review",
+	"stuck",
+	"quota"
+]);
+const ATTENTION_RANK = {
+	decision: 1,
+	failure: 2,
+	review: 3,
+	stuck: 4,
+	quota: 5
+};
+function isQuotaText(text) {
+	const lower = text.toLowerCase();
+	return lower.includes("quota") || lower.includes("rate limit") || lower.includes("rate_limit") || lower.includes("429");
+}
+function parseEphemeralMeta(raw) {
+	if (!raw || typeof raw !== "object") return void 0;
+	const obj = raw;
+	if (typeof obj.role !== "string" || typeof obj.baseAgent !== "string") return void 0;
+	const status = obj.status === "running" || obj.status === "completed" || obj.status === "failed" || obj.status === "cleaned" ? obj.status : "running";
+	return {
+		role: obj.role,
+		baseAgent: obj.baseAgent,
+		status,
+		...typeof obj.sessionID === "string" && obj.sessionID ? { sessionID: obj.sessionID } : {},
+		...typeof obj.worktreeDir === "string" && obj.worktreeDir ? { worktreeDir: obj.worktreeDir } : {}
+	};
+}
+function loadPersistedBoardMessages(workspaceDir) {
 	try {
 		const root = resolveSharedTelemetryRoot(workspaceDir);
-		const filePath = join(root, ".pantheon", "telemetry", "cockpit-events.ndjson");
+		const filePath = join(root, ".pantheon", "board", "messages.ndjson");
 		if (!existsSync(filePath)) return [];
 		const lines = readFileSync(filePath, "utf8").split(/\r?\n/).filter(Boolean);
 		const out = [];
-		for (const line of lines.slice(-60)) try {
+		for (const line of lines.slice(-200)) try {
 			const parsed = JSON.parse(line);
-			if (typeof parsed.kind === "string" && typeof parsed.detail === "string") out.push({
-				kind: parsed.kind,
-				timestamp: typeof parsed.timestamp === "number" ? parsed.timestamp : Date.now(),
-				agent: typeof parsed.agent === "string" ? parsed.agent : "pantheon",
-				detail: parsed.detail,
-				severity: parsed.severity === "ok" || parsed.severity === "warn" || parsed.severity === "error" ? parsed.severity : "info"
+			if (typeof parsed.seq !== "number" || !Number.isFinite(parsed.seq) || typeof parsed.from !== "string" || typeof parsed.body !== "string") continue;
+			const tag = typeof parsed.tag === "string" && VALID_BOARD_TAGS.has(parsed.tag) ? parsed.tag : void 0;
+			const ephemeral = parseEphemeralMeta(parsed.ephemeral);
+			out.push({
+				seq: parsed.seq,
+				timestamp: typeof parsed.timestamp === "number" ? parsed.timestamp : 0,
+				channel: typeof parsed.channel === "string" && parsed.channel.trim() ? parsed.channel.trim() : "swarm",
+				threadId: typeof parsed.threadId === "string" && parsed.threadId.trim() ? parsed.threadId.trim() : "general",
+				from: parsed.from,
+				mentions: Array.isArray(parsed.mentions) ? parsed.mentions.filter((m) => typeof m === "string") : [],
+				body: parsed.body,
+				...typeof parsed.goal === "string" && parsed.goal.trim() ? { goal: parsed.goal.trim() } : {},
+				...typeof parsed.workstream === "string" && parsed.workstream.trim() ? { workstream: parsed.workstream.trim() } : {},
+				...typeof parsed.stepKey === "string" && parsed.stepKey.trim() ? { stepKey: parsed.stepKey.trim() } : {},
+				...typeof parsed.replyToSeq === "number" && Number.isFinite(parsed.replyToSeq) ? { replyToSeq: parsed.replyToSeq } : {},
+				...tag !== void 0 ? { tag } : {},
+				...ephemeral !== void 0 ? { ephemeral } : {}
 			});
 		} catch {}
 		return out;
@@ -1847,7 +2145,233 @@ function loadPersistedCockpitEvents(workspaceDir) {
 		return [];
 	}
 }
+function loadPersistedCockpitEvents(workspaceDir) {
+	try {
+		const root = resolveSharedTelemetryRoot(workspaceDir);
+		const filePath = join(root, ".pantheon", "telemetry", "cockpit-events.ndjson");
+		if (!existsSync(filePath)) return [];
+		const lines = readFileSync(filePath, "utf8").split(/\r?\n/).filter(Boolean);
+		const out = [];
+		for (const line of lines.slice(-80)) try {
+			const parsed = JSON.parse(line);
+			if (typeof parsed.kind === "string" && typeof parsed.detail === "string") {
+				const attentionCategory = typeof parsed.attentionCategory === "string" && VALID_ATTENTION_CATEGORIES.has(parsed.attentionCategory) ? parsed.attentionCategory : void 0;
+				out.push({
+					kind: parsed.kind,
+					timestamp: typeof parsed.timestamp === "number" ? parsed.timestamp : Date.now(),
+					agent: typeof parsed.agent === "string" ? parsed.agent : "pantheon",
+					detail: parsed.detail,
+					severity: parsed.severity === "ok" || parsed.severity === "warn" || parsed.severity === "error" ? parsed.severity : "info",
+					...typeof parsed.seq === "number" && Number.isFinite(parsed.seq) ? { seq: parsed.seq } : {},
+					...typeof parsed.threadId === "string" && parsed.threadId ? { threadId: parsed.threadId } : {},
+					...typeof parsed.stepKey === "string" && parsed.stepKey ? { stepKey: parsed.stepKey } : {},
+					...attentionCategory !== void 0 ? { attentionCategory } : {}
+				});
+			}
+		} catch {}
+		return out;
+	} catch {
+		return [];
+	}
+}
+function buildOutcomeThreads(messages, isPt) {
+	if (messages.length === 0) return {
+		totalMessages: 0,
+		headSeq: 0,
+		groups: []
+	};
+	const ordered = [...messages].sort((a, b) => a.seq - b.seq);
+	const headSeq = ordered[ordered.length - 1]?.seq ?? 0;
+	const threadGoalMap = /* @__PURE__ */ new Map();
+	const seqWorkstreamMap = /* @__PURE__ */ new Map();
+	const defaultGoal = isPt ? "Geral" : "General";
+	for (const m of ordered) {
+		if (m.goal?.trim()) threadGoalMap.set(m.threadId, m.goal.trim());
+		const inheritedWs = m.replyToSeq !== void 0 ? seqWorkstreamMap.get(m.replyToSeq) : void 0;
+		const ws = m.workstream?.trim() || inheritedWs || m.stepKey?.trim() || "default";
+		seqWorkstreamMap.set(m.seq, ws);
+	}
+	const goalBuckets = /* @__PURE__ */ new Map();
+	for (const m of ordered) {
+		const fallbackGoal = m.channel === "council" ? isPt ? "Conselho" : "Council" : defaultGoal;
+		const goal = threadGoalMap.get(m.threadId) ?? fallbackGoal;
+		const wsName = seqWorkstreamMap.get(m.seq) ?? "default";
+		let threadsMap = goalBuckets.get(goal);
+		if (!threadsMap) {
+			threadsMap = /* @__PURE__ */ new Map();
+			goalBuckets.set(goal, threadsMap);
+		}
+		let threadBucket = threadsMap.get(m.threadId);
+		if (!threadBucket) {
+			threadBucket = {
+				channel: m.channel,
+				goal,
+				messages: [],
+				workstreams: /* @__PURE__ */ new Map()
+			};
+			threadsMap.set(m.threadId, threadBucket);
+		}
+		threadBucket.messages.push(m);
+		let wsList = threadBucket.workstreams.get(wsName);
+		if (!wsList) {
+			wsList = [];
+			threadBucket.workstreams.set(wsName, wsList);
+		}
+		wsList.push(m);
+	}
+	const groups = [];
+	for (const [goal, threadsMap] of goalBuckets.entries()) {
+		const threads = [];
+		for (const [threadId, tBucket] of threadsMap.entries()) {
+			const workstreams = [];
+			for (const [wsName, wsMsgs] of tBucket.workstreams.entries()) {
+				const latestWsMsg = wsMsgs[wsMsgs.length - 1];
+				let latestStepKey;
+				let latestEphemeral;
+				for (const wm of wsMsgs) {
+					if (wm.stepKey) latestStepKey = wm.stepKey;
+					if (wm.ephemeral) latestEphemeral = wm.ephemeral;
+				}
+				workstreams.push({
+					workstream: wsName,
+					latestSeq: latestWsMsg?.seq ?? 0,
+					statusTag: latestWsMsg?.tag ?? "active",
+					messages: wsMsgs,
+					...latestStepKey !== void 0 ? { stepKey: latestStepKey } : {},
+					...latestEphemeral !== void 0 ? { ephemeral: latestEphemeral } : {}
+				});
+			}
+			workstreams.sort((a, b) => b.latestSeq - a.latestSeq);
+			const latestThreadMsg = tBucket.messages[tBucket.messages.length - 1];
+			threads.push({
+				threadId,
+				channel: tBucket.channel,
+				goal: tBucket.goal,
+				latestSeq: latestThreadMsg?.seq ?? 0,
+				statusTag: latestThreadMsg?.tag ?? "active",
+				workstreams,
+				messages: tBucket.messages
+			});
+		}
+		threads.sort((a, b) => b.latestSeq - a.latestSeq);
+		const topThread = threads[0];
+		groups.push({
+			goal,
+			latestSeq: topThread?.latestSeq ?? 0,
+			statusTag: topThread?.statusTag ?? "active",
+			threads
+		});
+	}
+	groups.sort((a, b) => b.latestSeq - a.latestSeq);
+	return {
+		totalMessages: ordered.length,
+		headSeq,
+		groups
+	};
+}
+function isBoardMessageResolved(msg, ordered) {
+	const isResolutionTag = (tag) => tag === "consensus" || tag === "done";
+	return ordered.some((other) => {
+		if (other.seq <= msg.seq) return false;
+		if (other.replyToSeq === msg.seq && isResolutionTag(other.tag)) return true;
+		if ((msg.tag === "deadlock" || msg.tag === "question") && other.threadId === msg.threadId && other.tag === "consensus") return true;
+		if (msg.tag === "blocker" && other.threadId === msg.threadId && (other.tag === "done" || other.tag === "consensus") && (!msg.stepKey || other.stepKey === msg.stepKey)) return true;
+		return false;
+	});
+}
+function inferEventAttentionCategory(ev) {
+	if (ev.attentionCategory && VALID_ATTENTION_CATEGORIES.has(ev.attentionCategory)) return ev.attentionCategory;
+	if (ev.kind === "review:verdict") return ev.severity === "ok" ? void 0 : "review";
+	if (ev.kind === "swarm:stall:detected") return isQuotaText(ev.detail) ? "quota" : "stuck";
+	if (ev.kind === "themis:reflex:escalated") return "failure";
+	if (ev.kind === "step:rollback") return ev.severity === "warn" || ev.severity === "error" ? "failure" : void 0;
+	if (ev.kind === "reproduction:gate") return ev.severity === "warn" || ev.severity === "error" ? "review" : void 0;
+	if (ev.kind === "ephemeral:worker") return ev.severity === "error" ? "failure" : void 0;
+	if (isQuotaText(`${ev.kind} ${ev.detail}`) && ev.severity !== "ok") return "quota";
+	if (ev.kind === "board:message") {
+		const trimmed = ev.detail.trim().toLowerCase();
+		if (trimmed.startsWith("[deadlock]") || trimmed.startsWith("[question]")) return "decision";
+		if (trimmed.startsWith("[blocker]")) return "failure";
+		if (trimmed.startsWith("[alert]")) return "stuck";
+		return ev.severity === "error" ? "failure" : void 0;
+	}
+	if (ev.severity === "error") return "failure";
+}
+function buildRankedAttentionQueue(params) {
+	const { messages, events, steps, children, isPt } = params;
+	const items = [];
+	const seenKeys = /* @__PURE__ */ new Set();
+	const pushItem = (category, title, detail, agent, timestamp, refs) => {
+		const dedupKey = refs.seq !== void 0 ? `seq:${refs.seq}:${category}` : refs.stepKey !== void 0 ? `step:${refs.stepKey}:${category}:${detail}` : `ev:${category}:${agent}:${timestamp}:${detail}`;
+		if (seenKeys.has(dedupKey)) return;
+		seenKeys.add(dedupKey);
+		items.push({
+			rank: ATTENTION_RANK[category],
+			category,
+			title,
+			detail,
+			agent,
+			timestamp,
+			...refs.seq !== void 0 ? { seq: refs.seq } : {},
+			...refs.stepKey !== void 0 ? { stepKey: refs.stepKey } : {},
+			...refs.threadId !== void 0 ? { threadId: refs.threadId } : {}
+		});
+	};
+	const orderedMsgs = [...messages].sort((a, b) => a.seq - b.seq);
+	for (const m of orderedMsgs) {
+		if (isBoardMessageResolved(m, orderedMsgs)) continue;
+		if (m.tag === "deadlock") pushItem("decision", isPt ? "Impasse no conselho" : "Council deadlock", m.body, m.from, m.timestamp, {
+			seq: m.seq,
+			threadId: m.threadId,
+			...m.stepKey !== void 0 ? { stepKey: m.stepKey } : {}
+		});
+		else if (m.tag === "question") pushItem("decision", isPt ? "Decisão pendente" : "Decision needed", m.body, m.from, m.timestamp, {
+			seq: m.seq,
+			threadId: m.threadId,
+			...m.stepKey !== void 0 ? { stepKey: m.stepKey } : {}
+		});
+		else if (m.tag === "blocker") pushItem("failure", isPt ? "Bloqueio reportado" : "Blocker reported", m.body, m.from, m.timestamp, {
+			seq: m.seq,
+			threadId: m.threadId,
+			...m.stepKey !== void 0 ? { stepKey: m.stepKey } : {}
+		});
+		else if (m.tag === "alert") {
+			const cat = isQuotaText(m.body) ? "quota" : "stuck";
+			pushItem(cat, cat === "quota" ? isPt ? "Alerta de cota" : "Quota warning" : isPt ? "Alerta do watchdog" : "Watchdog alert", m.body, m.from, m.timestamp, {
+				seq: m.seq,
+				threadId: m.threadId,
+				...m.stepKey !== void 0 ? { stepKey: m.stepKey } : {}
+			});
+		} else if (m.ephemeral?.status === "failed") pushItem("failure", isPt ? "Worker efêmero falhou" : "Ephemeral worker failed", `${m.ephemeral.role}: ${m.body}`, m.from, m.timestamp, {
+			seq: m.seq,
+			threadId: m.threadId,
+			...m.stepKey !== void 0 ? { stepKey: m.stepKey } : {}
+		});
+	}
+	for (const ev of events) {
+		const category = inferEventAttentionCategory(ev);
+		if (!category) continue;
+		pushItem(category, ev.kind, ev.detail, ev.agent, ev.timestamp, {
+			...ev.seq !== void 0 ? { seq: ev.seq } : {},
+			...ev.stepKey !== void 0 ? { stepKey: ev.stepKey } : {},
+			...ev.threadId !== void 0 ? { threadId: ev.threadId } : {}
+		});
+	}
+	for (const st of steps) if (st.state === "blocked" || st.state === "rolled_back") {
+		if (!items.some((i) => i.category === "failure" && i.stepKey === st.stepKey)) {
+			const parsedTs = Date.parse(st.updatedAt);
+			pushItem("failure", isPt ? `Passo ${st.state}` : `Step ${st.state}`, st.objective || st.stepKey, st.agent, Number.isFinite(parsedTs) ? parsedTs : 0, { stepKey: st.stepKey });
+		}
+	}
+	for (const ch of children) if (ch.status === "failed" || ch.status === "interrupted") pushItem("failure", isPt ? `Subagente ${ch.status}` : `Subagent ${ch.status}`, `${ch.kind} (${ch.id})`, ch.agent, ch.updatedAt, {});
+	return items.sort((a, b) => {
+		if (a.rank !== b.rank) return a.rank - b.rank;
+		if (b.timestamp !== a.timestamp) return b.timestamp - a.timestamp;
+		return (b.seq ?? 0) - (a.seq ?? 0);
+	}).slice(0, 20);
+}
 function buildCockpitSnapshot(input) {
+	const isPt = Boolean(input.isPt);
 	const ctxTokens = Math.max(0, input.contextTokens ?? 0);
 	const ctxWindow = Math.max(1, input.contextWindow ?? 2e5);
 	const ctxPct = Math.min(100, Math.round(ctxTokens / ctxWindow * 100));
@@ -1872,15 +2396,27 @@ function buildCockpitSnapshot(input) {
 	const persistedEvents = input.workspaceDir ? loadPersistedCockpitEvents(input.workspaceDir) : [];
 	const mergedEvents = [...input.events ?? [], ...persistedEvents];
 	const dedup = /* @__PURE__ */ new Map();
-	for (const ev of mergedEvents) dedup.set(`${ev.kind}:${ev.timestamp}:${ev.agent}:${ev.detail}`, ev);
+	for (const ev of mergedEvents) dedup.set(`${ev.kind}:${ev.timestamp}:${ev.agent}:${ev.seq ?? ""}:${ev.detail}`, ev);
 	const events = Array.from(dedup.values()).sort((a, b) => b.timestamp - a.timestamp).slice(0, 40);
+	const persistedBoard = input.workspaceDir ? loadPersistedBoardMessages(input.workspaceDir) : [];
+	const boardDedup = /* @__PURE__ */ new Map();
+	for (const m of [...persistedBoard, ...input.boardMessages ?? []]) boardDedup.set(m.seq, m);
+	const boardMessages = Array.from(boardDedup.values()).sort((a, b) => a.seq - b.seq);
+	const threads = buildOutcomeThreads(boardMessages, isPt);
+	const attention = buildRankedAttentionQueue({
+		messages: boardMessages,
+		events,
+		steps,
+		children: input.children,
+		isPt
+	});
 	const allowed = stepsDone + events.filter((e) => e.severity === "ok").length + completedCount;
 	const approved = steps.filter((s) => Boolean(s.receiptId)).length;
 	const waiting = steps.filter((s) => s.state === "in_progress" || s.state === "pending").length + runningCount;
 	const blocked = steps.filter((s) => s.state === "blocked" || s.state === "rolled_back").length + events.filter((e) => e.severity === "error").length + failedCount;
 	const velocityBlocks = input.children.length > 0 ? input.children.slice(0, 14).map((c) => c.tokens > 2e4 ? "█" : c.tokens > 1e4 ? "▆" : c.tokens > 3e3 ? "▄" : "▂").join("") : "▁▃▅▆▄▂";
 	return {
-		sessionTitle: input.sessionTitle?.trim() || (input.isPt ? "Sessão ativa" : "Active Session"),
+		sessionTitle: input.sessionTitle?.trim() || (isPt ? "Sessão ativa" : "Active Session"),
 		modelName: input.modelName?.trim() || "auto",
 		overview: {
 			contextTokens: ctxTokens,
@@ -1928,6 +2464,8 @@ function buildCockpitSnapshot(input) {
 			totalCost: childCost,
 			rows: swarmRows
 		},
+		threads,
+		attention,
 		flightdeck: {
 			allowed,
 			approved,
@@ -1971,6 +2509,11 @@ function formatCockpitReplayArtifact(snapshot, now = /* @__PURE__ */ new Date())
 	const ganttRows = snapshot.swarm.rows.length > 0 ? snapshot.swarm.rows.map((r) => `| \`@${r.agent}\` | ${r.status} | \`${r.ganttBar}\` | ${r.durationSec}s | $${r.cost.toFixed(4)} |`).join("\n") : "| _none_ | — | `░░░░░░░░░░░░` | 0s | $0.0000 |";
 	const stepLines = snapshot.flightdeck.steps.length > 0 ? snapshot.flightdeck.steps.map((s) => `- **${s.stepKey}** (\`${s.state}\`, \`@${s.agent}\`) — ${s.objective}`).join("\n") : "- No step-ledger entries recorded.";
 	const eventLines = snapshot.flightdeck.logs.length > 0 ? snapshot.flightdeck.logs.map((e) => `- \`[${e.kind}]\` **@${e.agent}**: ${e.detail}`).join("\n") : "- No semantic bus events recorded.";
+	const attentionLines = snapshot.attention.length > 0 ? snapshot.attention.map((a) => {
+		const refs = [a.seq !== void 0 ? `#${a.seq}` : void 0, a.stepKey ? `\`${a.stepKey}\`` : void 0].filter(Boolean).join(" · ");
+		return `- **[${a.category.toUpperCase()}]**${refs ? ` (${refs})` : ""} **@${a.agent}**: ${a.detail}`;
+	}).join("\n") : "- No pending attention items.";
+	const threadLines = snapshot.threads.groups.length > 0 ? snapshot.threads.groups.flatMap((g) => [`- **${g.goal}** (#${g.latestSeq}, \`${g.statusTag}\`)`, ...g.threads.map((t) => `  - \`${t.channel}/${t.threadId}\` (#${t.latestSeq}, \`${t.statusTag}\`, ${t.workstreams.length} workstreams)`)]).join("\n") : "- No board threads recorded.";
 	return {
 		filename,
 		relPath,
@@ -1986,6 +2529,14 @@ function formatCockpitReplayArtifact(snapshot, now = /* @__PURE__ */ new Date())
 			"## Execution Replay Diagram",
 			"",
 			...seqLines,
+			"",
+			"## Ranked Attention Queue",
+			"",
+			attentionLines,
+			"",
+			"## Outcome Threads",
+			"",
+			threadLines,
 			"",
 			"## Swarm Concurrency Timeline",
 			"",
@@ -2120,12 +2671,21 @@ function collectSessionTelemetry(context, sessionID) {
 	};
 }
 function CockpitView(props) {
-	const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
+	const lang = () => resolveLanguage(tuiPrefs().layout?.language);
+	const isPt = () => lang() === "pt-BR";
 	const [tab, setTab] = createSignal("overview");
 	const [selectedRow, setSelectedRow] = createSignal(0);
 	const [showDetail, setShowDetail] = createSignal(false);
 	const [exportNote, setExportNote] = createSignal(null);
 	const [tick, setTick] = createSignal(0);
+	const formatAttentionBadge = (category) => {
+		const l = lang();
+		if (category === "decision") return t(I18N.cockpit.catDecision, l);
+		if (category === "failure") return t(I18N.cockpit.catFailure, l);
+		if (category === "review") return t(I18N.cockpit.catReview, l);
+		if (category === "stuck") return t(I18N.cockpit.catStuck, l);
+		return t(I18N.cockpit.catQuota, l);
+	};
 	const activeSid = () => props.sessionID ?? (props.context?.ui?.router?.current?.()?.type === "session" ? props.context.ui.router.current().sessionID : void 0);
 	const snapshot = () => {
 		tick();
@@ -2238,9 +2798,9 @@ function CockpitView(props) {
 					setProp(_el$43, "onMouseUp", (event) => handleMouseClick(event, () => setTab(t.id)));
 					insert(_el$44, () => `[${t.label}]`);
 					effect((_p$) => {
-						var _v$15 = active() ? accent() : muted(), _v$16 = active() ? 1 : 0;
-						_v$15 !== _p$.e && (_p$.e = setProp(_el$44, "fg", _v$15, _p$.e));
-						_v$16 !== _p$.t && (_p$.t = setProp(_el$44, "attributes", _v$16, _p$.t));
+						var _v$19 = active() ? accent() : muted(), _v$20 = active() ? 1 : 0;
+						_v$19 !== _p$.e && (_p$.e = setProp(_el$44, "fg", _v$19, _p$.e));
+						_v$20 !== _p$.t && (_p$.t = setProp(_el$44, "attributes", _v$20, _p$.t));
 						return _p$;
 					}, {
 						e: void 0,
@@ -2256,22 +2816,22 @@ function CockpitView(props) {
 				return tab() === "overview";
 			},
 			get children() {
-				var _el$11 = createElement("box"), _el$12 = createElement("text"), _el$14 = createElement("text"), _el$15 = createElement("box"), _el$16 = createElement("text"), _el$18 = createElement("box"), _el$19 = createElement("text");
+				var _el$11 = createElement("box"), _el$12 = createElement("text"), _el$13 = createElement("text"), _el$14 = createElement("box"), _el$15 = createElement("text"), _el$16 = createElement("box"), _el$17 = createElement("text");
 				insertNode(_el$11, _el$12);
+				insertNode(_el$11, _el$13);
 				insertNode(_el$11, _el$14);
-				insertNode(_el$11, _el$15);
-				insertNode(_el$11, _el$18);
+				insertNode(_el$11, _el$16);
 				setProp(_el$11, "flexDirection", "column");
 				setProp(_el$11, "marginTop", 1);
-				insertNode(_el$12, createTextNode(`Token Meter &amp; Context`));
 				setProp(_el$12, "attributes", 1);
-				insert(_el$14, () => `Velocity: ${snapshot().overview.velocityBars}   Context: ${snapshot().overview.contextGauge}   Spend: $${snapshot().overview.sessionCost.toFixed(4)}`);
-				insertNode(_el$15, _el$16);
-				setProp(_el$15, "marginTop", 1);
-				setProp(_el$15, "flexDirection", "column");
-				insertNode(_el$16, createTextNode(`Runtime Surfaces &amp; Health`));
-				setProp(_el$16, "attributes", 1);
-				insert(_el$15, createComponent(For, {
+				insert(_el$12, () => t(I18N.cockpit.tokenMeter, lang()));
+				insert(_el$13, () => `Velocity: ${snapshot().overview.velocityBars}   Context: ${snapshot().overview.contextGauge}   Spend: $${snapshot().overview.sessionCost.toFixed(4)}`);
+				insertNode(_el$14, _el$15);
+				setProp(_el$14, "marginTop", 1);
+				setProp(_el$14, "flexDirection", "column");
+				setProp(_el$15, "attributes", 1);
+				insert(_el$15, () => t(I18N.cockpit.runtimeSurfaces, lang()));
+				insert(_el$14, createComponent(For, {
 					get each() {
 						return snapshot().overview.surfaces;
 					},
@@ -2282,12 +2842,12 @@ function CockpitView(props) {
 						return _el$45;
 					})()
 				}), null);
-				insertNode(_el$18, _el$19);
-				setProp(_el$18, "marginTop", 1);
-				setProp(_el$18, "flexDirection", "column");
-				insertNode(_el$19, createTextNode(`Work Map (Topology)`));
-				setProp(_el$19, "attributes", 1);
-				insert(_el$18, createComponent(For, {
+				insertNode(_el$16, _el$17);
+				setProp(_el$16, "marginTop", 1);
+				setProp(_el$16, "flexDirection", "column");
+				setProp(_el$17, "attributes", 1);
+				insert(_el$17, () => t(I18N.cockpit.workMap, lang()));
+				insert(_el$16, createComponent(For, {
 					get each() {
 						return snapshot().overview.workMap;
 					},
@@ -2301,9 +2861,9 @@ function CockpitView(props) {
 				effect((_p$) => {
 					var _v$ = accent(), _v$2 = fg(), _v$3 = accent(), _v$4 = accent();
 					_v$ !== _p$.e && (_p$.e = setProp(_el$12, "fg", _v$, _p$.e));
-					_v$2 !== _p$.t && (_p$.t = setProp(_el$14, "fg", _v$2, _p$.t));
-					_v$3 !== _p$.a && (_p$.a = setProp(_el$16, "fg", _v$3, _p$.a));
-					_v$4 !== _p$.o && (_p$.o = setProp(_el$19, "fg", _v$4, _p$.o));
+					_v$2 !== _p$.t && (_p$.t = setProp(_el$13, "fg", _v$2, _p$.t));
+					_v$3 !== _p$.a && (_p$.a = setProp(_el$15, "fg", _v$3, _p$.a));
+					_v$4 !== _p$.o && (_p$.o = setProp(_el$17, "fg", _v$4, _p$.o));
 					return _p$;
 				}, {
 					e: void 0,
@@ -2319,25 +2879,130 @@ function CockpitView(props) {
 				return tab() === "swarm";
 			},
 			get children() {
-				var _el$21 = createElement("box"), _el$22 = createElement("text"), _el$23 = createElement("box");
-				insertNode(_el$21, _el$22);
-				insertNode(_el$21, _el$23);
-				setProp(_el$21, "flexDirection", "column");
-				setProp(_el$21, "marginTop", 1);
-				setProp(_el$22, "attributes", 1);
-				insert(_el$22, () => `● ${snapshot().swarm.activeCount} active  ✓ ${snapshot().swarm.completedCount} done  ✗ ${snapshot().swarm.failedCount} failed  · $${snapshot().swarm.totalCost.toFixed(4)}`);
-				setProp(_el$23, "marginTop", 1);
-				setProp(_el$23, "flexDirection", "column");
-				insert(_el$23, createComponent(Show, {
+				var _el$18 = createElement("box"), _el$19 = createElement("text"), _el$20 = createElement("box"), _el$21 = createElement("text"), _el$22 = createElement("box"), _el$23 = createElement("text"), _el$24 = createElement("box"), _el$25 = createElement("text");
+				insertNode(_el$18, _el$19);
+				insertNode(_el$18, _el$20);
+				insertNode(_el$18, _el$22);
+				insertNode(_el$18, _el$24);
+				setProp(_el$18, "flexDirection", "column");
+				setProp(_el$18, "marginTop", 1);
+				setProp(_el$19, "attributes", 1);
+				insert(_el$19, () => `● ${snapshot().swarm.activeCount} active  ✓ ${snapshot().swarm.completedCount} done  ✗ ${snapshot().swarm.failedCount} failed  · $${snapshot().swarm.totalCost.toFixed(4)}  · ${snapshot().threads.totalMessages} msgs (#${snapshot().threads.headSeq})  · ${snapshot().attention.length} attn`);
+				insertNode(_el$20, _el$21);
+				setProp(_el$20, "marginTop", 1);
+				setProp(_el$20, "flexDirection", "column");
+				setProp(_el$21, "attributes", 1);
+				insert(_el$21, () => t(I18N.cockpit.attentionQueue, lang()));
+				insert(_el$20, createComponent(Show, {
+					get when() {
+						return snapshot().attention.length > 0;
+					},
+					get fallback() {
+						return (() => {
+							var _el$47 = createElement("text");
+							insert(_el$47, () => t(I18N.cockpit.noAttentionItems, lang()));
+							effect((_$p) => setProp(_el$47, "fg", muted(), _$p));
+							return _el$47;
+						})();
+					},
+					get children() {
+						return createComponent(For, {
+							get each() {
+								return snapshot().attention.slice(0, 6);
+							},
+							children: (item) => {
+								const refs = [item.seq !== void 0 ? `#${item.seq}` : void 0, item.stepKey ? `step=${item.stepKey}` : void 0].filter(Boolean).join(" ");
+								const badge = formatAttentionBadge(item.category);
+								const tone = item.category === "decision" || item.category === "failure" ? errFg() : accent();
+								return (() => {
+									var _el$48 = createElement("text");
+									setProp(_el$48, "fg", tone);
+									insert(_el$48, () => `  [${badge}] ${refs ? `${refs} ` : ""}@${item.agent}: ${item.detail.slice(0, 56)}`);
+									return _el$48;
+								})();
+							}
+						});
+					}
+				}), null);
+				insertNode(_el$22, _el$23);
+				setProp(_el$22, "marginTop", 1);
+				setProp(_el$22, "flexDirection", "column");
+				setProp(_el$23, "attributes", 1);
+				insert(_el$23, () => t(I18N.cockpit.outcomeThreads, lang()));
+				insert(_el$22, createComponent(Show, {
+					get when() {
+						return snapshot().threads.groups.length > 0;
+					},
+					get fallback() {
+						return (() => {
+							var _el$49 = createElement("text");
+							insert(_el$49, () => t(I18N.cockpit.noThreads, lang()));
+							effect((_$p) => setProp(_el$49, "fg", muted(), _$p));
+							return _el$49;
+						})();
+					},
+					get children() {
+						return createComponent(For, {
+							get each() {
+								return snapshot().threads.groups.slice(0, 4);
+							},
+							children: (group) => (() => {
+								var _el$50 = createElement("box"), _el$51 = createElement("text");
+								insertNode(_el$50, _el$51);
+								setProp(_el$50, "flexDirection", "column");
+								setProp(_el$51, "attributes", 1);
+								insert(_el$51, () => `  ▸ ${group.goal} [#${group.latestSeq} · ${group.statusTag}]`);
+								insert(_el$50, createComponent(For, {
+									get each() {
+										return group.threads.slice(0, 3);
+									},
+									children: (thread) => (() => {
+										var _el$52 = createElement("box"), _el$53 = createElement("text");
+										insertNode(_el$52, _el$53);
+										setProp(_el$52, "flexDirection", "column");
+										insert(_el$53, () => `    ├─ ${thread.channel}/${thread.threadId} (#${thread.latestSeq} · ${thread.statusTag})`);
+										insert(_el$52, createComponent(For, {
+											get each() {
+												return thread.workstreams.slice(0, 3);
+											},
+											children: (ws) => {
+												const latestMsg = ws.messages[ws.messages.length - 1];
+												const ephBadge = ws.ephemeral ? ` [eph:${ws.ephemeral.role}->${ws.ephemeral.baseAgent}:${ws.ephemeral.status}]` : "";
+												const stepRef = ws.stepKey ? ` step=${ws.stepKey}` : "";
+												const bodyPreview = latestMsg ? ` #${latestMsg.seq} @${latestMsg.from}: ${latestMsg.body.slice(0, 32)}` : "";
+												return (() => {
+													var _el$54 = createElement("text");
+													insert(_el$54, () => `    │  • ${ws.workstream}${stepRef}${ephBadge} [${ws.statusTag}]${bodyPreview}`);
+													effect((_$p) => setProp(_el$54, "fg", fg(), _$p));
+													return _el$54;
+												})();
+											}
+										}), null);
+										effect((_$p) => setProp(_el$53, "fg", muted(), _$p));
+										return _el$52;
+									})()
+								}), null);
+								effect((_$p) => setProp(_el$51, "fg", fg(), _$p));
+								return _el$50;
+							})()
+						});
+					}
+				}), null);
+				insertNode(_el$24, _el$25);
+				setProp(_el$24, "marginTop", 1);
+				setProp(_el$24, "flexDirection", "column");
+				setProp(_el$25, "attributes", 1);
+				insert(_el$25, () => t(I18N.cockpit.workersGantt, lang()));
+				insert(_el$24, createComponent(Show, {
 					get when() {
 						return snapshot().swarm.rows.length > 0;
 					},
 					get fallback() {
 						return (() => {
-							var _el$47 = createElement("text");
-							insert(_el$47, () => isPt() ? "Nenhum subagente registrado nesta sessão ainda." : "No subagent delegations recorded in this session yet.");
-							effect((_$p) => setProp(_el$47, "fg", muted(), _$p));
-							return _el$47;
+							var _el$55 = createElement("text");
+							insert(_el$55, () => t(I18N.cockpit.noSubagents, lang()));
+							effect((_$p) => setProp(_el$55, "fg", muted(), _$p));
+							return _el$55;
 						})();
 					},
 					get children() {
@@ -2349,35 +3014,47 @@ function CockpitView(props) {
 								const sel = () => idx() === selectedRow();
 								const marker = row.status === "running" ? "●" : row.status === "failed" ? "✗" : "✓";
 								return (() => {
-									var _el$48 = createElement("box"), _el$49 = createElement("text");
-									insertNode(_el$48, _el$49);
-									setProp(_el$48, "flexDirection", "column");
-									setProp(_el$48, "onMouseDown", stopMouseEvent);
-									setProp(_el$48, "onMouseUp", (event) => handleMouseClick(event, () => {
+									var _el$56 = createElement("box"), _el$57 = createElement("text");
+									insertNode(_el$56, _el$57);
+									setProp(_el$56, "flexDirection", "column");
+									setProp(_el$56, "onMouseDown", stopMouseEvent);
+									setProp(_el$56, "onMouseUp", (event) => handleMouseClick(event, () => {
 										setSelectedRow(idx());
 										setShowDetail((v) => !v);
 									}));
-									insert(_el$49, () => `${sel() ? "▸" : " "} ${marker} @${row.agent.padEnd(11)} ${row.ganttBar}  ${String(row.durationSec).padStart(5)}s  $${row.cost.toFixed(3)}`);
-									insert(_el$48, createComponent(Show, {
+									insert(_el$57, () => `${sel() ? "▸" : " "} ${marker} @${row.agent.padEnd(11)} ${row.ganttBar}  ${String(row.durationSec).padStart(5)}s  $${row.cost.toFixed(3)}`);
+									insert(_el$56, createComponent(Show, {
 										get when() {
 											return memo(() => !!sel())() && showDetail();
 										},
 										get children() {
-											var _el$50 = createElement("text");
-											insert(_el$50, () => `    id=${row.id} kind=${row.kind} tokens=${row.tokens} model=${row.model ?? "inherited"}`);
-											effect((_$p) => setProp(_el$50, "fg", muted(), _$p));
-											return _el$50;
+											var _el$58 = createElement("text");
+											insert(_el$58, () => `    id=${row.id} kind=${row.kind} tokens=${row.tokens} model=${row.model ?? "inherited"}`);
+											effect((_$p) => setProp(_el$58, "fg", muted(), _$p));
+											return _el$58;
 										}
 									}), null);
-									effect((_$p) => setProp(_el$49, "fg", sel() ? accent() : fg(), _$p));
-									return _el$48;
+									effect((_$p) => setProp(_el$57, "fg", sel() ? accent() : fg(), _$p));
+									return _el$56;
 								})();
 							}
 						});
 					}
-				}));
-				effect((_$p) => setProp(_el$22, "fg", fg(), _$p));
-				return _el$21;
+				}), null);
+				effect((_p$) => {
+					var _v$5 = fg(), _v$6 = accent(), _v$7 = accent(), _v$8 = accent();
+					_v$5 !== _p$.e && (_p$.e = setProp(_el$19, "fg", _v$5, _p$.e));
+					_v$6 !== _p$.t && (_p$.t = setProp(_el$21, "fg", _v$6, _p$.t));
+					_v$7 !== _p$.a && (_p$.a = setProp(_el$23, "fg", _v$7, _p$.a));
+					_v$8 !== _p$.o && (_p$.o = setProp(_el$25, "fg", _v$8, _p$.o));
+					return _p$;
+				}, {
+					e: void 0,
+					t: void 0,
+					a: void 0,
+					o: void 0
+				});
+				return _el$18;
 			}
 		}), _el$39);
 		insert(_el$, createComponent(Show, {
@@ -2385,34 +3062,34 @@ function CockpitView(props) {
 				return tab() === "flightdeck";
 			},
 			get children() {
-				var _el$24 = createElement("box"), _el$25 = createElement("text"), _el$27 = createElement("text"), _el$28 = createElement("text"), _el$29 = createElement("box"), _el$30 = createElement("text"), _el$32 = createElement("box"), _el$33 = createElement("text"), _el$35 = createElement("box"), _el$36 = createElement("box"), _el$37 = createElement("text");
-				insertNode(_el$24, _el$25);
-				insertNode(_el$24, _el$27);
-				insertNode(_el$24, _el$28);
-				insertNode(_el$24, _el$29);
-				insertNode(_el$24, _el$32);
-				insertNode(_el$24, _el$35);
-				setProp(_el$24, "flexDirection", "column");
-				setProp(_el$24, "marginTop", 1);
-				insertNode(_el$25, createTextNode(`GATE (Safety, Guardrails &amp; Step-Ledger)`));
-				setProp(_el$25, "attributes", 1);
-				insert(_el$27, () => `  ${snapshot().flightdeck.gateGlyphs}`);
-				insert(_el$28, () => `  ${snapshot().flightdeck.gateSummary}`);
-				insertNode(_el$29, _el$30);
-				setProp(_el$29, "marginTop", 1);
-				setProp(_el$29, "flexDirection", "column");
-				insertNode(_el$30, createTextNode(`Step-Ledger &amp; Active Tasks`));
-				setProp(_el$30, "attributes", 1);
-				insert(_el$29, createComponent(Show, {
+				var _el$26 = createElement("box"), _el$27 = createElement("text"), _el$29 = createElement("text"), _el$30 = createElement("text"), _el$31 = createElement("box"), _el$32 = createElement("text"), _el$33 = createElement("box"), _el$34 = createElement("text"), _el$35 = createElement("box"), _el$36 = createElement("box"), _el$37 = createElement("text");
+				insertNode(_el$26, _el$27);
+				insertNode(_el$26, _el$29);
+				insertNode(_el$26, _el$30);
+				insertNode(_el$26, _el$31);
+				insertNode(_el$26, _el$33);
+				insertNode(_el$26, _el$35);
+				setProp(_el$26, "flexDirection", "column");
+				setProp(_el$26, "marginTop", 1);
+				insertNode(_el$27, createTextNode(`GATE (Safety, Guardrails &amp; Step-Ledger)`));
+				setProp(_el$27, "attributes", 1);
+				insert(_el$29, () => `  ${snapshot().flightdeck.gateGlyphs}`);
+				insert(_el$30, () => `  ${snapshot().flightdeck.gateSummary}`);
+				insertNode(_el$31, _el$32);
+				setProp(_el$31, "marginTop", 1);
+				setProp(_el$31, "flexDirection", "column");
+				setProp(_el$32, "attributes", 1);
+				insert(_el$32, () => t(I18N.cockpit.stepLedgerTitle, lang()));
+				insert(_el$31, createComponent(Show, {
 					get when() {
 						return snapshot().flightdeck.steps.length > 0;
 					},
 					get fallback() {
 						return (() => {
-							var _el$51 = createElement("text");
-							insertNode(_el$51, createTextNode(`  (no active step-ledger entries)`));
-							effect((_$p) => setProp(_el$51, "fg", muted(), _$p));
-							return _el$51;
+							var _el$59 = createElement("text");
+							insertNode(_el$59, createTextNode(`  (no active step-ledger entries)`));
+							effect((_$p) => setProp(_el$59, "fg", muted(), _$p));
+							return _el$59;
 						})();
 					},
 					get children() {
@@ -2421,29 +3098,29 @@ function CockpitView(props) {
 								return snapshot().flightdeck.steps.slice(0, 6);
 							},
 							children: (st) => (() => {
-								var _el$53 = createElement("text");
-								insert(_el$53, () => `  ▸ ${st.stepKey.padEnd(20)} [${st.state.padEnd(11)}] @${st.agent}  ${st.objective.slice(0, 36)}`);
-								effect((_$p) => setProp(_el$53, "fg", st.state === "blocked" || st.state === "rolled_back" ? errFg() : success(), _$p));
-								return _el$53;
+								var _el$61 = createElement("text");
+								insert(_el$61, () => `  ▸ ${st.stepKey.padEnd(20)} [${st.state.padEnd(11)}] @${st.agent}  ${st.objective.slice(0, 36)}`);
+								effect((_$p) => setProp(_el$61, "fg", st.state === "blocked" || st.state === "rolled_back" ? errFg() : success(), _$p));
+								return _el$61;
 							})()
 						});
 					}
 				}), null);
-				insertNode(_el$32, _el$33);
-				setProp(_el$32, "marginTop", 1);
-				setProp(_el$32, "flexDirection", "column");
-				insertNode(_el$33, createTextNode(`Semantic Event Stream`));
-				setProp(_el$33, "attributes", 1);
-				insert(_el$32, createComponent(Show, {
+				insertNode(_el$33, _el$34);
+				setProp(_el$33, "marginTop", 1);
+				setProp(_el$33, "flexDirection", "column");
+				setProp(_el$34, "attributes", 1);
+				insert(_el$34, () => t(I18N.cockpit.eventStreamTitle, lang()));
+				insert(_el$33, createComponent(Show, {
 					get when() {
 						return snapshot().flightdeck.logs.length > 0;
 					},
 					get fallback() {
 						return (() => {
-							var _el$54 = createElement("text");
-							insertNode(_el$54, createTextNode(`  (no bus telemetry events captured yet)`));
-							effect((_$p) => setProp(_el$54, "fg", muted(), _$p));
-							return _el$54;
+							var _el$62 = createElement("text");
+							insertNode(_el$62, createTextNode(`  (no bus telemetry events captured yet)`));
+							effect((_$p) => setProp(_el$62, "fg", muted(), _$p));
+							return _el$62;
 						})();
 					},
 					get children() {
@@ -2452,10 +3129,10 @@ function CockpitView(props) {
 								return snapshot().flightdeck.logs.slice(0, 8);
 							},
 							children: (ev) => (() => {
-								var _el$56 = createElement("text");
-								insert(_el$56, () => `  [${ev.kind}] @${ev.agent}: ${ev.detail.slice(0, 56)}`);
-								effect((_$p) => setProp(_el$56, "fg", ev.severity === "error" ? errFg() : muted(), _$p));
-								return _el$56;
+								var _el$64 = createElement("text");
+								insert(_el$64, () => `  [${ev.kind}] @${ev.agent}: ${ev.detail.slice(0, 56)}`);
+								effect((_$p) => setProp(_el$64, "fg", ev.severity === "error" ? errFg() : muted(), _$p));
+								return _el$64;
 							})()
 						});
 					}
@@ -2474,20 +3151,20 @@ function CockpitView(props) {
 						return exportNote();
 					},
 					children: (note) => (() => {
-						var _el$57 = createElement("text");
-						insert(_el$57, () => `✓ ${note()}`);
-						effect((_$p) => setProp(_el$57, "fg", success(), _$p));
-						return _el$57;
+						var _el$65 = createElement("text");
+						insert(_el$65, () => `✓ ${note()}`);
+						effect((_$p) => setProp(_el$65, "fg", success(), _$p));
+						return _el$65;
 					})()
 				}), null);
 				effect((_p$) => {
-					var _v$5 = accent(), _v$6 = fg(), _v$7 = muted(), _v$8 = accent(), _v$9 = accent(), _v$0 = accent();
-					_v$5 !== _p$.e && (_p$.e = setProp(_el$25, "fg", _v$5, _p$.e));
-					_v$6 !== _p$.t && (_p$.t = setProp(_el$27, "fg", _v$6, _p$.t));
-					_v$7 !== _p$.a && (_p$.a = setProp(_el$28, "fg", _v$7, _p$.a));
-					_v$8 !== _p$.o && (_p$.o = setProp(_el$30, "fg", _v$8, _p$.o));
-					_v$9 !== _p$.i && (_p$.i = setProp(_el$33, "fg", _v$9, _p$.i));
-					_v$0 !== _p$.n && (_p$.n = setProp(_el$37, "fg", _v$0, _p$.n));
+					var _v$9 = accent(), _v$0 = fg(), _v$1 = muted(), _v$10 = accent(), _v$11 = accent(), _v$12 = accent();
+					_v$9 !== _p$.e && (_p$.e = setProp(_el$27, "fg", _v$9, _p$.e));
+					_v$0 !== _p$.t && (_p$.t = setProp(_el$29, "fg", _v$0, _p$.t));
+					_v$1 !== _p$.a && (_p$.a = setProp(_el$30, "fg", _v$1, _p$.a));
+					_v$10 !== _p$.o && (_p$.o = setProp(_el$32, "fg", _v$10, _p$.o));
+					_v$11 !== _p$.i && (_p$.i = setProp(_el$34, "fg", _v$11, _p$.i));
+					_v$12 !== _p$.n && (_p$.n = setProp(_el$37, "fg", _v$12, _p$.n));
 					return _p$;
 				}, {
 					e: void 0,
@@ -2497,20 +3174,20 @@ function CockpitView(props) {
 					i: void 0,
 					n: void 0
 				});
-				return _el$24;
+				return _el$26;
 			}
 		}), _el$39);
 		insertNode(_el$39, createTextNode(`────────────────────────────────────────────────────────────────────────`));
 		setProp(_el$39, "marginTop", 1);
 		insertNode(_el$41, createTextNode(`1-3 tabs · Tab/Shift+Tab switch · ↑↓ select · Enter detail · x replay · r refresh · Esc/q close`));
 		effect((_p$) => {
-			var _v$1 = accent(), _v$10 = fg(), _v$11 = muted(), _v$12 = muted(), _v$13 = muted(), _v$14 = muted();
-			_v$1 !== _p$.e && (_p$.e = setProp(_el$4, "fg", _v$1, _p$.e));
-			_v$10 !== _p$.t && (_p$.t = setProp(_el$6, "fg", _v$10, _p$.t));
-			_v$11 !== _p$.a && (_p$.a = setProp(_el$8, "fg", _v$11, _p$.a));
-			_v$12 !== _p$.o && (_p$.o = setProp(_el$1, "fg", _v$12, _p$.o));
-			_v$13 !== _p$.i && (_p$.i = setProp(_el$39, "fg", _v$13, _p$.i));
-			_v$14 !== _p$.n && (_p$.n = setProp(_el$41, "fg", _v$14, _p$.n));
+			var _v$13 = accent(), _v$14 = fg(), _v$15 = muted(), _v$16 = muted(), _v$17 = muted(), _v$18 = muted();
+			_v$13 !== _p$.e && (_p$.e = setProp(_el$4, "fg", _v$13, _p$.e));
+			_v$14 !== _p$.t && (_p$.t = setProp(_el$6, "fg", _v$14, _p$.t));
+			_v$15 !== _p$.a && (_p$.a = setProp(_el$8, "fg", _v$15, _p$.a));
+			_v$16 !== _p$.o && (_p$.o = setProp(_el$1, "fg", _v$16, _p$.o));
+			_v$17 !== _p$.i && (_p$.i = setProp(_el$39, "fg", _v$17, _p$.i));
+			_v$18 !== _p$.n && (_p$.n = setProp(_el$41, "fg", _v$18, _p$.n));
 			return _p$;
 		}, {
 			e: void 0,

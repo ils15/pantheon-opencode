@@ -158,3 +158,234 @@ test('wireCockpitBusRecorder persists PantheonBus events for cross-process TUI F
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('cockpit-state groups board messages into Goal -> Threads -> Workstreams across worktrees', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'pantheon-cockpit-threads-'))
+  try {
+    const repo = join(tmp, 'repo')
+    const wt = join(tmp, 'wt-tui')
+    mkdirSync(join(repo, '.git', 'worktrees', 'wt-tui'), { recursive: true })
+    mkdirSync(join(repo, '.pantheon', 'board'), { recursive: true })
+    mkdirSync(wt, { recursive: true })
+
+    writeFileSync(join(repo, '.git', 'HEAD'), 'ref: refs/heads/main\n')
+    writeFileSync(join(repo, '.git', 'worktrees', 'wt-tui', 'commondir'), '../..\n')
+    writeFileSync(join(wt, '.git'), `gitdir: ${join(repo, '.git', 'worktrees', 'wt-tui')}\n`)
+
+    const lines = [
+      JSON.stringify({
+        seq: 1,
+        timestamp: 1000,
+        channel: 'swarm',
+        threadId: 'thr-auth',
+        goal: 'Ship OAuth PKCE',
+        workstream: 'backend',
+        stepKey: 'step-oauth',
+        from: 'zeus',
+        mentions: ['hermes'],
+        tag: 'claim',
+        body: 'Start PKCE flow',
+        ephemeral: {
+          role: 'oauth-worker',
+          baseAgent: 'hermes',
+          sessionID: 'ses_e1',
+          worktreeDir: wt,
+          status: 'running',
+        },
+      }),
+      JSON.stringify({
+        seq: 2,
+        timestamp: 2000,
+        channel: 'swarm',
+        threadId: 'thr-auth',
+        replyToSeq: 1,
+        stepKey: 'step-oauth',
+        from: 'hermes',
+        mentions: ['themis'],
+        tag: 'handoff',
+        body: 'Ready for review',
+        ephemeral: {
+          role: 'oauth-worker',
+          baseAgent: 'hermes',
+          sessionID: 'ses_e1',
+          worktreeDir: wt,
+          status: 'cleaned',
+        },
+      }),
+      JSON.stringify({
+        seq: 3,
+        timestamp: 3000,
+        channel: 'council',
+        threadId: 'thr-arch',
+        goal: 'Ship OAuth PKCE',
+        workstream: 'token-storage',
+        from: 'apollo',
+        mentions: ['zeus'],
+        tag: 'note',
+        body: 'Recommend memory-only refresh cache',
+      }),
+      '{malformed-json-line',
+    ]
+    writeFileSync(join(repo, '.pantheon', 'board', 'messages.ndjson'), `${lines.join('\n')}\n`)
+
+    const snapshot = buildCockpitSnapshot({ workspaceDir: wt, children: [] })
+    assert.equal(snapshot.threads.totalMessages, 3)
+    assert.equal(snapshot.threads.headSeq, 3)
+    assert.equal(snapshot.threads.groups.length, 1)
+
+    const group = snapshot.threads.groups[0]
+    assert.equal(group.goal, 'Ship OAuth PKCE')
+    assert.equal(group.latestSeq, 3)
+    assert.equal(group.threads.length, 2)
+
+    const authThread = group.threads.find((t) => t.threadId === 'thr-auth')
+    assert.ok(authThread)
+    assert.equal(authThread.statusTag, 'handoff')
+    assert.equal(authThread.workstreams.length, 1)
+    assert.equal(authThread.workstreams[0]?.workstream, 'backend')
+    assert.equal(authThread.workstreams[0]?.stepKey, 'step-oauth')
+    assert.equal(authThread.workstreams[0]?.ephemeral?.role, 'oauth-worker')
+    assert.equal(authThread.workstreams[0]?.ephemeral?.status, 'cleaned')
+    assert.equal(authThread.workstreams[0]?.messages.length, 2)
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test('cockpit-state ranks attention queue decision > failure > review > stuck > quota with #seq & stepKey refs', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-cockpit-attn-'))
+  try {
+    mkdirSync(join(dir, '.pantheon', 'board'), { recursive: true })
+    mkdirSync(join(dir, '.pantheon', 'telemetry'), { recursive: true })
+
+    // Resolved deadlock (#1 -> #2 consensus) must drop out; unresolved deadlock (#6) must rank #1
+    const boardLines = [
+      JSON.stringify({
+        seq: 1,
+        timestamp: 100,
+        channel: 'council',
+        threadId: 'thr-resolved',
+        goal: 'DB Choice',
+        workstream: 'schema',
+        from: 'apollo',
+        mentions: ['zeus'],
+        tag: 'deadlock',
+        body: 'Postgres vs SQLite',
+      }),
+      JSON.stringify({
+        seq: 2,
+        timestamp: 200,
+        channel: 'council',
+        threadId: 'thr-resolved',
+        goal: 'DB Choice',
+        workstream: 'schema',
+        replyToSeq: 1,
+        from: 'zeus',
+        mentions: [],
+        tag: 'consensus',
+        body: 'Resolved: SQLite FTS5',
+      }),
+      JSON.stringify({
+        seq: 4,
+        timestamp: 4000,
+        channel: 'swarm',
+        threadId: 'thr-build',
+        goal: 'Release v2.3',
+        workstream: 'runtime',
+        stepKey: 'step-watchdog',
+        from: 'hermes',
+        mentions: ['zeus'],
+        tag: 'blocker',
+        body: 'Watchdog timer leak on dispose',
+      }),
+      JSON.stringify({
+        seq: 6,
+        timestamp: 2000,
+        channel: 'council',
+        threadId: 'thr-open-deadlock',
+        goal: 'Release v2.3',
+        workstream: 'agora',
+        stepKey: 'step-agora',
+        from: 'athena',
+        mentions: ['zeus'],
+        tag: 'deadlock',
+        body: 'Need user tie-break on rebuttal cap',
+      }),
+    ]
+    writeFileSync(join(dir, '.pantheon', 'board', 'messages.ndjson'), `${boardLines.join('\n')}\n`)
+
+    const eventLines = [
+      JSON.stringify({
+        kind: 'review:verdict',
+        timestamp: 9000,
+        agent: 'themis',
+        detail: 'APPROVE: all tests green',
+        severity: 'ok',
+      }),
+      JSON.stringify({
+        kind: 'review:verdict',
+        timestamp: 5000,
+        agent: 'themis',
+        stepKey: 'step-review',
+        attentionCategory: 'review',
+        detail: 'APPROVE_WITH_NOTES: check edge case',
+        severity: 'warn',
+      }),
+      JSON.stringify({
+        kind: 'swarm:stall:detected',
+        timestamp: 6000,
+        agent: 'talos',
+        stepKey: 'step-stuck',
+        attentionCategory: 'stuck',
+        detail: 'No progress for 90s',
+        severity: 'warn',
+      }),
+      JSON.stringify({
+        kind: 'quota:warning',
+        timestamp: 7000,
+        agent: 'zeus',
+        attentionCategory: 'quota',
+        detail: 'Model quota at 15% remaining',
+        severity: 'warn',
+      }),
+    ]
+    writeFileSync(
+      join(dir, '.pantheon', 'telemetry', 'cockpit-events.ndjson'),
+      `${eventLines.join('\n')}\n`,
+    )
+
+    const snapshot = buildCockpitSnapshot({ workspaceDir: dir, children: [] })
+    assert.deepEqual(
+      snapshot.attention.map((a) => [a.rank, a.category]),
+      [
+        [1, 'decision'],
+        [2, 'failure'],
+        [3, 'review'],
+        [4, 'stuck'],
+        [5, 'quota'],
+      ],
+    )
+    assert.equal(snapshot.attention[0]?.seq, 6)
+    assert.equal(snapshot.attention[0]?.stepKey, 'step-agora')
+    assert.equal(snapshot.attention[0]?.threadId, 'thr-open-deadlock')
+    assert.equal(snapshot.attention[1]?.seq, 4)
+    assert.equal(snapshot.attention[1]?.stepKey, 'step-watchdog')
+    assert.equal(snapshot.attention[2]?.stepKey, 'step-review')
+    assert.equal(snapshot.attention[3]?.stepKey, 'step-stuck')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('cockpit.tsx and settings-i18n.ts expose bilingual Swarm threads and attention queue UI', async () => {
+  const { I18N, t } = await import('../src/plugins/tui/src/settings-i18n.ts')
+  assert.ok(I18N.cockpit)
+  assert.notEqual(t(I18N.cockpit.attentionQueue, 'pt-BR'), t(I18N.cockpit.attentionQueue, 'en'))
+  assert.notEqual(t(I18N.cockpit.outcomeThreads, 'pt-BR'), t(I18N.cockpit.outcomeThreads, 'en'))
+
+  const cockpitSrc = readFileSync(join(root, 'src/plugins/tui/src/cockpit.tsx'), 'utf8')
+  assert.match(cockpitSrc, /snapshot\(\)\.attention/)
+  assert.match(cockpitSrc, /snapshot\(\)\.threads\.groups/)
+  assert.match(cockpitSrc, /stopMouseEvent/)
+  assert.match(cockpitSrc, /handleMouseClick/)
+})
