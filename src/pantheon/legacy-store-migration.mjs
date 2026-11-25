@@ -490,7 +490,7 @@ function isPantheonPluginRef(ref) {
 function classifyLegacyPluginEntry(
   entry,
   configDir,
-  { singularKey, hasNpmNativePlugin, unpinnedBasesPresent, plannedReplacements },
+  { singularKey, hasExplicitNpmNativePlugin, unpinnedBasesPresent, plannedReplacements },
 ) {
   const ref = getPluginRefString(entry)
   if (!ref || !isPantheonPluginRef(ref)) return null
@@ -527,7 +527,22 @@ function classifyLegacyPluginEntry(
   if (isPathLike) {
     const targetPath = isAbsolute(ref) ? ref : resolve(configDir, ref)
     if (!existsSync(targetPath)) return { action: 'remove', ref }
-    if (hasNpmNativePlugin && (norm.includes('/_npx/') || norm.endsWith('/src/plugin'))) {
+    if (norm.includes('/_npx/')) {
+      if (
+        hasExplicitNpmNativePlugin ||
+        unpinnedBasesPresent.has('pantheon-opencode') ||
+        unpinnedBasesPresent.has('pantheon-opencode/plugin') ||
+        plannedReplacements.has('pantheon-opencode')
+      ) {
+        return { action: 'remove', ref }
+      }
+      plannedReplacements.add('pantheon-opencode')
+      return { action: 'replace', ref, replacement: 'pantheon-opencode' }
+    }
+    if (
+      (hasExplicitNpmNativePlugin || plannedReplacements.has('pantheon-opencode')) &&
+      norm.endsWith('/src/plugin')
+    ) {
       return { action: 'remove', ref }
     }
   }
@@ -634,10 +649,10 @@ function inspectConfigFileLegacyItems(filePath, configDir, options = {}) {
       unpinnedBasesPresent.add(parsedRef.base)
     }
   }
-  const hasNpmNativePlugin =
-    options.forceNativePluginActive === true ||
+  const hasExplicitNpmNativePlugin =
     unpinnedBasesPresent.has('pantheon-opencode') ||
     unpinnedBasesPresent.has('pantheon-opencode/plugin')
+  const hasNpmNativePlugin = options.forceNativePluginActive === true || hasExplicitNpmNativePlugin
 
   const isLegacyTuiEntry = (entry) => {
     const ref = getPluginRefString(entry)
@@ -672,7 +687,7 @@ function inspectConfigFileLegacyItems(filePath, configDir, options = {}) {
         ? isLegacyTuiEntry(entry)
         : classifyLegacyPluginEntry(entry, configDir, {
             singularKey: true,
-            hasNpmNativePlugin,
+            hasExplicitNpmNativePlugin,
             unpinnedBasesPresent,
             plannedReplacements,
           })
@@ -687,7 +702,7 @@ function inspectConfigFileLegacyItems(filePath, configDir, options = {}) {
         ? isLegacyTuiEntry(entry)
         : classifyLegacyPluginEntry(entry, configDir, {
             singularKey: false,
-            hasNpmNativePlugin,
+            hasExplicitNpmNativePlugin,
             unpinnedBasesPresent,
             plannedReplacements,
           })

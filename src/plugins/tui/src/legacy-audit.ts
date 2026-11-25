@@ -384,7 +384,22 @@ function classifyAuditPluginEntry(
   if (norm.startsWith('/') || norm.startsWith('.') || norm.includes('/')) {
     const targetPath = isAbsolute(ref) ? ref : resolve(configDir, ref)
     if (!existsSync(targetPath)) return { action: 'remove' }
-    if (hasNpmNativePlugin && (norm.includes('/_npx/') || norm.endsWith('/src/plugin'))) {
+    if (norm.includes('/_npx/')) {
+      if (
+        hasNpmNativePlugin ||
+        unpinnedBases.has('pantheon-opencode') ||
+        unpinnedBases.has('pantheon-opencode/plugin') ||
+        plannedReplacements.has('pantheon-opencode')
+      ) {
+        return { action: 'remove' }
+      }
+      plannedReplacements.add('pantheon-opencode')
+      return { action: 'replace', replacement: 'pantheon-opencode' }
+    }
+    if (
+      (hasNpmNativePlugin || plannedReplacements.has('pantheon-opencode')) &&
+      norm.endsWith('/src/plugin')
+    ) {
       return { action: 'remove' }
     }
   }

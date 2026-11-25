@@ -31,7 +31,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **plugin** — returned `Registration.dispose()` cleanup handle from `setup()`, added `isDisposed()` hook guards, and logged delegation denial context.
 - **tui** — upgraded `SINGLETON` with version eviction and core/TUI version-drift toast notifications instead of silent failure.
-- **migration** — unpinned `<2.3.0` / `@next` entries in `opencode.json(c)`/`tui.json`, swept stale `pantheon-opencode@*`/`_npx` caches, and stripped stale `AGENTS.md` blocks.
+- **migration** — unpinned `<2.3.0`/`@next` entries in config, swept stale `pantheon-opencode@*`/`_npx` caches, and stripped stale `AGENTS.md` blocks.
+- **gate-c** — preserved standalone valid `/src/plugin` entries during startup migration so Gate (c) and local path installs stay registered.
 ## [v2.3.0] - 2026-11-25
 
 ### 🆕 What's New

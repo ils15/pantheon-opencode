@@ -4935,6 +4935,72 @@ async function main(): Promise<void> {
     assert.equal(staleEvent.effect, 'ask', 'disposed permission handler must remain a no-op')
   })
 
+  test('hot-reload cleanup + re-setup preserves hermes->apollo root delegation without stale hook interference', async () => {
+    const permissionHandlers: Array<(event: unknown) => void | Promise<void>> = []
+    const beforeHandlers: Array<(event: unknown, output: unknown) => void | Promise<void>> = []
+    const fakeSession = { id: 'ses_hermes_root', parentID: null }
+
+    const buildCtx = () =>
+      makeBaseContext({
+        session: {
+          get: async () => fakeSession,
+        },
+        tool: {
+          hook: async (
+            name: string,
+            handler: (event: unknown, output: unknown) => void | Promise<void>,
+          ) => {
+            if (name === 'execute.before') beforeHandlers.push(handler)
+            return { dispose: async () => {} }
+          },
+        },
+        permission: {
+          hook: async (_name: string, handler: (event: unknown) => void | Promise<void>) => {
+            permissionHandlers.push(handler)
+            return { dispose: async () => {} }
+          },
+        },
+      })
+
+    const cleanup1 = (await plugin.setup(buildCtx() as never)) as unknown as
+      | (() => void)
+      | undefined
+    cleanup1?.()
+    const cleanup2 = (await plugin.setup(buildCtx() as never)) as unknown as
+      | (() => void)
+      | undefined
+
+    assert.equal(permissionHandlers.length, 2)
+    assert.equal(beforeHandlers.length, 2)
+
+    const toolEvent = {
+      tool: 'subagent',
+      sessionID: 'ses_hermes_root',
+      messageID: 'msg_1',
+      id: 'call_1',
+      agent: 'hermes',
+      input: { agent: 'apollo' },
+    }
+    for (const h of beforeHandlers) await h(toolEvent, {})
+
+    const permEvent: Record<string, unknown> = {
+      sessionID: 'ses_hermes_root',
+      action: 'subagent',
+      resources: ['apollo'],
+      agent: 'hermes',
+      source: { type: 'tool', messageID: 'msg_1', id: 'call_1' },
+      effect: 'allow',
+    }
+    for (const h of permissionHandlers) await h(permEvent)
+
+    assert.equal(
+      permEvent.effect,
+      'allow',
+      'hermes->apollo root delegation must remain allowed after hot-reload cleanup + setup',
+    )
+    cleanup2?.()
+  })
+
   // ─── Summary ───────────────────────────────────────────────────────
 
   for (const { name, fn } of queuedTests) {

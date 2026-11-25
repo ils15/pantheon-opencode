@@ -10139,7 +10139,7 @@ function isPantheonPluginRef(ref) {
   const norm = stripNegationPrefix(ref).replaceAll("\\", "/");
   return /pantheon-hooks(?:\.(?:ts|js|mjs))?$/i.test(norm) || /(?:^|\/)src\/plugin\.ts$/i.test(norm) || /(?:^|\/)pantheon-opencode\/src\/plugin$/i.test(norm);
 }
-function classifyLegacyPluginEntry(entry, configDir, { singularKey, hasNpmNativePlugin, unpinnedBasesPresent, plannedReplacements }) {
+function classifyLegacyPluginEntry(entry, configDir, { singularKey, hasExplicitNpmNativePlugin, unpinnedBasesPresent, plannedReplacements }) {
   const ref = getPluginRefString(entry);
   if (!ref || !isPantheonPluginRef(ref)) return null;
   if (singularKey) return { action: "remove", ref };
@@ -10165,7 +10165,14 @@ function classifyLegacyPluginEntry(entry, configDir, { singularKey, hasNpmNative
   if (isPathLike) {
     const targetPath = isAbsolute5(ref) ? ref : resolve10(configDir, ref);
     if (!existsSync9(targetPath)) return { action: "remove", ref };
-    if (hasNpmNativePlugin && (norm.includes("/_npx/") || norm.endsWith("/src/plugin"))) {
+    if (norm.includes("/_npx/")) {
+      if (hasExplicitNpmNativePlugin || unpinnedBasesPresent.has("pantheon-opencode") || unpinnedBasesPresent.has("pantheon-opencode/plugin") || plannedReplacements.has("pantheon-opencode")) {
+        return { action: "remove", ref };
+      }
+      plannedReplacements.add("pantheon-opencode");
+      return { action: "replace", ref, replacement: "pantheon-opencode" };
+    }
+    if ((hasExplicitNpmNativePlugin || plannedReplacements.has("pantheon-opencode")) && norm.endsWith("/src/plugin")) {
       return { action: "remove", ref };
     }
   }
@@ -10256,7 +10263,8 @@ function inspectConfigFileLegacyItems(filePath, configDir, options = {}) {
       unpinnedBasesPresent.add(parsedRef.base);
     }
   }
-  const hasNpmNativePlugin = options.forceNativePluginActive === true || unpinnedBasesPresent.has("pantheon-opencode") || unpinnedBasesPresent.has("pantheon-opencode/plugin");
+  const hasExplicitNpmNativePlugin = unpinnedBasesPresent.has("pantheon-opencode") || unpinnedBasesPresent.has("pantheon-opencode/plugin");
+  const hasNpmNativePlugin = options.forceNativePluginActive === true || hasExplicitNpmNativePlugin;
   const isLegacyTuiEntry = (entry) => {
     const ref = getPluginRefString(entry);
     if (!ref) return null;
@@ -10283,7 +10291,7 @@ function inspectConfigFileLegacyItems(filePath, configDir, options = {}) {
     parsed.plugin.forEach((entry, index) => {
       const verdict = isTuiConfig ? isLegacyTuiEntry(entry) : classifyLegacyPluginEntry(entry, configDir, {
         singularKey: true,
-        hasNpmNativePlugin,
+        hasExplicitNpmNativePlugin,
         unpinnedBasesPresent,
         plannedReplacements
       });
@@ -10296,7 +10304,7 @@ function inspectConfigFileLegacyItems(filePath, configDir, options = {}) {
     parsed.plugins.forEach((entry, index) => {
       const verdict = isTuiConfig ? isLegacyTuiEntry(entry) : classifyLegacyPluginEntry(entry, configDir, {
         singularKey: false,
-        hasNpmNativePlugin,
+        hasExplicitNpmNativePlugin,
         unpinnedBasesPresent,
         plannedReplacements
       });
