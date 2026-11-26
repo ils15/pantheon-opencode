@@ -80,19 +80,22 @@ const SAFE_SEGMENT_RE = /^[a-zA-Z0-9._:-]{1,128}$/
 const CANONICAL_AGENT_MD_FILES: readonly string[] = Object.freeze([
   'aphrodite.md',
   'apollo.md',
-  'artemis.md',
   'athena.md',
   'demeter.md',
-  'gaia.md',
-  'hephaestus.md',
   'hermes.md',
   'iris.md',
+  'themis.md',
+  'zeus.md',
+])
+
+const OBSOLETE_AGENT_MD_FILES: readonly string[] = Object.freeze([
+  'artemis.md',
+  'gaia.md',
+  'hephaestus.md',
   'mnemosyne.md',
   'nyx.md',
   'prometheus.md',
   'talos.md',
-  'themis.md',
-  'zeus.md',
 ])
 
 const CANONICAL_COMMAND_MD_FILES: readonly string[] = Object.freeze([
@@ -104,9 +107,10 @@ const CANONICAL_COMMAND_MD_FILES: readonly string[] = Object.freeze([
   'pantheon-forge.md',
   'pantheon-model.md',
   'pantheon-optimize.md',
-  'pantheon-settings.md',
   'pantheon-vision.md',
 ])
+
+const OBSOLETE_COMMAND_MD_FILES: readonly string[] = Object.freeze(['pantheon-settings.md'])
 
 const CANONICAL_SKILL_IDS: readonly string[] = Object.freeze([
   'agent-coordination',
@@ -972,6 +976,24 @@ function collectScopeAudit(
       )
     }
 
+    for (const agentFile of OBSOLETE_AGENT_MD_FILES) {
+      addItem(
+        join(configRoot, 'agents', agentFile),
+        'v1Obsolete',
+        'V1-only Pantheon agent removed from the roster',
+      )
+      addItem(
+        join(configRoot, 'agent', agentFile),
+        'v1Obsolete',
+        'V1-only Pantheon agent removed from the roster',
+      )
+      addItem(
+        join(configRoot, 'prompts', agentFile),
+        'v1Obsolete',
+        'V1-only Pantheon agent prompt removed from the roster',
+      )
+    }
+
     for (const cmdFile of CANONICAL_COMMAND_MD_FILES) {
       addItem(
         join(configRoot, 'commands', cmdFile),
@@ -982,6 +1004,19 @@ function collectScopeAudit(
         join(configRoot, 'command', cmdFile),
         'redundantAsset',
         'Legacy singular command directory copy',
+      )
+    }
+
+    for (const cmdFile of OBSOLETE_COMMAND_MD_FILES) {
+      addItem(
+        join(configRoot, 'commands', cmdFile),
+        'v1Obsolete',
+        'Legacy Pantheon command removed from the server transform',
+      )
+      addItem(
+        join(configRoot, 'command', cmdFile),
+        'v1Obsolete',
+        'Legacy Pantheon command removed from the server transform',
       )
     }
 

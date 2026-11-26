@@ -520,6 +520,46 @@ async function main(): Promise<void> {
     }
   })
 
+  test('V2 agent transform removes V1-only agents but preserves custom agents', () => {
+    assert.equal(typeof agentTransformCallback, 'function')
+    const removed: string[] = []
+    const transformedAgents = [
+      { id: 'zeus', mode: 'subagent', system: '' },
+      { id: 'gaia', mode: 'subagent', system: '' },
+      { id: 'talos', mode: 'subagent', system: '' },
+      { id: 'custom-geo', mode: 'subagent', system: '' },
+    ]
+    const draft = {
+      list: () => transformedAgents,
+      get: (id: string) => transformedAgents.find((agent) => agent.id === id),
+      default: () => {},
+      update: (id: string, update: (agent: (typeof transformedAgents)[number]) => void) => {
+        const agent = transformedAgents.find((item) => item.id === id)
+        if (agent) update(agent)
+      },
+      remove: (id: string) => {
+        removed.push(id)
+        const index = transformedAgents.findIndex((agent) => agent.id === id)
+        if (index >= 0) transformedAgents.splice(index, 1)
+      },
+    }
+    agentTransformCallback?.(draft as never)
+
+    assert.deepEqual(removed.sort(), ['gaia', 'talos'])
+    assert.equal(
+      transformedAgents.some((agent) => agent.id === 'gaia'),
+      false,
+    )
+    assert.equal(
+      transformedAgents.some((agent) => agent.id === 'talos'),
+      false,
+    )
+    assert.equal(
+      transformedAgents.some((agent) => agent.id === 'custom-geo'),
+      true,
+    )
+  })
+
   test('zeus agent system includes Pantheon routing policy', () => {
     assert.match(agents[0].system, /Pantheon routing policy/)
   })

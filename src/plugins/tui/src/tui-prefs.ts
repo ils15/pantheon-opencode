@@ -277,7 +277,7 @@ export const DEFAULT_TUI_PREFS: TuiPrefs = {
   sidebar: {
     header: { version: true, preset: true, session: true },
     pinnedSessions: [],
-    blocks: { context: true, git: true, todo: false, dispatch: true },
+    blocks: { context: true, git: true, todo: true, dispatch: true },
     context: {
       gauge: 'both',
       barShape: 'smooth',
@@ -380,7 +380,7 @@ export function normalizeTuiPrefs(raw: unknown): TuiPrefs {
       blocks: {
         context: asBool(blocks.context, true),
         git: asBool(blocks.git, true),
-        todo: asBool(blocks.todo, false),
+        todo: asBool(blocks.todo, true),
         dispatch: asBool(blocks.dispatch, true),
       },
       context: {

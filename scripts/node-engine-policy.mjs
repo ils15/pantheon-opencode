@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-export const MIN_SUPPORTED_NODE_VERSION = '26.4.0'
+export const MIN_SUPPORTED_NODE_VERSION = '26.3.0'
 export const REQUIRED_NODE_ENGINE_RANGE = `>=${MIN_SUPPORTED_NODE_VERSION}`
 
 /** Return actionable, user-managed upgrade guidance for an unsupported runtime. */

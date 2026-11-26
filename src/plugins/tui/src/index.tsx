@@ -1467,12 +1467,12 @@ export const TODO_VISIBLE_CEILING = 6
 /** Content width before the ellipsis — the block has ~30-34 usable columns. */
 export const TODO_TEXT_WIDTH = 28
 
-/** Row markers (`•` in progress, `−` cancelled with U+2212, as in the git row). */
+/** Modern single-glyph row markers (`▸` in progress, `○` pending, `✓` completed, `✕` cancelled). */
 const TODO_MARKERS: Record<TodoStatus, string> = {
-  in_progress: '[\u2022]',
-  pending: '[ ]',
-  completed: '[x]',
-  cancelled: '[\u2212]',
+  in_progress: '\u25B8',
+  pending: '\u25CB',
+  completed: '\u2713',
+  cancelled: '\u2715',
 }
 
 /** Group order: live work first, then open, then closed. */
@@ -2639,7 +2639,7 @@ export function enrichDispatchEntries(
  *  from the view, so a hidden block can never leave an empty gap behind.
  *  Note: The custom Todo block was removed from the sidebar composition because
  *  OpenCode 2.x natively renders the Todo panel when `todowrite` is used. */
-export type SidebarBlockKey = 'context' | 'git' | 'dispatch'
+export type SidebarBlockKey = 'context' | 'git' | 'todo' | 'dispatch'
 
 /** One rendered block: its key, and whether a blank line precedes it. */
 export type SidebarBlock = { key: SidebarBlockKey; spacer: boolean }
@@ -2648,11 +2648,12 @@ export type SidebarBlock = { key: SidebarBlockKey; spacer: boolean }
  *  label. The fixed header (version/preset/session) takes none.
  *  Measured as one terminal cell by the host (`@opentui/core` counts
  *  `emoji-regex` matches as two): ▤ U+25A4 (EAW=A), ◆ U+25C6 (A),
- *  ◈ U+25C8 (A). `⌁` U+2301 (the old Dispatch glyph) was replaced by the host's
- *  own Notice glyph. */
+ *  ▣ U+25A3 (A), ◈ U+25C8 (A). `⌁` U+2301 (the old Dispatch glyph) was
+ *  replaced by the host's own Notice glyph. */
 export const BLOCK_ICONS: Record<SidebarBlockKey, string> = {
   context: '\u25A4',
   git: '\u25C6',
+  todo: '\u25A3',
   dispatch: '\u25C8',
 }
 
@@ -4766,6 +4767,7 @@ export function createSidebarModel(
       present.push('context')
     }
     if (prefs.sidebar.blocks.git && (branch() !== null || gitLine() !== null)) present.push('git')
+    if (prefs.sidebar.blocks.todo && todo().visible.length > 0) present.push('todo')
     if (prefs.sidebar.blocks.dispatch && dispatch() !== null) present.push('dispatch')
     return withBlockSpacers(present)
   })
@@ -5387,6 +5389,58 @@ function SidebarInner(props: SidebarProps): JSX.Element {
           beyond, and `· <F> falhas` on the summary when any child failed. Every
           row is one preformatted line, so no column can be squeezed away by the
           layout; live rows navigate to the child session on click. */}
+      {/* Todo — compact modern task list from `todowrite`. */}
+      <Show when={block('todo')}>
+        <box flexDirection="column">
+          <Show when={spacer('todo')}>
+            <box height={1} />
+          </Show>
+          <BlockHeader
+            icon={BLOCK_ICONS.todo}
+            iconFg="#a78bfa"
+            label="Todo"
+            fg={text()}
+            muted={muted()}
+            right={(() => {
+              const items = model.todo().visible
+              const total = items.length + model.todo().hidden
+              const done = items.filter((t) => t.status === 'completed').length
+              const allDone = total > 0 && done === total
+              return <text fg={allDone ? '#34d399' : muted()}>{`${done}/${total}`}</text>
+            })()}
+          />
+          <For each={model.todo().visible}>
+            {(item) => {
+              const marker = TODO_MARKERS[item.status]
+              const label = truncateLabel(item.content, TODO_TEXT_WIDTH)
+              const markerFg =
+                item.status === 'in_progress'
+                  ? '#38bdf8'
+                  : item.status === 'completed'
+                    ? '#34d399'
+                    : muted()
+              const labelFg =
+                item.status === 'in_progress'
+                  ? '#38bdf8'
+                  : item.status === 'pending'
+                    ? text()
+                    : muted()
+              return (
+                <box flexDirection="row">
+                  <text fg={markerFg}>{`${marker} `}</text>
+                  <text fg={labelFg} attributes={item.status === 'in_progress' ? 1 : 0}>
+                    {label}
+                  </text>
+                </box>
+              )
+            }}
+          </For>
+          <Show when={hiddenTodoText(model.todo().hidden)}>
+            {(line) => <text fg={muted()}>{line()}</text>}
+          </Show>
+        </box>
+      </Show>
+
       <Show when={block('dispatch')}>
         <box flexDirection="column">
           <Show when={spacer('dispatch')}>

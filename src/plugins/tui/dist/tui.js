@@ -1165,7 +1165,7 @@ const DEFAULT_TUI_PREFS = {
 		blocks: {
 			context: true,
 			git: true,
-			todo: false,
+			todo: true,
 			dispatch: true
 		},
 		context: {
@@ -1232,7 +1232,7 @@ function normalizeTuiPrefs(raw) {
 			blocks: {
 				context: asBool(blocks.context, true),
 				git: asBool(blocks.git, true),
-				todo: asBool(blocks.todo, false),
+				todo: asBool(blocks.todo, true),
 				dispatch: asBool(blocks.dispatch, true)
 			},
 			context: {
@@ -4496,7 +4496,7 @@ function nextCheckState(previous, notice, nowMs) {
 * tests/tui-doctor-state.test.mjs.
 */
 /** Drift-pinned against scripts/node-engine-policy.mjs MIN_SUPPORTED_NODE_VERSION. */
-const MIN_SUPPORTED_NODE_VERSION = "26.4.0";
+const MIN_SUPPORTED_NODE_VERSION = "26.3.0";
 function opencodePantheonDir(env = process.env) {
 	const xdg = env.XDG_CONFIG_HOME;
 	const home = env.HOME ?? "";
@@ -4711,19 +4711,21 @@ const SAFE_SEGMENT_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
 const CANONICAL_AGENT_MD_FILES = Object.freeze([
 	"aphrodite.md",
 	"apollo.md",
-	"artemis.md",
 	"athena.md",
 	"demeter.md",
-	"gaia.md",
-	"hephaestus.md",
 	"hermes.md",
 	"iris.md",
+	"themis.md",
+	"zeus.md"
+]);
+const OBSOLETE_AGENT_MD_FILES = Object.freeze([
+	"artemis.md",
+	"gaia.md",
+	"hephaestus.md",
 	"mnemosyne.md",
 	"nyx.md",
 	"prometheus.md",
-	"talos.md",
-	"themis.md",
-	"zeus.md"
+	"talos.md"
 ]);
 const CANONICAL_COMMAND_MD_FILES = Object.freeze([
 	"pantheon.md",
@@ -4734,9 +4736,9 @@ const CANONICAL_COMMAND_MD_FILES = Object.freeze([
 	"pantheon-forge.md",
 	"pantheon-model.md",
 	"pantheon-optimize.md",
-	"pantheon-settings.md",
 	"pantheon-vision.md"
 ]);
+const OBSOLETE_COMMAND_MD_FILES = Object.freeze(["pantheon-settings.md"]);
 const CANONICAL_SKILL_IDS = Object.freeze([
 	"agent-coordination",
 	"agent-forge",
@@ -5373,9 +5375,18 @@ function collectScopeAudit(scope, baseRoot, configRoot, options) {
 			addItem(join(configRoot, "agent", agentFile), "redundantAsset", "Legacy singular agent copy shadowed by native plugin transform");
 			addItem(join(configRoot, "prompts", agentFile), "redundantAsset", "Legacy prompt template copy provided in package");
 		}
+		for (const agentFile of OBSOLETE_AGENT_MD_FILES) {
+			addItem(join(configRoot, "agents", agentFile), "v1Obsolete", "V1-only Pantheon agent removed from the roster");
+			addItem(join(configRoot, "agent", agentFile), "v1Obsolete", "V1-only Pantheon agent removed from the roster");
+			addItem(join(configRoot, "prompts", agentFile), "v1Obsolete", "V1-only Pantheon agent prompt removed from the roster");
+		}
 		for (const cmdFile of CANONICAL_COMMAND_MD_FILES) {
 			addItem(join(configRoot, "commands", cmdFile), "redundantAsset", "Canonical Pantheon command copy shadowed by native plugin transform");
 			addItem(join(configRoot, "command", cmdFile), "redundantAsset", "Legacy singular command directory copy");
+		}
+		for (const cmdFile of OBSOLETE_COMMAND_MD_FILES) {
+			addItem(join(configRoot, "commands", cmdFile), "v1Obsolete", "Legacy Pantheon command removed from the server transform");
+			addItem(join(configRoot, "command", cmdFile), "v1Obsolete", "Legacy Pantheon command removed from the server transform");
 		}
 		for (const instr of LEGACY_INSTRUCTION_FILES) addItem(join(configRoot, "instructions", instr), "redundantAsset", "Legacy instruction file superseded by AGENTS.global.md");
 		if (!(existsSync(join(configRoot, "src", "mcp", "code_mode.py")) && existsSync(join(configRoot, "package.json")))) {
@@ -6249,7 +6260,7 @@ async function readChangelogForBundle(bundleUrl) {
 }
 /** The ambient build-time version, or null outside a tsdown build. */
 function embeddedVersion() {
-	return "2.3.1";
+	return "2.3.2";
 }
 /**
 * Resolve the running Pantheon version for the what's-new window: the plugin
@@ -6491,7 +6502,7 @@ function persistUpdateCheckState(previous, latest) {
 	} catch {}
 }
 function resolveRunningVersion() {
-	return "2.3.1";
+	return "2.3.2";
 }
 const VALUE_WIDTH = 32;
 function SettingsWindow(props) {
@@ -9785,12 +9796,12 @@ function agentKey(value) {
 const TODO_VISIBLE_CEILING = 6;
 /** Content width before the ellipsis — the block has ~30-34 usable columns. */
 const TODO_TEXT_WIDTH = 28;
-/** Row markers (`•` in progress, `−` cancelled with U+2212, as in the git row). */
+/** Modern single-glyph row markers (`▸` in progress, `○` pending, `✓` completed, `✕` cancelled). */
 const TODO_MARKERS = {
-	in_progress: "[•]",
-	pending: "[ ]",
-	completed: "[x]",
-	cancelled: "[−]"
+	in_progress: "▸",
+	pending: "○",
+	completed: "✓",
+	cancelled: "✕"
 };
 /** Group order: live work first, then open, then closed. */
 const TODO_STATUS_ORDER = [
@@ -10673,11 +10684,12 @@ function enrichDispatchEntries(context, entries) {
 *  label. The fixed header (version/preset/session) takes none.
 *  Measured as one terminal cell by the host (`@opentui/core` counts
 *  `emoji-regex` matches as two): ▤ U+25A4 (EAW=A), ◆ U+25C6 (A),
-*  ◈ U+25C8 (A). `⌁` U+2301 (the old Dispatch glyph) was replaced by the host's
-*  own Notice glyph. */
+*  ▣ U+25A3 (A), ◈ U+25C8 (A). `⌁` U+2301 (the old Dispatch glyph) was
+*  replaced by the host's own Notice glyph. */
 const BLOCK_ICONS = {
 	context: "▤",
 	git: "◆",
+	todo: "▣",
 	dispatch: "◈"
 };
 /** Tag every block that has content with its spacer: never before the first
@@ -11610,7 +11622,7 @@ function updateCheckStateFile() {
 *  version via toast, and keeps the persistent Home/Sidebar badge updated. */
 async function checkForPantheonUpdate(context) {
 	const { statePath, readState } = updateCheckStateFile();
-	const currentVersion = "2.3.1";
+	const currentVersion = "2.3.2";
 	const initialState = readState();
 	setAvailableUpdateVersion(resolveCachedAvailableUpdate(currentVersion, initialState));
 	const nowMs = Date.now();
@@ -12218,6 +12230,7 @@ function createSidebarModel(context, sessionID, gitExec = defaultGitExec) {
 		const present = [];
 		if (prefs.sidebar.blocks.context && (contextBlockRows(contextUsage(), cost(), prefs.sidebar.context.gauge) !== null || prefs.sidebar.context.localSpend && contextSpendLine(spend()) !== null || prefs.sidebar.context.turnCost && turnCostLine() !== null || prefs.sidebar.context.tokenAnatomy && tokenAnatomyLine() !== null)) present.push("context");
 		if (prefs.sidebar.blocks.git && (branch() !== null || gitLine() !== null)) present.push("git");
+		if (prefs.sidebar.blocks.todo && todo().visible.length > 0) present.push("todo");
 		if (prefs.sidebar.blocks.dispatch && dispatch() !== null) present.push("dispatch");
 		return withBlockSpacers(present);
 	});
@@ -12467,7 +12480,7 @@ function Sidebar(props) {
 			setProp(_el$13, "paddingLeft", 1);
 			setProp(_el$13, "paddingRight", 1);
 			setProp(_el$14, "attributes", 1);
-			insert(_el$14, `Pantheon v2.3.1`);
+			insert(_el$14, `Pantheon v2.3.2`);
 			insert(_el$15, () => `Erro no painel: ${err?.message ?? "desconhecido"}`);
 			effect((_p$) => {
 				var _v$3 = text(), _v$4 = muted();
@@ -12521,9 +12534,9 @@ function SidebarInner(props) {
 	};
 	const failedSuffix = () => failedSuffixText(dispatchView()?.failures);
 	const header = () => tuiPrefs().sidebar.header;
-	const availableUpdate = useAvailableUpdate("2.3.1");
+	const availableUpdate = useAvailableUpdate("2.3.2");
 	const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
-	const updateBadge = () => formatUpdateBadge("2.3.1", availableUpdate(), { isPt: isPt() });
+	const updateBadge = () => formatUpdateBadge("2.3.2", availableUpdate(), { isPt: isPt() });
 	const artifacts = useWorkspaceArtifacts(context);
 	const activePlan = () => artifacts().find((entry) => entry.kind === "plan");
 	return (() => {
@@ -12543,7 +12556,7 @@ function SidebarInner(props) {
 			get children() {
 				var _el$18 = createElement("text");
 				setProp(_el$18, "attributes", 1);
-				insert(_el$18, `Pantheon v2.3.1`);
+				insert(_el$18, `Pantheon v2.3.2`);
 				effect((_$p) => setProp(_el$18, "fg", text(), _$p));
 				return _el$18;
 			}
@@ -12554,10 +12567,10 @@ function SidebarInner(props) {
 				return model.turnsBadge();
 			},
 			children: (turns) => (() => {
-				var _el$41 = createElement("text");
-				insert(_el$41, turns);
-				effect((_$p) => setProp(_el$41, "fg", muted(), _$p));
-				return _el$41;
+				var _el$43 = createElement("text");
+				insert(_el$43, turns);
+				effect((_$p) => setProp(_el$43, "fg", muted(), _$p));
+				return _el$43;
 			})()
 		}), null);
 		insert(_el$19, createComponent(Show, {
@@ -12576,15 +12589,15 @@ function SidebarInner(props) {
 				return memo(() => !!header().version)() && updateBadge();
 			},
 			children: (badge) => (() => {
-				var _el$42 = createElement("box"), _el$43 = createElement("text");
-				insertNode(_el$42, _el$43);
-				setProp(_el$42, "onMouseDown", stopMouseEvent);
-				setProp(_el$42, "onMouseUp", (event) => handleMouseClick(event, () => {
+				var _el$44 = createElement("box"), _el$45 = createElement("text");
+				insertNode(_el$44, _el$45);
+				setProp(_el$44, "onMouseDown", stopMouseEvent);
+				setProp(_el$44, "onMouseUp", (event) => handleMouseClick(event, () => {
 					openPantheonSettings(context, { initialTab: "updates" });
 				}));
-				insert(_el$43, badge);
-				effect((_$p) => setProp(_el$43, "fg", accent(), _$p));
-				return _el$42;
+				insert(_el$45, badge);
+				effect((_$p) => setProp(_el$45, "fg", accent(), _$p));
+				return _el$44;
 			})()
 		}), null);
 		insert(_el$16, createComponent(Show, {
@@ -12638,28 +12651,28 @@ function SidebarInner(props) {
 					}
 				};
 				return (() => {
-					var _el$44 = createElement("box"), _el$45 = createElement("text");
-					insertNode(_el$44, _el$45);
-					setProp(_el$44, "flexDirection", "row");
-					setProp(_el$44, "justifyContent", "space-between");
-					insert(_el$45, leftPreset);
-					insert(_el$44, createComponent(Show, {
+					var _el$46 = createElement("box"), _el$47 = createElement("text");
+					insertNode(_el$46, _el$47);
+					setProp(_el$46, "flexDirection", "row");
+					setProp(_el$46, "justifyContent", "space-between");
+					insert(_el$47, leftPreset);
+					insert(_el$46, createComponent(Show, {
 						get when() {
 							return badge();
 						},
 						children: (b) => (() => {
-							var _el$46 = createElement("box"), _el$47 = createElement("text");
-							insertNode(_el$46, _el$47);
-							setProp(_el$46, "onMouseDown", triggerCompaction);
-							setProp(_el$46, "flexShrink", 0);
-							setProp(_el$47, "attributes", 1);
-							insert(_el$47, b);
-							effect((_$p) => setProp(_el$47, "fg", accent(), _$p));
-							return _el$46;
+							var _el$48 = createElement("box"), _el$49 = createElement("text");
+							insertNode(_el$48, _el$49);
+							setProp(_el$48, "onMouseDown", triggerCompaction);
+							setProp(_el$48, "flexShrink", 0);
+							setProp(_el$49, "attributes", 1);
+							insert(_el$49, b);
+							effect((_$p) => setProp(_el$49, "fg", accent(), _$p));
+							return _el$48;
 						})()
 					}), null);
-					effect((_$p) => setProp(_el$45, "fg", muted(), _$p));
-					return _el$44;
+					effect((_$p) => setProp(_el$47, "fg", muted(), _$p));
+					return _el$46;
 				})();
 			}
 		}), null);
@@ -12674,40 +12687,40 @@ function SidebarInner(props) {
 					},
 					get fallback() {
 						return (() => {
-							var _el$49 = createElement("box");
-							setProp(_el$49, "height", 0);
-							return _el$49;
+							var _el$51 = createElement("box");
+							setProp(_el$51, "height", 0);
+							return _el$51;
 						})();
 					},
 					get children() {
-						var _el$48 = createElement("text");
-						insert(_el$48, () => sidebarPlaceholder(props.sessionID));
-						effect((_$p) => setProp(_el$48, "fg", muted(), _$p));
-						return _el$48;
+						var _el$50 = createElement("text");
+						insert(_el$50, () => sidebarPlaceholder(props.sessionID));
+						effect((_$p) => setProp(_el$50, "fg", muted(), _$p));
+						return _el$50;
 					}
 				});
 			},
 			children: (current) => (() => {
-				var _el$50 = createElement("box"), _el$51 = createElement("text"), _el$53 = createElement("text"), _el$55 = createElement("text");
-				insertNode(_el$50, _el$51);
-				insertNode(_el$50, _el$53);
-				insertNode(_el$50, _el$55);
-				setProp(_el$50, "flexDirection", "row");
-				insertNode(_el$51, createTextNode(`● `));
-				setProp(_el$51, "fg", "#22c55e");
-				insertNode(_el$53, createTextNode(`Session: `));
-				setProp(_el$55, "attributes", 1);
-				insert(_el$55, () => truncateLabel(current().title || current().id, 18));
+				var _el$52 = createElement("box"), _el$53 = createElement("text"), _el$55 = createElement("text"), _el$57 = createElement("text");
+				insertNode(_el$52, _el$53);
+				insertNode(_el$52, _el$55);
+				insertNode(_el$52, _el$57);
+				setProp(_el$52, "flexDirection", "row");
+				insertNode(_el$53, createTextNode(`● `));
+				setProp(_el$53, "fg", "#22c55e");
+				insertNode(_el$55, createTextNode(`Session: `));
+				setProp(_el$57, "attributes", 1);
+				insert(_el$57, () => truncateLabel(current().title || current().id, 18));
 				effect((_p$) => {
 					var _v$7 = muted(), _v$8 = text();
-					_v$7 !== _p$.e && (_p$.e = setProp(_el$53, "fg", _v$7, _p$.e));
-					_v$8 !== _p$.t && (_p$.t = setProp(_el$55, "fg", _v$8, _p$.t));
+					_v$7 !== _p$.e && (_p$.e = setProp(_el$55, "fg", _v$7, _p$.e));
+					_v$8 !== _p$.t && (_p$.t = setProp(_el$57, "fg", _v$8, _p$.t));
 					return _p$;
 				}, {
 					e: void 0,
 					t: void 0
 				});
-				return _el$50;
+				return _el$52;
 			})()
 		}), null);
 		insert(_el$16, createComponent(Show, {
@@ -12766,16 +12779,16 @@ function SidebarInner(props) {
 									return l;
 								};
 								return (() => {
-									var _el$56 = createElement("box"), _el$57 = createElement("text"), _el$59 = createElement("text");
-									insertNode(_el$56, _el$57);
-									insertNode(_el$56, _el$59);
-									setProp(_el$56, "flexDirection", "row");
-									insertNode(_el$57, createTextNode(`Turn: `));
-									setProp(_el$59, "fg", "#34d399");
-									setProp(_el$59, "attributes", 1);
-									insert(_el$59, () => display().replace(/^Turn:\s*/, ""));
-									effect((_$p) => setProp(_el$57, "fg", muted(), _$p));
-									return _el$56;
+									var _el$58 = createElement("box"), _el$59 = createElement("text"), _el$61 = createElement("text");
+									insertNode(_el$58, _el$59);
+									insertNode(_el$58, _el$61);
+									setProp(_el$58, "flexDirection", "row");
+									insertNode(_el$59, createTextNode(`Turn: `));
+									setProp(_el$61, "fg", "#34d399");
+									setProp(_el$61, "attributes", 1);
+									insert(_el$61, () => display().replace(/^Turn:\s*/, ""));
+									effect((_$p) => setProp(_el$59, "fg", muted(), _$p));
+									return _el$58;
 								})();
 							}
 						});
@@ -12786,17 +12799,17 @@ function SidebarInner(props) {
 						return contextRows();
 					},
 					children: (rows) => (() => {
-						var _el$60 = createElement("box");
-						setProp(_el$60, "flexDirection", "column");
-						insert(_el$60, createComponent(Show, {
+						var _el$62 = createElement("box");
+						setProp(_el$62, "flexDirection", "column");
+						insert(_el$62, createComponent(Show, {
 							get when() {
 								return rows().percent;
 							},
 							children: (row) => (() => {
-								var _el$61 = createElement("box");
-								setProp(_el$61, "flexDirection", "row");
-								setProp(_el$61, "justifyContent", "space-between");
-								insert(_el$61, createComponent(ContextRowView, {
+								var _el$63 = createElement("box");
+								setProp(_el$63, "flexDirection", "row");
+								setProp(_el$63, "justifyContent", "space-between");
+								insert(_el$63, createComponent(ContextRowView, {
 									get row() {
 										return memo(() => !!model.contextRatioLine())() ? {
 											...row(),
@@ -12810,30 +12823,30 @@ function SidebarInner(props) {
 										return muted();
 									}
 								}), null);
-								insert(_el$61, createComponent(Show, {
+								insert(_el$63, createComponent(Show, {
 									get when() {
 										return model.contextRatioLine();
 									},
 									children: (ratio) => {
 										const parts = ratio().split(" / ");
 										return (() => {
-											var _el$62 = createElement("box"), _el$63 = createElement("text"), _el$64 = createElement("text");
-											insertNode(_el$62, _el$63);
-											insertNode(_el$62, _el$64);
-											setProp(_el$62, "flexDirection", "row");
-											setProp(_el$63, "fg", "#f1f5f9");
-											setProp(_el$63, "attributes", 1);
-											insert(_el$63, () => parts[0]);
-											insert(_el$64, () => ` / ${parts[1] ?? ""}`);
-											effect((_$p) => setProp(_el$64, "fg", muted(), _$p));
-											return _el$62;
+											var _el$64 = createElement("box"), _el$65 = createElement("text"), _el$66 = createElement("text");
+											insertNode(_el$64, _el$65);
+											insertNode(_el$64, _el$66);
+											setProp(_el$64, "flexDirection", "row");
+											setProp(_el$65, "fg", "#f1f5f9");
+											setProp(_el$65, "attributes", 1);
+											insert(_el$65, () => parts[0]);
+											insert(_el$66, () => ` / ${parts[1] ?? ""}`);
+											effect((_$p) => setProp(_el$66, "fg", muted(), _$p));
+											return _el$64;
 										})();
 									}
 								}), null);
-								return _el$61;
+								return _el$63;
 							})()
 						}), null);
-						insert(_el$60, createComponent(Show, {
+						insert(_el$62, createComponent(Show, {
 							get when() {
 								return memo(() => !!rows().tokens)() && !rows().percent;
 							},
@@ -12849,7 +12862,7 @@ function SidebarInner(props) {
 								}
 							})
 						}), null);
-						insert(_el$60, createComponent(Show, {
+						insert(_el$62, createComponent(Show, {
 							get when() {
 								return rows().spent;
 							},
@@ -12865,7 +12878,7 @@ function SidebarInner(props) {
 								}
 							})
 						}), null);
-						return _el$60;
+						return _el$62;
 					})()
 				}), _el$25);
 				insert(_el$23, createComponent(Show, {
@@ -12873,57 +12886,57 @@ function SidebarInner(props) {
 						return memo(() => !!tuiPrefs().sidebar.context.tokenAnatomy)() && model.tokenAnatomySplit();
 					},
 					children: (anatomy) => (() => {
-						var _el$65 = createElement("box"), _el$66 = createElement("box"), _el$67 = createElement("text"), _el$69 = createElement("text");
-						insertNode(_el$65, _el$66);
-						setProp(_el$65, "flexDirection", "row");
-						setProp(_el$65, "justifyContent", "space-between");
-						insertNode(_el$66, _el$67);
-						insertNode(_el$66, _el$69);
-						setProp(_el$66, "flexDirection", "row");
-						insertNode(_el$67, createTextNode(`↑`));
-						setProp(_el$67, "fg", "#60a5fa");
-						insert(_el$69, () => anatomy().inOut?.split(" · ")[0]?.replace(/^↑\s*/, "") ?? "");
-						insert(_el$66, createComponent(Show, {
+						var _el$67 = createElement("box"), _el$68 = createElement("box"), _el$69 = createElement("text"), _el$71 = createElement("text");
+						insertNode(_el$67, _el$68);
+						setProp(_el$67, "flexDirection", "row");
+						setProp(_el$67, "justifyContent", "space-between");
+						insertNode(_el$68, _el$69);
+						insertNode(_el$68, _el$71);
+						setProp(_el$68, "flexDirection", "row");
+						insertNode(_el$69, createTextNode(`↑`));
+						setProp(_el$69, "fg", "#60a5fa");
+						insert(_el$71, () => anatomy().inOut?.split(" · ")[0]?.replace(/^↑\s*/, "") ?? "");
+						insert(_el$68, createComponent(Show, {
 							get when() {
 								return anatomy().inOut?.includes(" · ");
 							},
 							get children() {
 								return [
 									(() => {
-										var _el$70 = createElement("text");
-										insertNode(_el$70, createTextNode(` · `));
-										effect((_$p) => setProp(_el$70, "fg", muted(), _$p));
-										return _el$70;
-									})(),
-									(() => {
 										var _el$72 = createElement("text");
-										insertNode(_el$72, createTextNode(`↓`));
-										setProp(_el$72, "fg", "#4ade80");
+										insertNode(_el$72, createTextNode(` · `));
+										effect((_$p) => setProp(_el$72, "fg", muted(), _$p));
 										return _el$72;
 									})(),
 									(() => {
 										var _el$74 = createElement("text");
-										insert(_el$74, () => anatomy().inOut?.split(" · ")[1]?.replace(/^↓\s*/, "") ?? "");
-										effect((_$p) => setProp(_el$74, "fg", muted(), _$p));
+										insertNode(_el$74, createTextNode(`↓`));
+										setProp(_el$74, "fg", "#4ade80");
 										return _el$74;
+									})(),
+									(() => {
+										var _el$76 = createElement("text");
+										insert(_el$76, () => anatomy().inOut?.split(" · ")[1]?.replace(/^↓\s*/, "") ?? "");
+										effect((_$p) => setProp(_el$76, "fg", muted(), _$p));
+										return _el$76;
 									})()
 								];
 							}
 						}), null);
-						insert(_el$65, createComponent(Show, {
+						insert(_el$67, createComponent(Show, {
 							get when() {
 								return anatomy().think;
 							},
 							children: (think) => (() => {
-								var _el$75 = createElement("text");
-								setProp(_el$75, "fg", "#c084fc");
-								setProp(_el$75, "attributes", 1);
-								insert(_el$75, think);
-								return _el$75;
+								var _el$77 = createElement("text");
+								setProp(_el$77, "fg", "#c084fc");
+								setProp(_el$77, "attributes", 1);
+								insert(_el$77, think);
+								return _el$77;
 							})()
 						}), null);
-						effect((_$p) => setProp(_el$69, "fg", muted(), _$p));
-						return _el$65;
+						effect((_$p) => setProp(_el$71, "fg", muted(), _$p));
+						return _el$67;
 					})()
 				}), _el$25);
 				insert(_el$23, createComponent(Show, {
@@ -12931,33 +12944,33 @@ function SidebarInner(props) {
 						return memo(() => !!tuiPrefs().sidebar.context.performance)() && model.performanceSplit();
 					},
 					children: (perf) => (() => {
-						var _el$76 = createElement("box"), _el$77 = createElement("box"), _el$78 = createElement("text"), _el$80 = createElement("text"), _el$81 = createElement("box"), _el$82 = createElement("text"), _el$84 = createElement("text");
-						insertNode(_el$76, _el$77);
-						insertNode(_el$76, _el$81);
-						setProp(_el$76, "flexDirection", "row");
-						setProp(_el$76, "justifyContent", "space-between");
-						insertNode(_el$77, _el$78);
-						insertNode(_el$77, _el$80);
-						setProp(_el$77, "flexDirection", "row");
-						insertNode(_el$78, createTextNode(`Cache: `));
-						setProp(_el$80, "fg", "#34d399");
-						insert(_el$80, () => perf().cache?.replace(/^Cache:\s*/, "") ?? "");
-						insertNode(_el$81, _el$82);
-						insertNode(_el$81, _el$84);
-						setProp(_el$81, "flexDirection", "row");
-						insertNode(_el$82, createTextNode(`Speed: `));
-						setProp(_el$84, "fg", "#38bdf8");
-						insert(_el$84, () => perf().speed?.replace(/^Speed:\s*/, "") ?? "");
+						var _el$78 = createElement("box"), _el$79 = createElement("box"), _el$80 = createElement("text"), _el$82 = createElement("text"), _el$83 = createElement("box"), _el$84 = createElement("text"), _el$86 = createElement("text");
+						insertNode(_el$78, _el$79);
+						insertNode(_el$78, _el$83);
+						setProp(_el$78, "flexDirection", "row");
+						setProp(_el$78, "justifyContent", "space-between");
+						insertNode(_el$79, _el$80);
+						insertNode(_el$79, _el$82);
+						setProp(_el$79, "flexDirection", "row");
+						insertNode(_el$80, createTextNode(`Cache: `));
+						setProp(_el$82, "fg", "#34d399");
+						insert(_el$82, () => perf().cache?.replace(/^Cache:\s*/, "") ?? "");
+						insertNode(_el$83, _el$84);
+						insertNode(_el$83, _el$86);
+						setProp(_el$83, "flexDirection", "row");
+						insertNode(_el$84, createTextNode(`Speed: `));
+						setProp(_el$86, "fg", "#38bdf8");
+						insert(_el$86, () => perf().speed?.replace(/^Speed:\s*/, "") ?? "");
 						effect((_p$) => {
 							var _v$9 = muted(), _v$0 = muted();
-							_v$9 !== _p$.e && (_p$.e = setProp(_el$78, "fg", _v$9, _p$.e));
-							_v$0 !== _p$.t && (_p$.t = setProp(_el$82, "fg", _v$0, _p$.t));
+							_v$9 !== _p$.e && (_p$.e = setProp(_el$80, "fg", _v$9, _p$.e));
+							_v$0 !== _p$.t && (_p$.t = setProp(_el$84, "fg", _v$0, _p$.t));
 							return _p$;
 						}, {
 							e: void 0,
 							t: void 0
 						});
-						return _el$76;
+						return _el$78;
 					})()
 				}), _el$25);
 				insertNode(_el$25, createTextNode(`──────────────────────────────`));
@@ -12971,17 +12984,17 @@ function SidebarInner(props) {
 					},
 					get fallback() {
 						return (() => {
-							var _el$85 = createElement("text");
-							insertNode(_el$85, createTextNode(`tools: 0 (0 err)`));
-							effect((_$p) => setProp(_el$85, "fg", muted(), _$p));
-							return _el$85;
+							var _el$87 = createElement("text");
+							insertNode(_el$87, createTextNode(`tools: 0 (0 err)`));
+							effect((_$p) => setProp(_el$87, "fg", muted(), _$p));
+							return _el$87;
 						})();
 					},
 					children: (line) => (() => {
-						var _el$87 = createElement("text");
-						insert(_el$87, line);
-						effect((_$p) => setProp(_el$87, "fg", muted(), _$p));
-						return _el$87;
+						var _el$89 = createElement("text");
+						insert(_el$89, line);
+						effect((_$p) => setProp(_el$89, "fg", muted(), _$p));
+						return _el$89;
 					})()
 				}), _el$28);
 				setProp(_el$28, "fg", "#22c55e");
@@ -12992,10 +13005,10 @@ function SidebarInner(props) {
 						return model.toolCallsDetailLine();
 					},
 					children: (line) => (() => {
-						var _el$88 = createElement("text");
-						insert(_el$88, line);
-						effect((_$p) => setProp(_el$88, "fg", muted(), _$p));
-						return _el$88;
+						var _el$90 = createElement("text");
+						insert(_el$90, line);
+						effect((_$p) => setProp(_el$90, "fg", muted(), _$p));
+						return _el$90;
 					})()
 				}), null);
 				insert(_el$23, createComponent(Show, {
@@ -13021,20 +13034,20 @@ function SidebarInner(props) {
 									return usageRows();
 								},
 								children: (row) => (() => {
-									var _el$89 = createElement("box");
-									setProp(_el$89, "flexDirection", "column");
-									insert(_el$89, createComponent(For, {
+									var _el$91 = createElement("box");
+									setProp(_el$91, "flexDirection", "column");
+									insert(_el$91, createComponent(For, {
 										get each() {
 											return modelUsageRowLines(row);
 										},
 										children: (line) => (() => {
-											var _el$90 = createElement("text");
-											insert(_el$90, line);
-											effect((_$p) => setProp(_el$90, "fg", text(), _$p));
-											return _el$90;
+											var _el$92 = createElement("text");
+											insert(_el$92, line);
+											effect((_$p) => setProp(_el$92, "fg", text(), _$p));
+											return _el$92;
 										})()
 									}));
-									return _el$89;
+									return _el$91;
 								})()
 							}),
 							createComponent(Show, {
@@ -13046,10 +13059,10 @@ function SidebarInner(props) {
 										return sidebarTextLines(line());
 									},
 									children: (part) => (() => {
-										var _el$91 = createElement("text");
-										insert(_el$91, part);
-										effect((_$p) => setProp(_el$91, "fg", muted(), _$p));
-										return _el$91;
+										var _el$93 = createElement("text");
+										insert(_el$93, part);
+										effect((_$p) => setProp(_el$93, "fg", muted(), _$p));
+										return _el$93;
 									})()
 								})
 							})
@@ -13065,10 +13078,10 @@ function SidebarInner(props) {
 							return contextSpendLines(line());
 						},
 						children: (part) => (() => {
-							var _el$92 = createElement("text");
-							insert(_el$92, part);
-							effect((_$p) => setProp(_el$92, "fg", muted(), _$p));
-							return _el$92;
+							var _el$94 = createElement("text");
+							insert(_el$94, part);
+							effect((_$p) => setProp(_el$94, "fg", muted(), _$p));
+							return _el$94;
 						})()
 					})
 				}), null);
@@ -13113,16 +13126,16 @@ function SidebarInner(props) {
 						return model.branch();
 					},
 					children: (value) => (() => {
-						var _el$93 = createElement("box"), _el$94 = createElement("text"), _el$96 = createElement("text");
-						insertNode(_el$93, _el$94);
-						insertNode(_el$93, _el$96);
-						setProp(_el$93, "flexDirection", "row");
-						insertNode(_el$94, createTextNode(`⎇ `));
-						setProp(_el$94, "fg", "#38bdf8");
-						setProp(_el$96, "attributes", 1);
-						insert(_el$96, () => truncateLabel(value(), 24));
-						effect((_$p) => setProp(_el$96, "fg", text(), _$p));
-						return _el$93;
+						var _el$95 = createElement("box"), _el$96 = createElement("text"), _el$98 = createElement("text");
+						insertNode(_el$95, _el$96);
+						insertNode(_el$95, _el$98);
+						setProp(_el$95, "flexDirection", "row");
+						insertNode(_el$96, createTextNode(`⎇ `));
+						setProp(_el$96, "fg", "#38bdf8");
+						setProp(_el$98, "attributes", 1);
+						insert(_el$98, () => truncateLabel(value(), 24));
+						effect((_$p) => setProp(_el$98, "fg", text(), _$p));
+						return _el$95;
 					})()
 				}), null);
 				insert(_el$35, createComponent(Show, {
@@ -13130,10 +13143,10 @@ function SidebarInner(props) {
 						return model.gitLine();
 					},
 					children: (line) => (() => {
-						var _el$97 = createElement("text");
-						setProp(_el$97, "fg", "#f59e0b");
-						insert(_el$97, line);
-						return _el$97;
+						var _el$99 = createElement("text");
+						setProp(_el$99, "fg", "#f59e0b");
+						insert(_el$99, line);
+						return _el$99;
 					})()
 				}), null);
 				return _el$33;
@@ -13141,14 +13154,14 @@ function SidebarInner(props) {
 		}), null);
 		insert(_el$16, createComponent(Show, {
 			get when() {
-				return block("dispatch");
+				return block("todo");
 			},
 			get children() {
 				var _el$36 = createElement("box");
 				setProp(_el$36, "flexDirection", "column");
 				insert(_el$36, createComponent(Show, {
 					get when() {
-						return spacer("dispatch");
+						return spacer("todo");
 					},
 					get children() {
 						var _el$37 = createElement("box");
@@ -13156,14 +13169,93 @@ function SidebarInner(props) {
 						return _el$37;
 					}
 				}), null);
+				insert(_el$36, createComponent(BlockHeader, {
+					get icon() {
+						return BLOCK_ICONS.todo;
+					},
+					iconFg: "#a78bfa",
+					label: "Todo",
+					get fg() {
+						return text();
+					},
+					get muted() {
+						return muted();
+					},
+					get right() {
+						const items = model.todo().visible;
+						const total = items.length + model.todo().hidden;
+						const done = items.filter((t) => t.status === "completed").length;
+						const allDone = total > 0 && done === total;
+						return (() => {
+							var _el$100 = createElement("text");
+							insert(_el$100, `${done}/${total}`);
+							effect((_$p) => setProp(_el$100, "fg", allDone ? "#34d399" : muted(), _$p));
+							return _el$100;
+						})();
+					}
+				}), null);
+				insert(_el$36, createComponent(For, {
+					get each() {
+						return model.todo().visible;
+					},
+					children: (item) => {
+						const marker = TODO_MARKERS[item.status];
+						const label = truncateLabel(item.content, 28);
+						const markerFg = item.status === "in_progress" ? "#38bdf8" : item.status === "completed" ? "#34d399" : muted();
+						const labelFg = item.status === "in_progress" ? "#38bdf8" : item.status === "pending" ? text() : muted();
+						return (() => {
+							var _el$101 = createElement("box"), _el$102 = createElement("text"), _el$103 = createElement("text");
+							insertNode(_el$101, _el$102);
+							insertNode(_el$101, _el$103);
+							setProp(_el$101, "flexDirection", "row");
+							setProp(_el$102, "fg", markerFg);
+							insert(_el$102, `${marker} `);
+							setProp(_el$103, "fg", labelFg);
+							insert(_el$103, label);
+							effect((_$p) => setProp(_el$103, "attributes", item.status === "in_progress" ? 1 : 0, _$p));
+							return _el$101;
+						})();
+					}
+				}), null);
 				insert(_el$36, createComponent(Show, {
+					get when() {
+						return hiddenTodoText(model.todo().hidden);
+					},
+					children: (line) => (() => {
+						var _el$104 = createElement("text");
+						insert(_el$104, line);
+						effect((_$p) => setProp(_el$104, "fg", muted(), _$p));
+						return _el$104;
+					})()
+				}), null);
+				return _el$36;
+			}
+		}), null);
+		insert(_el$16, createComponent(Show, {
+			get when() {
+				return block("dispatch");
+			},
+			get children() {
+				var _el$38 = createElement("box");
+				setProp(_el$38, "flexDirection", "column");
+				insert(_el$38, createComponent(Show, {
+					get when() {
+						return spacer("dispatch");
+					},
+					get children() {
+						var _el$39 = createElement("box");
+						setProp(_el$39, "height", 1);
+						return _el$39;
+					}
+				}), null);
+				insert(_el$38, createComponent(Show, {
 					get when() {
 						return dispatchView();
 					},
 					children: (view) => (() => {
-						var _el$98 = createElement("box");
-						setProp(_el$98, "flexDirection", "column");
-						insert(_el$98, createComponent(BlockHeader, {
+						var _el$105 = createElement("box");
+						setProp(_el$105, "flexDirection", "column");
+						insert(_el$105, createComponent(BlockHeader, {
 							get icon() {
 								return BLOCK_ICONS.dispatch;
 							},
@@ -13179,89 +13271,89 @@ function SidebarInner(props) {
 								return dispatchSummary();
 							}
 						}), null);
-						insert(_el$98, createComponent(For, {
+						insert(_el$105, createComponent(For, {
 							get each() {
 								return view().running;
 							},
 							children: (row) => (() => {
-								var _el$100 = createElement("box"), _el$101 = createElement("text");
-								insertNode(_el$100, _el$101);
-								setProp(_el$100, "flexShrink", 0);
-								insert(_el$101, () => row.text);
+								var _el$107 = createElement("box"), _el$108 = createElement("text");
+								insertNode(_el$107, _el$108);
+								setProp(_el$107, "flexShrink", 0);
+								insert(_el$108, () => row.text);
 								effect((_p$) => {
 									var _v$1 = open(row.id), _v$10 = tone(row.tone ?? "success");
-									_v$1 !== _p$.e && (_p$.e = setProp(_el$100, "onMouseDown", _v$1, _p$.e));
-									_v$10 !== _p$.t && (_p$.t = setProp(_el$101, "fg", _v$10, _p$.t));
+									_v$1 !== _p$.e && (_p$.e = setProp(_el$107, "onMouseDown", _v$1, _p$.e));
+									_v$10 !== _p$.t && (_p$.t = setProp(_el$108, "fg", _v$10, _p$.t));
 									return _p$;
 								}, {
 									e: void 0,
 									t: void 0
 								});
-								return _el$100;
+								return _el$107;
 							})()
 						}), null);
-						insert(_el$98, createComponent(Show, {
+						insert(_el$105, createComponent(Show, {
 							get when() {
 								return view().runningHidden > 0;
 							},
 							get children() {
-								var _el$99 = createElement("text");
-								insert(_el$99, () => `\u2026 +${view().runningHidden} rodando`);
-								effect((_$p) => setProp(_el$99, "fg", muted(), _$p));
-								return _el$99;
+								var _el$106 = createElement("text");
+								insert(_el$106, () => `\u2026 +${view().runningHidden} rodando`);
+								effect((_$p) => setProp(_el$106, "fg", muted(), _$p));
+								return _el$106;
 							}
 						}), null);
-						insert(_el$98, createComponent(Show, {
+						insert(_el$105, createComponent(Show, {
 							get when() {
 								return view().summary;
 							},
 							children: (line) => (() => {
-								var _el$102 = createElement("box"), _el$103 = createElement("text");
-								insertNode(_el$102, _el$103);
-								setProp(_el$102, "flexDirection", "row");
-								setProp(_el$102, "flexShrink", 0);
-								insert(_el$103, line);
-								insert(_el$102, createComponent(Show, {
+								var _el$109 = createElement("box"), _el$110 = createElement("text");
+								insertNode(_el$109, _el$110);
+								setProp(_el$109, "flexDirection", "row");
+								setProp(_el$109, "flexShrink", 0);
+								insert(_el$110, line);
+								insert(_el$109, createComponent(Show, {
 									get when() {
 										return failedSuffix();
 									},
 									children: (suffix) => (() => {
-										var _el$104 = createElement("text");
-										insert(_el$104, () => `${SPEND_LINE_SEPARATOR}${suffix()}`);
-										effect((_$p) => setProp(_el$104, "fg", tone("error"), _$p));
-										return _el$104;
+										var _el$111 = createElement("text");
+										insert(_el$111, () => `${SPEND_LINE_SEPARATOR}${suffix()}`);
+										effect((_$p) => setProp(_el$111, "fg", tone("error"), _$p));
+										return _el$111;
 									})()
 								}), null);
-								effect((_$p) => setProp(_el$103, "fg", muted(), _$p));
-								return _el$102;
+								effect((_$p) => setProp(_el$110, "fg", muted(), _$p));
+								return _el$109;
 							})()
 						}), null);
-						insert(_el$98, createComponent(For, {
+						insert(_el$105, createComponent(For, {
 							get each() {
 								return view().agents;
 							},
 							children: (row) => (() => {
-								var _el$105 = createElement("text");
-								insert(_el$105, () => childAgentRowText(row));
-								effect((_$p) => setProp(_el$105, "fg", muted(), _$p));
-								return _el$105;
+								var _el$112 = createElement("text");
+								insert(_el$112, () => childAgentRowText(row));
+								effect((_$p) => setProp(_el$112, "fg", muted(), _$p));
+								return _el$112;
 							})()
 						}), null);
-						insert(_el$98, createComponent(Show, {
+						insert(_el$105, createComponent(Show, {
 							get when() {
 								return hiddenChildAgentsText(view().agentsHidden, view().agentsHiddenCost);
 							},
 							children: (line) => (() => {
-								var _el$106 = createElement("text");
-								insert(_el$106, line);
-								effect((_$p) => setProp(_el$106, "fg", muted(), _$p));
-								return _el$106;
+								var _el$113 = createElement("text");
+								insert(_el$113, line);
+								effect((_$p) => setProp(_el$113, "fg", muted(), _$p));
+								return _el$113;
 							})()
 						}), null);
-						return _el$98;
+						return _el$105;
 					})()
 				}), null);
-				return _el$36;
+				return _el$38;
 			}
 		}), null);
 		insert(_el$16, createComponent(Show, {
@@ -13269,39 +13361,39 @@ function SidebarInner(props) {
 				return artifacts().length > 0;
 			},
 			get children() {
-				var _el$38 = createElement("box"), _el$39 = createElement("box"), _el$40 = createElement("text");
-				insertNode(_el$38, _el$39);
-				setProp(_el$38, "flexDirection", "column");
-				setProp(_el$38, "marginTop", 1);
-				insert(_el$38, createComponent(Show, {
+				var _el$40 = createElement("box"), _el$41 = createElement("box"), _el$42 = createElement("text");
+				insertNode(_el$40, _el$41);
+				setProp(_el$40, "flexDirection", "column");
+				setProp(_el$40, "marginTop", 1);
+				insert(_el$40, createComponent(Show, {
 					get when() {
 						return activePlan();
 					},
 					children: (plan) => (() => {
-						var _el$107 = createElement("box"), _el$108 = createElement("text");
-						insertNode(_el$107, _el$108);
-						setProp(_el$107, "onMouseDown", stopMouseEvent);
-						setProp(_el$107, "onMouseUp", (event) => handleMouseClick(event, () => {
+						var _el$114 = createElement("box"), _el$115 = createElement("text");
+						insertNode(_el$114, _el$115);
+						setProp(_el$114, "onMouseDown", stopMouseEvent);
+						setProp(_el$114, "onMouseUp", (event) => handleMouseClick(event, () => {
 							openArtifactsDialog(context, resolveSidebarCwd(context), { initialArtifactId: plan().id });
 						}));
-						setProp(_el$107, "flexShrink", 0);
-						insert(_el$108, () => `▸ Plan: ${truncateLabel(plan().title, 22)}`);
-						effect((_$p) => setProp(_el$108, "fg", accent(), _$p));
-						return _el$107;
+						setProp(_el$114, "flexShrink", 0);
+						insert(_el$115, () => `▸ Plan: ${truncateLabel(plan().title, 22)}`);
+						effect((_$p) => setProp(_el$115, "fg", accent(), _$p));
+						return _el$114;
 					})()
-				}), _el$39);
-				insertNode(_el$39, _el$40);
-				setProp(_el$39, "onMouseDown", stopMouseEvent);
-				setProp(_el$39, "onMouseUp", (event) => handleMouseClick(event, () => {
+				}), _el$41);
+				insertNode(_el$41, _el$42);
+				setProp(_el$41, "onMouseDown", stopMouseEvent);
+				setProp(_el$41, "onMouseUp", (event) => handleMouseClick(event, () => {
 					openArtifactsDialog(context, resolveSidebarCwd(context));
 				}));
-				setProp(_el$39, "flexShrink", 0);
-				insert(_el$40, (() => {
+				setProp(_el$41, "flexShrink", 0);
+				insert(_el$42, (() => {
 					var _c$ = memo(() => !!isPt());
 					return () => _c$() ? `◈ Artefatos (${artifacts().length})` : `◈ Artifacts (${artifacts().length})`;
 				})());
-				effect((_$p) => setProp(_el$40, "fg", muted(), _$p));
-				return _el$38;
+				effect((_$p) => setProp(_el$42, "fg", muted(), _$p));
+				return _el$40;
 			}
 		}), null);
 		effect((_p$) => {
@@ -13382,25 +13474,25 @@ function DispatchPanel(props) {
 			return model.visible().rows;
 		},
 		children: (row) => (() => {
-			var _el$109 = createElement("box"), _el$110 = createElement("text"), _el$111 = createElement("text");
-			insertNode(_el$109, _el$110);
-			insertNode(_el$109, _el$111);
-			setProp(_el$109, "flexDirection", "row");
-			setProp(_el$109, "flexShrink", 0);
-			insert(_el$110, () => selected(row.id) ? `▸ ` : "  ");
-			insert(_el$111, () => row.text);
+			var _el$116 = createElement("box"), _el$117 = createElement("text"), _el$118 = createElement("text");
+			insertNode(_el$116, _el$117);
+			insertNode(_el$116, _el$118);
+			setProp(_el$116, "flexDirection", "row");
+			setProp(_el$116, "flexShrink", 0);
+			insert(_el$117, () => selected(row.id) ? `▸ ` : "  ");
+			insert(_el$118, () => row.text);
 			effect((_p$) => {
 				var _v$11 = selected(row.id) ? text() : muted(), _v$12 = rowFg(row.state), _v$13 = selected(row.id) ? 1 : 0;
-				_v$11 !== _p$.e && (_p$.e = setProp(_el$110, "fg", _v$11, _p$.e));
-				_v$12 !== _p$.t && (_p$.t = setProp(_el$111, "fg", _v$12, _p$.t));
-				_v$13 !== _p$.a && (_p$.a = setProp(_el$111, "attributes", _v$13, _p$.a));
+				_v$11 !== _p$.e && (_p$.e = setProp(_el$117, "fg", _v$11, _p$.e));
+				_v$12 !== _p$.t && (_p$.t = setProp(_el$118, "fg", _v$12, _p$.t));
+				_v$13 !== _p$.a && (_p$.a = setProp(_el$118, "attributes", _v$13, _p$.a));
 				return _p$;
 			}, {
 				e: void 0,
 				t: void 0,
 				a: void 0
 			});
-			return _el$109;
+			return _el$116;
 		})()
 	});
 	const detail = () => createComponent(For, {
@@ -13408,28 +13500,28 @@ function DispatchPanel(props) {
 			return model.detail();
 		},
 		children: (line, index) => (() => {
-			var _el$112 = createElement("text");
-			insert(_el$112, line);
-			effect((_$p) => setProp(_el$112, "fg", index() === 0 ? text() : muted(), _$p));
-			return _el$112;
+			var _el$119 = createElement("text");
+			insert(_el$119, line);
+			effect((_$p) => setProp(_el$119, "fg", index() === 0 ? text() : muted(), _$p));
+			return _el$119;
 		})()
 	});
 	const empty = () => (() => {
-		var _el$113 = createElement("text");
-		insertNode(_el$113, createTextNode(`No delegated sessions`));
-		effect((_$p) => setProp(_el$113, "fg", muted(), _$p));
-		return _el$113;
+		var _el$120 = createElement("text");
+		insertNode(_el$120, createTextNode(`No delegated sessions`));
+		effect((_$p) => setProp(_el$120, "fg", muted(), _$p));
+		return _el$120;
 	})();
 	return (() => {
-		var _el$115 = createElement("box"), _el$116 = createElement("text"), _el$117 = createElement("text"), _el$121 = createElement("box"), _el$122 = createElement("text");
-		insertNode(_el$115, _el$116);
-		insertNode(_el$115, _el$117);
-		insertNode(_el$115, _el$121);
-		insertNode(_el$115, _el$122);
-		setProp(_el$115, "flexDirection", "column");
-		setProp(_el$115, "width", "100%");
-		setProp(_el$115, "padding", 1);
-		insert(_el$115, createComponent(DispatchPanelKeymap, {
+		var _el$122 = createElement("box"), _el$123 = createElement("text"), _el$124 = createElement("text"), _el$128 = createElement("box"), _el$129 = createElement("text");
+		insertNode(_el$122, _el$123);
+		insertNode(_el$122, _el$124);
+		insertNode(_el$122, _el$128);
+		insertNode(_el$122, _el$129);
+		setProp(_el$122, "flexDirection", "column");
+		setProp(_el$122, "width", "100%");
+		setProp(_el$122, "padding", 1);
+		insert(_el$122, createComponent(DispatchPanelKeymap, {
 			get context() {
 				return props.context;
 			},
@@ -13437,30 +13529,30 @@ function DispatchPanel(props) {
 				return props.panel;
 			},
 			model
-		}), _el$116);
-		setProp(_el$116, "attributes", 1);
-		insert(_el$116, () => model.title());
-		insert(_el$115, createComponent(Show, {
+		}), _el$123);
+		setProp(_el$123, "attributes", 1);
+		insert(_el$123, () => model.title());
+		insert(_el$122, createComponent(Show, {
 			get when() {
 				return model.header();
 			},
 			children: (line) => (() => {
-				var _el$123 = createElement("text");
-				insert(_el$123, line);
-				effect((_$p) => setProp(_el$123, "fg", muted(), _$p));
-				return _el$123;
+				var _el$130 = createElement("text");
+				insert(_el$130, line);
+				effect((_$p) => setProp(_el$130, "fg", muted(), _$p));
+				return _el$130;
 			})()
-		}), _el$117);
-		insert(_el$117, () => dispatchPanelRule(props.panel.width - 2));
-		insert(_el$115, createComponent(Show, {
+		}), _el$124);
+		insert(_el$124, () => dispatchPanelRule(props.panel.width - 2));
+		insert(_el$122, createComponent(Show, {
 			get when() {
 				return model.layout().mode === "wide";
 			},
 			get fallback() {
 				return (() => {
-					var _el$124 = createElement("box");
-					setProp(_el$124, "flexDirection", "column");
-					insert(_el$124, createComponent(Show, {
+					var _el$131 = createElement("box");
+					setProp(_el$131, "flexDirection", "column");
+					insert(_el$131, createComponent(Show, {
 						get when() {
 							return model.rows().length > 0;
 						},
@@ -13468,34 +13560,34 @@ function DispatchPanel(props) {
 							return empty();
 						},
 						get children() {
-							var _el$125 = createElement("box");
-							setProp(_el$125, "flexDirection", "column");
-							insert(_el$125, rows);
-							return _el$125;
+							var _el$132 = createElement("box");
+							setProp(_el$132, "flexDirection", "column");
+							insert(_el$132, rows);
+							return _el$132;
 						}
 					}), null);
-					insert(_el$124, createComponent(Show, {
+					insert(_el$131, createComponent(Show, {
 						get when() {
 							return model.selectedID();
 						},
 						get children() {
-							var _el$126 = createElement("box"), _el$127 = createElement("box");
-							insertNode(_el$126, _el$127);
-							setProp(_el$126, "flexDirection", "column");
-							setProp(_el$127, "height", 1);
-							insert(_el$126, detail, null);
-							return _el$126;
+							var _el$133 = createElement("box"), _el$134 = createElement("box");
+							insertNode(_el$133, _el$134);
+							setProp(_el$133, "flexDirection", "column");
+							setProp(_el$134, "height", 1);
+							insert(_el$133, detail, null);
+							return _el$133;
 						}
 					}), null);
-					return _el$124;
+					return _el$131;
 				})();
 			},
 			get children() {
-				var _el$118 = createElement("box"), _el$119 = createElement("box");
-				insertNode(_el$118, _el$119);
-				setProp(_el$118, "flexDirection", "row");
-				setProp(_el$119, "flexDirection", "column");
-				insert(_el$119, createComponent(Show, {
+				var _el$125 = createElement("box"), _el$126 = createElement("box");
+				insertNode(_el$125, _el$126);
+				setProp(_el$125, "flexDirection", "row");
+				setProp(_el$126, "flexDirection", "column");
+				insert(_el$126, createComponent(Show, {
 					get when() {
 						return model.rows().length > 0;
 					},
@@ -13506,36 +13598,36 @@ function DispatchPanel(props) {
 						return rows();
 					}
 				}));
-				insert(_el$118, createComponent(Show, {
+				insert(_el$125, createComponent(Show, {
 					get when() {
 						return model.selectedID();
 					},
 					get children() {
-						var _el$120 = createElement("box");
-						setProp(_el$120, "flexDirection", "column");
-						insert(_el$120, detail);
-						effect((_$p) => setProp(_el$120, "width", model.layout().detailWidth, _$p));
-						return _el$120;
+						var _el$127 = createElement("box");
+						setProp(_el$127, "flexDirection", "column");
+						insert(_el$127, detail);
+						effect((_$p) => setProp(_el$127, "width", model.layout().detailWidth, _$p));
+						return _el$127;
 					}
 				}), null);
-				effect((_$p) => setProp(_el$119, "width", model.layout().listWidth, _$p));
-				return _el$118;
+				effect((_$p) => setProp(_el$126, "width", model.layout().listWidth, _$p));
+				return _el$125;
 			}
-		}), _el$121);
-		setProp(_el$121, "height", 1);
-		insert(_el$122, () => model.footer());
+		}), _el$128);
+		setProp(_el$128, "height", 1);
+		insert(_el$129, () => model.footer());
 		effect((_p$) => {
 			var _v$14 = text(), _v$15 = muted(), _v$16 = muted();
-			_v$14 !== _p$.e && (_p$.e = setProp(_el$116, "fg", _v$14, _p$.e));
-			_v$15 !== _p$.t && (_p$.t = setProp(_el$117, "fg", _v$15, _p$.t));
-			_v$16 !== _p$.a && (_p$.a = setProp(_el$122, "fg", _v$16, _p$.a));
+			_v$14 !== _p$.e && (_p$.e = setProp(_el$123, "fg", _v$14, _p$.e));
+			_v$15 !== _p$.t && (_p$.t = setProp(_el$124, "fg", _v$15, _p$.t));
+			_v$16 !== _p$.a && (_p$.a = setProp(_el$129, "fg", _v$16, _p$.a));
 			return _p$;
 		}, {
 			e: void 0,
 			t: void 0,
 			a: void 0
 		});
-		return _el$115;
+		return _el$122;
 	})();
 }
 /** App-level command claim: the only way into the panel. It registers the
@@ -13653,13 +13745,13 @@ function useWorkspaceArtifacts(context) {
 *  this keeps a compact Pantheon line visible on the home footer meanwhile. */
 function HomeStatus(props) {
 	const preset = useActivePreset(props.context).preset;
-	const availableUpdate = useAvailableUpdate("2.3.1");
+	const availableUpdate = useAvailableUpdate("2.3.2");
 	const artifacts = useWorkspaceArtifacts(props.context);
 	const activePlan = () => artifacts().find((entry) => entry.kind === "plan");
 	const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
 	const accent = () => resolveAccentColor(tuiDraftPreview()?.theme?.accent ?? tuiPrefs().theme?.accent, props.context.theme);
 	const muted = () => props.context.theme?.text?.muted ?? props.context.theme?.text?.base;
-	const updateBadge = () => formatUpdateBadge("2.3.1", availableUpdate(), {
+	const updateBadge = () => formatUpdateBadge("2.3.2", availableUpdate(), {
 		isPt: isPt(),
 		compact: true
 	});
@@ -13668,78 +13760,78 @@ function HomeStatus(props) {
 			return tuiPrefs().footer.home;
 		},
 		get children() {
-			var _el$128 = createElement("box"), _el$129 = createElement("text"), _el$132 = createElement("box"), _el$133 = createElement("text");
-			insertNode(_el$128, _el$129);
-			insertNode(_el$128, _el$132);
-			setProp(_el$128, "flexDirection", "row");
-			insert(_el$129, () => `Pantheon v2.3.1${preset().name ? ` ▸ ${preset().name}` : ""}`);
-			insert(_el$128, createComponent(Show, {
+			var _el$135 = createElement("box"), _el$136 = createElement("text"), _el$139 = createElement("box"), _el$140 = createElement("text");
+			insertNode(_el$135, _el$136);
+			insertNode(_el$135, _el$139);
+			setProp(_el$135, "flexDirection", "row");
+			insert(_el$136, () => `Pantheon v2.3.2${preset().name ? ` ▸ ${preset().name}` : ""}`);
+			insert(_el$135, createComponent(Show, {
 				get when() {
 					return updateBadge();
 				},
 				children: (badge) => (() => {
-					var _el$135 = createElement("box"), _el$136 = createElement("text");
-					insertNode(_el$135, _el$136);
-					setProp(_el$135, "onMouseDown", stopMouseEvent);
-					setProp(_el$135, "onMouseUp", (event) => handleMouseClick(event, () => {
+					var _el$142 = createElement("box"), _el$143 = createElement("text");
+					insertNode(_el$142, _el$143);
+					setProp(_el$142, "onMouseDown", stopMouseEvent);
+					setProp(_el$142, "onMouseUp", (event) => handleMouseClick(event, () => {
 						openPantheonSettings(props.context, { initialTab: "updates" });
 					}));
-					insert(_el$136, () => ` · ${badge()}`);
-					effect((_$p) => setProp(_el$136, "fg", accent(), _$p));
-					return _el$135;
+					insert(_el$143, () => ` · ${badge()}`);
+					effect((_$p) => setProp(_el$143, "fg", accent(), _$p));
+					return _el$142;
 				})()
-			}), _el$132);
-			insert(_el$128, createComponent(Show, {
+			}), _el$139);
+			insert(_el$135, createComponent(Show, {
 				get when() {
 					return activePlan();
 				},
 				children: (plan) => (() => {
-					var _el$137 = createElement("box"), _el$138 = createElement("text");
-					insertNode(_el$137, _el$138);
-					setProp(_el$137, "onMouseDown", stopMouseEvent);
-					setProp(_el$137, "onMouseUp", (event) => handleMouseClick(event, () => {
+					var _el$144 = createElement("box"), _el$145 = createElement("text");
+					insertNode(_el$144, _el$145);
+					setProp(_el$144, "onMouseDown", stopMouseEvent);
+					setProp(_el$144, "onMouseUp", (event) => handleMouseClick(event, () => {
 						openArtifactsDialog(props.context, resolveSidebarCwd(props.context), { initialArtifactId: plan().id });
 					}));
-					insert(_el$138, () => ` · ▸ Plan: ${truncateLabel(plan().title, 20)}`);
-					effect((_$p) => setProp(_el$138, "fg", accent(), _$p));
-					return _el$137;
+					insert(_el$145, () => ` · ▸ Plan: ${truncateLabel(plan().title, 20)}`);
+					effect((_$p) => setProp(_el$145, "fg", accent(), _$p));
+					return _el$144;
 				})()
-			}), _el$132);
-			insert(_el$128, createComponent(Show, {
+			}), _el$139);
+			insert(_el$135, createComponent(Show, {
 				get when() {
 					return artifacts().length > 0;
 				},
 				get children() {
-					var _el$130 = createElement("box"), _el$131 = createElement("text");
-					insertNode(_el$130, _el$131);
-					setProp(_el$130, "onMouseDown", stopMouseEvent);
-					setProp(_el$130, "onMouseUp", (event) => handleMouseClick(event, () => {
+					var _el$137 = createElement("box"), _el$138 = createElement("text");
+					insertNode(_el$137, _el$138);
+					setProp(_el$137, "onMouseDown", stopMouseEvent);
+					setProp(_el$137, "onMouseUp", (event) => handleMouseClick(event, () => {
 						openArtifactsDialog(props.context, resolveSidebarCwd(props.context));
 					}));
-					insert(_el$131, (() => {
+					insert(_el$138, (() => {
 						var _c$2 = memo(() => !!isPt());
 						return () => _c$2() ? ` · Artefatos (${artifacts().length})` : ` · Artifacts (${artifacts().length})`;
 					})());
-					effect((_$p) => setProp(_el$131, "fg", muted(), _$p));
-					return _el$130;
+					effect((_$p) => setProp(_el$138, "fg", muted(), _$p));
+					return _el$137;
 				}
-			}), _el$132);
-			insertNode(_el$132, _el$133);
-			setProp(_el$132, "onMouseDown", stopMouseEvent);
-			setProp(_el$132, "onMouseUp", (event) => handleMouseClick(event, () => {
+			}), _el$139);
+			insertNode(_el$139, _el$140);
+			setProp(_el$139, "onMouseDown", stopMouseEvent);
+			setProp(_el$139, "onMouseUp", (event) => handleMouseClick(event, () => {
 				openPantheonCockpit(props.context, resolveSidebarCwd(props.context));
 			}));
-			insertNode(_el$133, createTextNode(` · ◈ Cockpit`));
+			insertNode(_el$140, createTextNode(` · ◈ Cockpit`));
 			effect((_p$) => {
 				var _v$17 = muted(), _v$18 = muted();
-				_v$17 !== _p$.e && (_p$.e = setProp(_el$129, "fg", _v$17, _p$.e));
-				_v$18 !== _p$.t && (_p$.t = setProp(_el$133, "fg", _v$18, _p$.t));
+				_v$17 !== _p$.e && (_p$.e = setProp(_el$136, "fg", _v$17, _p$.e));
+				_v$18 !== _p$.t && (_p$.t = setProp(_el$140, "fg", _v$18, _p$.t));
 				return _p$;
 			}, {
 				e: void 0,
 				t: void 0
 			});
-			return _el$128;
+			return _el$135;
 		}
 	});
 }
@@ -13795,17 +13887,17 @@ function PromptFooter(props) {
 			return memo(() => !!tuiPrefs().footer.prompt)() && model.running() > 0;
 		},
 		get children() {
-			var _el$139 = createElement("text");
-			insert(_el$139, () => `▸${model.preset().name ?? "default"} · ✦${model.running()} ativos`);
-			effect((_$p) => setProp(_el$139, "fg", muted(), _$p));
-			return _el$139;
+			var _el$146 = createElement("text");
+			insert(_el$146, () => `▸${model.preset().name ?? "default"} · ✦${model.running()} ativos`);
+			effect((_$p) => setProp(_el$146, "fg", muted(), _$p));
+			return _el$146;
 		}
 	});
 }
 const plugin = Plugin.define({
 	id: "pantheon.tui",
 	setup(context) {
-		const currentVer = "2.3.1";
+		const currentVer = "2.3.2";
 		const globalState = globalThis;
 		const existing = globalState[SINGLETON];
 		if (existing) {

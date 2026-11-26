@@ -1,6 +1,6 @@
 {
   "name": "pantheon-opencode",
-  "version": "2.3.1",
+  "version": "2.3.2",
   "description": "Multi-agent orchestration for OpenCode \u2014 8 canonical agents + on-demand ephemeral workers, TDD, Themis review gates.",
   "type": "module",
   "workspaces": [
@@ -156,6 +156,6 @@
   "author": "ils15",
   "license": "MIT",
   "engines": {
-    "node": ">=26.4.0"
+    "node": ">=26.3.0"
   }
 }

@@ -2032,13 +2032,13 @@ test('Todo rows: markers per status, group order, cap of 6 and 28-char truncatio
     'in_progress → pending → completed → cancelled, original order inside a group',
   )
 
-  assert.equal(todoRowText({ content: 'live work', status: 'in_progress' }), '[\u2022] live work')
-  assert.equal(todoRowText({ content: 'open work', status: 'pending' }), '[ ] open work')
-  assert.equal(todoRowText({ content: 'done work', status: 'completed' }), '[x] done work')
+  assert.equal(todoRowText({ content: 'live work', status: 'in_progress' }), '\u25B8 live work')
+  assert.equal(todoRowText({ content: 'open work', status: 'pending' }), '\u25CB open work')
+  assert.equal(todoRowText({ content: 'done work', status: 'completed' }), '\u2713 done work')
   assert.equal(
     todoRowText({ content: 'dropped work', status: 'cancelled' }),
-    '[\u2212] dropped work',
-    'cancelled uses U+2212, consistent with the git row',
+    '\u2715 dropped work',
+    'cancelled uses U+2715 single-width glyph',
   )
 
   assert.equal(todoTone('in_progress'), 'accent')
@@ -2048,18 +2048,18 @@ test('Todo rows: markers per status, group order, cap of 6 and 28-char truncatio
 
   const long = 'x'.repeat(60)
   const truncated = todoRowText({ content: long, status: 'pending' })
-  assert.equal(truncated, `[ ] ${'x'.repeat(TODO_TEXT_WIDTH - 1)}…`)
+  assert.equal(truncated, `\u25CB ${'x'.repeat(TODO_TEXT_WIDTH - 1)}…`)
   assert.equal(TODO_TEXT_WIDTH, 28)
-  assert.equal(truncated.length, 4 + TODO_TEXT_WIDTH, 'every row stays inside the sidebar budget')
+  assert.equal(truncated.length, 2 + TODO_TEXT_WIDTH, 'every row stays inside the sidebar budget')
   assert.equal(
     todoRowText({ content: '1234567890123456789012345678', status: 'pending' }),
-    '[ ] 1234567890123456789012345678',
+    '\u25CB 1234567890123456789012345678',
     'exactly 28 characters is not truncated',
   )
 
   assert.equal(
     todoRowText({ content: '12345678901234567890123456789', status: 'pending' }),
-    '[ ] 123456789012345678901234567…',
+    '\u25CB 123456789012345678901234567…',
     '29 characters truncates to 27 + ellipsis',
   )
 
@@ -2544,29 +2544,25 @@ test('spend line: absent client.session.stats hides it without calling or throwi
   }
 })
 
-test('sidebar renders Context → Git status → Dispatch and no quota or duplicate todo block', async () => {
+test('sidebar renders Context → Git status → Todo → Dispatch and no quota block', async () => {
   const { BLOCK_ICONS } = await loadV2()
   const source = readFileSync(join(root, 'src/plugins/tui/src/index.tsx'), 'utf8')
 
-  const contextAt = source.indexOf('{/* Context —')
-  const gitAt = source.indexOf('{/* Git status —')
-  const dispatchAt = source.indexOf('{/* Dispatch —')
+  const contextAt = source.indexOf("<Show when={block('context')}>")
+  const gitAt = source.indexOf("<Show when={block('git')}>")
+  const todoAt = source.indexOf("<Show when={block('todo')}>")
+  const dispatchAt = source.indexOf("<Show when={block('dispatch')}>")
 
-  assert.ok(contextAt > 0 && gitAt > 0 && dispatchAt > 0, 'three blocks exist')
+  assert.ok(contextAt > 0 && gitAt > 0 && todoAt > 0 && dispatchAt > 0, 'four blocks exist')
   assert.ok(contextAt < gitAt, 'Context renders before Git status')
-  assert.ok(gitAt < dispatchAt, 'Dispatch follows Git status')
+  assert.ok(gitAt < todoAt, 'Todo follows Git status')
+  assert.ok(todoAt < dispatchAt, 'Dispatch follows Todo')
 
-  // The custom todo block was removed: OpenCode natively renders the Todo panel in the sidebar.
-  assert.equal(
-    source.includes('<BlockHeader\n                icon={BLOCK_ICONS.todo}'),
-    false,
-    'custom todo block is removed from the sidebar composition (native OpenCode Todo is used)',
-  )
-  assert.equal(/block\('todo'\)/.test(source), false, 'no `todo` block key is read')
+  assert.equal(/block\('todo'\)/.test(source), true, '`todo` block key is read')
   assert.equal(
     /SidebarBlockKey =[^\n]*'todo'/.test(source),
-    false,
-    "SidebarBlockKey no longer carries 'todo'",
+    true,
+    "SidebarBlockKey includes 'todo'",
   )
 
   // The native quota surface was removed (external plugin instead):
@@ -2607,8 +2603,8 @@ test('sidebar renders Context → Git status → Dispatch and no quota or duplic
 
   assert.deepEqual(
     Object.keys(BLOCK_ICONS),
-    ['context', 'git', 'dispatch'],
-    'only the three surviving blocks carry a header glyph',
+    ['context', 'git', 'todo', 'dispatch'],
+    'the four sidebar blocks carry a header glyph',
   )
 
   // Spend is not a block (its numbers live inside Context) and the TUI still
@@ -2650,9 +2646,10 @@ test('sidebar icons are single-width glyphs; the fixed header has none', async (
     {
       context: '\u25A4',
       git: '\u25C6',
+      todo: '\u25A3',
       dispatch: '\u25C8',
     },
-    '▤ Context · ◆ Git status · ◈ Dispatch',
+    '▤ Context · ◆ Git status · ▣ Todo · ◈ Dispatch',
   )
   for (const [key, icon] of Object.entries(BLOCK_ICONS)) {
     assert.equal([...icon].length, 1, `${key} uses exactly one codepoint, never a sequence`)
@@ -2673,13 +2670,13 @@ test('sidebar icons are single-width glyphs; the fixed header has none', async (
   }
 
   const source = readFileSync(join(root, 'src/plugins/tui/src/index.tsx'), 'utf8')
-  for (const label of ['Context', 'Git status', 'Dispatch']) {
+  for (const label of ['Context', 'Git status', 'Todo', 'Dispatch']) {
     assert.ok(
       source.includes(`label="${label}"`),
       `the ${label} block renders its own labeled header`,
     )
   }
-  assert.equal((source.match(/<BlockHeader/g) ?? []).length, 3, 'exactly three block headers')
+  assert.equal((source.match(/<BlockHeader/g) ?? []).length, 4, 'exactly four block headers')
 
   // The fixed header (version / preset / session) takes no icon.
   const fixedHeader = source.slice(
@@ -2847,7 +2844,7 @@ test('block spacing: one blank line between rendered blocks, never before the fi
         .slice(source.indexOf('function Sidebar('), source.indexOf('/** Keymap layer of the panel'))
         .match(/<box height=\{1\} \/>/g) ?? []
     ).length,
-    4,
+    4 + 1,
     'one slot per block plus the one after the fixed header — no duplicates',
   )
 })

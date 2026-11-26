@@ -9,19 +9,19 @@ import {
   validateNodeEnginePolicy,
 } from '../scripts/node-engine-policy.mjs'
 
-test('Node runtime support starts at 26.4.0', () => {
+test('Node runtime support starts at 26.3.0', () => {
   for (const version of [
     '18.20.8',
     '22.22.2',
     '24.15.0',
     '26.0.0',
-    '26.3.99',
-    '26.4.0-rc.1',
+    '26.2.99',
+    '26.3.0-rc.1',
     '27.0.0-rc.1',
   ]) {
     assert.equal(isSupportedNodeVersion(version), false, `${version} must be rejected`)
   }
-  for (const version of ['26.4.0', '26.4.1', '27.0.0', 'v26.4.0']) {
+  for (const version of ['26.3.0', '26.4.0', '26.4.1', '27.0.0', 'v26.3.0']) {
     assert.equal(isSupportedNodeVersion(version), true, `${version} must be accepted`)
   }
 })

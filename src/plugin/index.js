@@ -10554,6 +10554,15 @@ function hasPendingLegacyFiles(rootDir, isGlobalConfig = false) {
       if (existsSync9(join13(dir, "commands", "pantheon.md"))) return true;
       if (existsSync9(join13(dir, "routing.yml"))) return true;
       if (existsSync9(join13(dir, ".pantheon", "install-state.json"))) return true;
+      for (const agentFile of OBSOLETE_AGENT_MD_FILES) {
+        if (existsSync9(join13(dir, "agents", agentFile))) return true;
+        if (existsSync9(join13(dir, "agent", agentFile))) return true;
+        if (existsSync9(join13(dir, "prompts", agentFile))) return true;
+      }
+      for (const cmdFile of OBSOLETE_COMMAND_MD_FILES) {
+        if (existsSync9(join13(dir, "commands", cmdFile))) return true;
+        if (existsSync9(join13(dir, "command", cmdFile))) return true;
+      }
       if (inspectConfigAgentsFiles(dir).length > 0) return true;
       if (!preserveWorkingPythonMcp) {
         for (const py of LEGACY_PYTHON_RUNTIME_SCRIPTS) {
@@ -11216,7 +11225,25 @@ function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
           }
         }
       }
+      for (const agentFile of OBSOLETE_AGENT_MD_FILES) {
+        for (const sub of ["agents", "agent", "prompts"]) {
+          const candidate = join13(dir, sub, agentFile);
+          if (existsSync9(candidate) && isPantheonMarkdown(candidate)) {
+            if (!dryRun) rmSync(candidate, { force: true });
+            staleFilesDeleted.push(candidate);
+          }
+        }
+      }
       for (const cmdFile of CANONICAL_COMMAND_MD_FILES) {
+        for (const sub of ["commands", "command"]) {
+          const candidate = join13(dir, sub, cmdFile);
+          if (existsSync9(candidate) && isPantheonMarkdown(candidate)) {
+            if (!dryRun) rmSync(candidate, { force: true });
+            staleFilesDeleted.push(candidate);
+          }
+        }
+      }
+      for (const cmdFile of OBSOLETE_COMMAND_MD_FILES) {
         for (const sub of ["commands", "command"]) {
           const candidate = join13(dir, sub, cmdFile);
           if (existsSync9(candidate) && isPantheonMarkdown(candidate)) {
@@ -11369,19 +11396,21 @@ function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
 var CANONICAL_AGENT_MD_FILES = Object.freeze([
   "aphrodite.md",
   "apollo.md",
-  "artemis.md",
   "athena.md",
   "demeter.md",
-  "gaia.md",
-  "hephaestus.md",
   "hermes.md",
   "iris.md",
+  "themis.md",
+  "zeus.md"
+]);
+var OBSOLETE_AGENT_MD_FILES = Object.freeze([
+  "artemis.md",
+  "gaia.md",
+  "hephaestus.md",
   "mnemosyne.md",
   "nyx.md",
   "prometheus.md",
-  "talos.md",
-  "themis.md",
-  "zeus.md"
+  "talos.md"
 ]);
 var CANONICAL_COMMAND_MD_FILES = Object.freeze([
   "pantheon.md",
@@ -11392,9 +11421,9 @@ var CANONICAL_COMMAND_MD_FILES = Object.freeze([
   "pantheon-forge.md",
   "pantheon-model.md",
   "pantheon-optimize.md",
-  "pantheon-settings.md",
   "pantheon-vision.md"
 ]);
+var OBSOLETE_COMMAND_MD_FILES = Object.freeze(["pantheon-settings.md"]);
 var CANONICAL_SKILL_IDS = Object.freeze([
   "agent-coordination",
   "agent-forge",
@@ -22593,6 +22622,15 @@ function readCanonicalRoster() {
   }
   return {};
 }
+var LEGACY_AGENT_IDS = /* @__PURE__ */ new Set([
+  "artemis",
+  "gaia",
+  "hephaestus",
+  "mnemosyne",
+  "nyx",
+  "prometheus",
+  "talos"
+]);
 function transformAgents(draft) {
   let agents;
   try {
@@ -22631,6 +22669,16 @@ function transformAgents(draft) {
     const seenIds = /* @__PURE__ */ new Set();
     for (const agent of agents) {
       if (agent?.id) seenIds.add(agent.id);
+    }
+    try {
+      if (typeof draft.remove === "function") {
+        for (const agent of [...agents]) {
+          if (agent?.id && LEGACY_AGENT_IDS.has(agent.id) && !(agent.id in roster)) {
+            draft.remove(agent.id);
+          }
+        }
+      }
+    } catch {
     }
     for (const [id, def] of Object.entries(roster)) {
       if (!seenIds.has(id) && typeof draft.update === "function") {

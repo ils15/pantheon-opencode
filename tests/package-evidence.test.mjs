@@ -23,7 +23,7 @@ process.env.OPENCODE_VERSION = 'v2'
 const SCRIPT = fileURLToPath(new URL('../scripts/package-evidence.mjs', import.meta.url))
 const VERSION = '1.2.3'
 const TARGET_SHA = 'a'.repeat(40)
-const ENGINE_RANGE = '>=26.4.0'
+const ENGINE_RANGE = '>=26.3.0'
 
 function writeFixtureFile(root, relativePath, content) {
   const path = join(root, relativePath)

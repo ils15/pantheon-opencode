@@ -690,7 +690,7 @@ export declare function enrichDispatchEntries(context: any, entries: readonly Di
  *  from the view, so a hidden block can never leave an empty gap behind.
  *  Note: The custom Todo block was removed from the sidebar composition because
  *  OpenCode 2.x natively renders the Todo panel when `todowrite` is used. */
-export type SidebarBlockKey = 'context' | 'git' | 'dispatch';
+export type SidebarBlockKey = 'context' | 'git' | 'todo' | 'dispatch';
 /** One rendered block: its key, and whether a blank line precedes it. */
 export type SidebarBlock = {
   key: SidebarBlockKey;
@@ -700,8 +700,8 @@ export type SidebarBlock = {
  *  label. The fixed header (version/preset/session) takes none.
  *  Measured as one terminal cell by the host (`@opentui/core` counts
  *  `emoji-regex` matches as two): ▤ U+25A4 (EAW=A), ◆ U+25C6 (A),
- *  ◈ U+25C8 (A). `⌁` U+2301 (the old Dispatch glyph) was replaced by the host's
- *  own Notice glyph. */
+ *  ▣ U+25A3 (A), ◈ U+25C8 (A). `⌁` U+2301 (the old Dispatch glyph) was
+ *  replaced by the host's own Notice glyph. */
 export declare const BLOCK_ICONS: Record<SidebarBlockKey, string>;
 /** Tag every block that has content with its spacer: never before the first
  *  (the view puts a single blank line after the fixed header instead), one
