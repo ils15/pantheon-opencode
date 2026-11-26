@@ -422,6 +422,60 @@ export function CockpitView(props: {
             </Show>
           </box>
 
+          {/* Olympus Topology (DAG) */}
+          <Show when={snapshot().swarm.rows.length > 0}>
+            <box marginTop={1} flexDirection="column">
+              <text fg={accent()} attributes={1}>
+                {'OLYMPUS TOPOLOGY (DAG)'}
+              </text>
+              <text fg={accent()} attributes={1}>
+                {`  ◉ zeus (root)  ·  ${snapshot().swarm.running} running · ${snapshot().swarm.total} total`}
+              </text>
+              <For each={snapshot().swarm.rows.slice(0, 8)}>
+                {(row, idx) => {
+                  const isLast = () => idx() === Math.min(snapshot().swarm.rows.length, 8) - 1
+                  const branch = () => (isLast() ? '  └─▸ ' : '  ├─▸ ')
+                  const statusColor =
+                    row.status === 'running'
+                      ? '#34d399'
+                      : row.status === 'failed'
+                        ? '#f87171'
+                        : row.status === 'interrupted'
+                          ? '#fbbf24'
+                          : '#38bdf8'
+                  const isEphemeral = row.kind === 'ephemeral' || row.agent.startsWith('eph-')
+                  const marker = isEphemeral
+                    ? '◈'
+                    : row.status === 'running'
+                      ? '●'
+                      : row.status === 'failed'
+                        ? '✗'
+                        : '✓'
+                  const badge =
+                    row.status === 'running'
+                      ? '[RUN]'
+                      : row.status === 'failed'
+                        ? '[ERR]'
+                        : row.status === 'interrupted'
+                          ? '[WAI]'
+                          : '[OK ]'
+                  return (
+                    <box flexDirection="row">
+                      <text fg={muted()}>{branch()}</text>
+                      <text fg={isEphemeral ? '#a78bfa' : statusColor}>{`${marker} `}</text>
+                      <text fg={fg()} attributes={row.status === 'running' ? 1 : 0}>
+                        {`@${row.agent.padEnd(11)} `}
+                      </text>
+                      <text fg={statusColor}>{`${badge} `}</text>
+                      <text fg="#38bdf8">{`${String(row.durationSec).padStart(4)}s `}</text>
+                      <text fg="#34d399">{`$${row.cost.toFixed(3)}`}</text>
+                    </box>
+                  )
+                }}
+              </For>
+            </box>
+          </Show>
+
           {/* Workers & Gantt Timeline */}
           <box marginTop={1} flexDirection="column">
             <text fg={accent()} attributes={1}>
@@ -436,6 +490,14 @@ export function CockpitView(props: {
                   const sel = () => idx() === selectedRow()
                   const marker =
                     row.status === 'running' ? '●' : row.status === 'failed' ? '✗' : '✓'
+                  const statusColor =
+                    row.status === 'running'
+                      ? '#34d399'
+                      : row.status === 'failed'
+                        ? '#f87171'
+                        : row.status === 'interrupted'
+                          ? '#fbbf24'
+                          : '#38bdf8'
                   return (
                     <box
                       flexDirection="column"
@@ -447,9 +509,14 @@ export function CockpitView(props: {
                         })
                       }
                     >
-                      <text fg={sel() ? accent() : fg()}>
-                        {`${sel() ? '▸' : ' '} ${marker} @${row.agent.padEnd(11)} ${row.ganttBar}  ${String(row.durationSec).padStart(5)}s  $${row.cost.toFixed(3)}`}
-                      </text>
+                      <box flexDirection="row">
+                        <text fg={sel() ? accent() : muted()}>{`${sel() ? '▸' : ' '} `}</text>
+                        <text fg={statusColor}>{`${marker} `}</text>
+                        <text fg={sel() ? accent() : fg()}>{`@${row.agent.padEnd(11)} `}</text>
+                        <text fg={statusColor}>{`${row.ganttBar}  `}</text>
+                        <text fg={muted()}>{`${String(row.durationSec).padStart(5)}s  `}</text>
+                        <text fg="#34d399">{`$${row.cost.toFixed(3)}`}</text>
+                      </box>
                       <Show when={sel() && showDetail()}>
                         <text fg={muted()}>
                           {`    id=${row.id} kind=${row.kind} tokens=${row.tokens} model=${row.model ?? 'inherited'}`}

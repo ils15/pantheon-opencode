@@ -13,6 +13,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+## [v2.3.3] - 2026-11-26
+
+### 🆕 What's New
+
+- **Native Desktop GUI (`./gui-experimental`)**: Adds `Pantheon Cockpit` panel (Olympus Topology, Agora Board, Ephemeral & Bots, Settings).
+- **Colorful TUI Olympus Topology**: Adds color-coded DAG tree and Gantt timeline rows to `/pantheon-cockpit` Swarm tab.
+
+### Added
+
+- **gui** — added `src/plugins/tui/src/gui.tsx` (`./gui-experimental` CJS bundle) with Electron `main(ctx)` IPC bridge and `/pantheon-cockpit` + `/pantheon-settings` commands.
+- **tui** — added colorful `OLYMPUS TOPOLOGY (DAG)` tree and color-coded Gantt rows to `src/plugins/tui/src/cockpit.tsx`.
+
 ## [v2.3.2] - 2026-11-26
 
 ### 🆕 What's New

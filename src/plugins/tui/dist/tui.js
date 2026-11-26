@@ -2764,12 +2764,12 @@ function CockpitView(props) {
 		});
 	});
 	return (() => {
-		var _el$ = createElement("box"), _el$2 = createElement("box"), _el$3 = createElement("box"), _el$4 = createElement("text"), _el$6 = createElement("text"), _el$7 = createElement("box"), _el$8 = createElement("text"), _el$0 = createElement("box"), _el$1 = createElement("text"), _el$39 = createElement("text"), _el$41 = createElement("text");
+		var _el$ = createElement("box"), _el$2 = createElement("box"), _el$3 = createElement("box"), _el$4 = createElement("text"), _el$6 = createElement("text"), _el$7 = createElement("box"), _el$8 = createElement("text"), _el$0 = createElement("box"), _el$1 = createElement("text"), _el$43 = createElement("text"), _el$45 = createElement("text");
 		insertNode(_el$, _el$2);
 		insertNode(_el$, _el$0);
 		insertNode(_el$, _el$1);
-		insertNode(_el$, _el$39);
-		insertNode(_el$, _el$41);
+		insertNode(_el$, _el$43);
+		insertNode(_el$, _el$45);
 		setProp(_el$, "flexDirection", "column");
 		setProp(_el$, "paddingLeft", 2);
 		setProp(_el$, "paddingRight", 2);
@@ -2797,21 +2797,21 @@ function CockpitView(props) {
 			children: (t) => {
 				const active = () => tab() === t.id;
 				return (() => {
-					var _el$43 = createElement("box"), _el$44 = createElement("text");
-					insertNode(_el$43, _el$44);
-					setProp(_el$43, "onMouseDown", stopMouseEvent);
-					setProp(_el$43, "onMouseUp", (event) => handleMouseClick(event, () => setTab(t.id)));
-					insert(_el$44, () => `[${t.label}]`);
+					var _el$47 = createElement("box"), _el$48 = createElement("text");
+					insertNode(_el$47, _el$48);
+					setProp(_el$47, "onMouseDown", stopMouseEvent);
+					setProp(_el$47, "onMouseUp", (event) => handleMouseClick(event, () => setTab(t.id)));
+					insert(_el$48, () => `[${t.label}]`);
 					effect((_p$) => {
-						var _v$19 = active() ? accent() : muted(), _v$20 = active() ? 1 : 0;
-						_v$19 !== _p$.e && (_p$.e = setProp(_el$44, "fg", _v$19, _p$.e));
-						_v$20 !== _p$.t && (_p$.t = setProp(_el$44, "attributes", _v$20, _p$.t));
+						var _v$21 = active() ? accent() : muted(), _v$22 = active() ? 1 : 0;
+						_v$21 !== _p$.e && (_p$.e = setProp(_el$48, "fg", _v$21, _p$.e));
+						_v$22 !== _p$.t && (_p$.t = setProp(_el$48, "attributes", _v$22, _p$.t));
 						return _p$;
 					}, {
 						e: void 0,
 						t: void 0
 					});
-					return _el$43;
+					return _el$47;
 				})();
 			}
 		}));
@@ -2841,10 +2841,10 @@ function CockpitView(props) {
 						return snapshot().overview.surfaces;
 					},
 					children: (item) => (() => {
-						var _el$45 = createElement("text");
-						insert(_el$45, () => `  ● ${item.label.padEnd(28)} ${item.status}`);
-						effect((_$p) => setProp(_el$45, "fg", fg(), _$p));
-						return _el$45;
+						var _el$49 = createElement("text");
+						insert(_el$49, () => `  ● ${item.label.padEnd(28)} ${item.status}`);
+						effect((_$p) => setProp(_el$49, "fg", fg(), _$p));
+						return _el$49;
 					})()
 				}), null);
 				insertNode(_el$16, _el$17);
@@ -2857,10 +2857,10 @@ function CockpitView(props) {
 						return snapshot().overview.workMap;
 					},
 					children: (line) => (() => {
-						var _el$46 = createElement("text");
-						insert(_el$46, line);
-						effect((_$p) => setProp(_el$46, "fg", muted(), _$p));
-						return _el$46;
+						var _el$50 = createElement("text");
+						insert(_el$50, line);
+						effect((_$p) => setProp(_el$50, "fg", muted(), _$p));
+						return _el$50;
 					})()
 				}), null);
 				effect((_p$) => {
@@ -2878,17 +2878,17 @@ function CockpitView(props) {
 				});
 				return _el$11;
 			}
-		}), _el$39);
+		}), _el$43);
 		insert(_el$, createComponent(Show, {
 			get when() {
 				return tab() === "swarm";
 			},
 			get children() {
-				var _el$18 = createElement("box"), _el$19 = createElement("text"), _el$20 = createElement("box"), _el$21 = createElement("text"), _el$22 = createElement("box"), _el$23 = createElement("text"), _el$24 = createElement("box"), _el$25 = createElement("text");
+				var _el$18 = createElement("box"), _el$19 = createElement("text"), _el$20 = createElement("box"), _el$21 = createElement("text"), _el$22 = createElement("box"), _el$23 = createElement("text"), _el$28 = createElement("box"), _el$29 = createElement("text");
 				insertNode(_el$18, _el$19);
 				insertNode(_el$18, _el$20);
 				insertNode(_el$18, _el$22);
-				insertNode(_el$18, _el$24);
+				insertNode(_el$18, _el$28);
 				setProp(_el$18, "flexDirection", "column");
 				setProp(_el$18, "marginTop", 1);
 				setProp(_el$19, "attributes", 1);
@@ -2904,10 +2904,10 @@ function CockpitView(props) {
 					},
 					get fallback() {
 						return (() => {
-							var _el$47 = createElement("text");
-							insert(_el$47, () => t(I18N.cockpit.noAttentionItems, lang()));
-							effect((_$p) => setProp(_el$47, "fg", muted(), _$p));
-							return _el$47;
+							var _el$51 = createElement("text");
+							insert(_el$51, () => t(I18N.cockpit.noAttentionItems, lang()));
+							effect((_$p) => setProp(_el$51, "fg", muted(), _$p));
+							return _el$51;
 						})();
 					},
 					get children() {
@@ -2920,10 +2920,10 @@ function CockpitView(props) {
 								const badge = formatAttentionBadge(item.category);
 								const tone = item.category === "decision" || item.category === "failure" ? errFg() : accent();
 								return (() => {
-									var _el$48 = createElement("text");
-									setProp(_el$48, "fg", tone);
-									insert(_el$48, () => `  [${badge}] ${refs ? `${refs} ` : ""}@${item.agent}: ${item.detail.slice(0, 56)}`);
-									return _el$48;
+									var _el$52 = createElement("text");
+									setProp(_el$52, "fg", tone);
+									insert(_el$52, () => `  [${badge}] ${refs ? `${refs} ` : ""}@${item.agent}: ${item.detail.slice(0, 56)}`);
+									return _el$52;
 								})();
 							}
 						});
@@ -2940,10 +2940,10 @@ function CockpitView(props) {
 					},
 					get fallback() {
 						return (() => {
-							var _el$49 = createElement("text");
-							insert(_el$49, () => t(I18N.cockpit.noThreads, lang()));
-							effect((_$p) => setProp(_el$49, "fg", muted(), _$p));
-							return _el$49;
+							var _el$53 = createElement("text");
+							insert(_el$53, () => t(I18N.cockpit.noThreads, lang()));
+							effect((_$p) => setProp(_el$53, "fg", muted(), _$p));
+							return _el$53;
 						})();
 					},
 					get children() {
@@ -2952,21 +2952,21 @@ function CockpitView(props) {
 								return snapshot().threads.groups.slice(0, 4);
 							},
 							children: (group) => (() => {
-								var _el$50 = createElement("box"), _el$51 = createElement("text");
-								insertNode(_el$50, _el$51);
-								setProp(_el$50, "flexDirection", "column");
-								setProp(_el$51, "attributes", 1);
-								insert(_el$51, () => `  ▸ ${group.goal} [#${group.latestSeq} · ${group.statusTag}]`);
-								insert(_el$50, createComponent(For, {
+								var _el$54 = createElement("box"), _el$55 = createElement("text");
+								insertNode(_el$54, _el$55);
+								setProp(_el$54, "flexDirection", "column");
+								setProp(_el$55, "attributes", 1);
+								insert(_el$55, () => `  ▸ ${group.goal} [#${group.latestSeq} · ${group.statusTag}]`);
+								insert(_el$54, createComponent(For, {
 									get each() {
 										return group.threads.slice(0, 3);
 									},
 									children: (thread) => (() => {
-										var _el$52 = createElement("box"), _el$53 = createElement("text");
-										insertNode(_el$52, _el$53);
-										setProp(_el$52, "flexDirection", "column");
-										insert(_el$53, () => `    ├─ ${thread.channel}/${thread.threadId} (#${thread.latestSeq} · ${thread.statusTag})`);
-										insert(_el$52, createComponent(For, {
+										var _el$56 = createElement("box"), _el$57 = createElement("text");
+										insertNode(_el$56, _el$57);
+										setProp(_el$56, "flexDirection", "column");
+										insert(_el$57, () => `    ├─ ${thread.channel}/${thread.threadId} (#${thread.latestSeq} · ${thread.statusTag})`);
+										insert(_el$56, createComponent(For, {
 											get each() {
 												return thread.workstreams.slice(0, 3);
 											},
@@ -2976,38 +2976,109 @@ function CockpitView(props) {
 												const stepRef = ws.stepKey ? ` step=${ws.stepKey}` : "";
 												const bodyPreview = latestMsg ? ` #${latestMsg.seq} @${latestMsg.from}: ${latestMsg.body.slice(0, 32)}` : "";
 												return (() => {
-													var _el$54 = createElement("text");
-													insert(_el$54, () => `    │  • ${ws.workstream}${stepRef}${ephBadge} [${ws.statusTag}]${bodyPreview}`);
-													effect((_$p) => setProp(_el$54, "fg", fg(), _$p));
-													return _el$54;
+													var _el$58 = createElement("text");
+													insert(_el$58, () => `    │  • ${ws.workstream}${stepRef}${ephBadge} [${ws.statusTag}]${bodyPreview}`);
+													effect((_$p) => setProp(_el$58, "fg", fg(), _$p));
+													return _el$58;
 												})();
 											}
 										}), null);
-										effect((_$p) => setProp(_el$53, "fg", muted(), _$p));
-										return _el$52;
+										effect((_$p) => setProp(_el$57, "fg", muted(), _$p));
+										return _el$56;
 									})()
 								}), null);
-								effect((_$p) => setProp(_el$51, "fg", fg(), _$p));
-								return _el$50;
+								effect((_$p) => setProp(_el$55, "fg", fg(), _$p));
+								return _el$54;
 							})()
 						});
 					}
 				}), null);
-				insertNode(_el$24, _el$25);
-				setProp(_el$24, "marginTop", 1);
-				setProp(_el$24, "flexDirection", "column");
-				setProp(_el$25, "attributes", 1);
-				insert(_el$25, () => t(I18N.cockpit.workersGantt, lang()));
-				insert(_el$24, createComponent(Show, {
+				insert(_el$18, createComponent(Show, {
+					get when() {
+						return snapshot().swarm.rows.length > 0;
+					},
+					get children() {
+						var _el$24 = createElement("box"), _el$25 = createElement("text"), _el$27 = createElement("text");
+						insertNode(_el$24, _el$25);
+						insertNode(_el$24, _el$27);
+						setProp(_el$24, "marginTop", 1);
+						setProp(_el$24, "flexDirection", "column");
+						insertNode(_el$25, createTextNode(`OLYMPUS TOPOLOGY (DAG)`));
+						setProp(_el$25, "attributes", 1);
+						setProp(_el$27, "attributes", 1);
+						insert(_el$27, () => `  ◉ zeus (root)  ·  ${snapshot().swarm.running} running · ${snapshot().swarm.total} total`);
+						insert(_el$24, createComponent(For, {
+							get each() {
+								return snapshot().swarm.rows.slice(0, 8);
+							},
+							children: (row, idx) => {
+								const isLast = () => idx() === Math.min(snapshot().swarm.rows.length, 8) - 1;
+								const branch = () => isLast() ? "  └─▸ " : "  ├─▸ ";
+								const statusColor = row.status === "running" ? "#34d399" : row.status === "failed" ? "#f87171" : row.status === "interrupted" ? "#fbbf24" : "#38bdf8";
+								const isEphemeral = row.kind === "ephemeral" || row.agent.startsWith("eph-");
+								const marker = isEphemeral ? "◈" : row.status === "running" ? "●" : row.status === "failed" ? "✗" : "✓";
+								const badge = row.status === "running" ? "[RUN]" : row.status === "failed" ? "[ERR]" : row.status === "interrupted" ? "[WAI]" : "[OK ]";
+								return (() => {
+									var _el$59 = createElement("box"), _el$60 = createElement("text"), _el$61 = createElement("text"), _el$62 = createElement("text"), _el$63 = createElement("text"), _el$64 = createElement("text"), _el$65 = createElement("text");
+									insertNode(_el$59, _el$60);
+									insertNode(_el$59, _el$61);
+									insertNode(_el$59, _el$62);
+									insertNode(_el$59, _el$63);
+									insertNode(_el$59, _el$64);
+									insertNode(_el$59, _el$65);
+									setProp(_el$59, "flexDirection", "row");
+									insert(_el$60, branch);
+									setProp(_el$61, "fg", isEphemeral ? "#a78bfa" : statusColor);
+									insert(_el$61, `${marker} `);
+									insert(_el$62, () => `@${row.agent.padEnd(11)} `);
+									setProp(_el$63, "fg", statusColor);
+									insert(_el$63, `${badge} `);
+									setProp(_el$64, "fg", "#38bdf8");
+									insert(_el$64, () => `${String(row.durationSec).padStart(4)}s `);
+									setProp(_el$65, "fg", "#34d399");
+									insert(_el$65, () => `$${row.cost.toFixed(3)}`);
+									effect((_p$) => {
+										var _v$23 = muted(), _v$24 = fg(), _v$25 = row.status === "running" ? 1 : 0;
+										_v$23 !== _p$.e && (_p$.e = setProp(_el$60, "fg", _v$23, _p$.e));
+										_v$24 !== _p$.t && (_p$.t = setProp(_el$62, "fg", _v$24, _p$.t));
+										_v$25 !== _p$.a && (_p$.a = setProp(_el$62, "attributes", _v$25, _p$.a));
+										return _p$;
+									}, {
+										e: void 0,
+										t: void 0,
+										a: void 0
+									});
+									return _el$59;
+								})();
+							}
+						}), null);
+						effect((_p$) => {
+							var _v$5 = accent(), _v$6 = accent();
+							_v$5 !== _p$.e && (_p$.e = setProp(_el$25, "fg", _v$5, _p$.e));
+							_v$6 !== _p$.t && (_p$.t = setProp(_el$27, "fg", _v$6, _p$.t));
+							return _p$;
+						}, {
+							e: void 0,
+							t: void 0
+						});
+						return _el$24;
+					}
+				}), _el$28);
+				insertNode(_el$28, _el$29);
+				setProp(_el$28, "marginTop", 1);
+				setProp(_el$28, "flexDirection", "column");
+				setProp(_el$29, "attributes", 1);
+				insert(_el$29, () => t(I18N.cockpit.workersGantt, lang()));
+				insert(_el$28, createComponent(Show, {
 					get when() {
 						return snapshot().swarm.rows.length > 0;
 					},
 					get fallback() {
 						return (() => {
-							var _el$55 = createElement("text");
-							insert(_el$55, () => t(I18N.cockpit.noSubagents, lang()));
-							effect((_$p) => setProp(_el$55, "fg", muted(), _$p));
-							return _el$55;
+							var _el$66 = createElement("text");
+							insert(_el$66, () => t(I18N.cockpit.noSubagents, lang()));
+							effect((_$p) => setProp(_el$66, "fg", muted(), _$p));
+							return _el$66;
 						})();
 					},
 					get children() {
@@ -3018,40 +3089,66 @@ function CockpitView(props) {
 							children: (row, idx) => {
 								const sel = () => idx() === selectedRow();
 								const marker = row.status === "running" ? "●" : row.status === "failed" ? "✗" : "✓";
+								const statusColor = row.status === "running" ? "#34d399" : row.status === "failed" ? "#f87171" : row.status === "interrupted" ? "#fbbf24" : "#38bdf8";
 								return (() => {
-									var _el$56 = createElement("box"), _el$57 = createElement("text");
-									insertNode(_el$56, _el$57);
-									setProp(_el$56, "flexDirection", "column");
-									setProp(_el$56, "onMouseDown", stopMouseEvent);
-									setProp(_el$56, "onMouseUp", (event) => handleMouseClick(event, () => {
+									var _el$67 = createElement("box"), _el$68 = createElement("box"), _el$69 = createElement("text"), _el$70 = createElement("text"), _el$71 = createElement("text"), _el$72 = createElement("text"), _el$73 = createElement("text"), _el$74 = createElement("text");
+									insertNode(_el$67, _el$68);
+									setProp(_el$67, "flexDirection", "column");
+									setProp(_el$67, "onMouseDown", stopMouseEvent);
+									setProp(_el$67, "onMouseUp", (event) => handleMouseClick(event, () => {
 										setSelectedRow(idx());
 										setShowDetail((v) => !v);
 									}));
-									insert(_el$57, () => `${sel() ? "▸" : " "} ${marker} @${row.agent.padEnd(11)} ${row.ganttBar}  ${String(row.durationSec).padStart(5)}s  $${row.cost.toFixed(3)}`);
-									insert(_el$56, createComponent(Show, {
+									insertNode(_el$68, _el$69);
+									insertNode(_el$68, _el$70);
+									insertNode(_el$68, _el$71);
+									insertNode(_el$68, _el$72);
+									insertNode(_el$68, _el$73);
+									insertNode(_el$68, _el$74);
+									setProp(_el$68, "flexDirection", "row");
+									insert(_el$69, () => `${sel() ? "▸" : " "} `);
+									setProp(_el$70, "fg", statusColor);
+									insert(_el$70, `${marker} `);
+									insert(_el$71, () => `@${row.agent.padEnd(11)} `);
+									setProp(_el$72, "fg", statusColor);
+									insert(_el$72, () => `${row.ganttBar}  `);
+									insert(_el$73, () => `${String(row.durationSec).padStart(5)}s  `);
+									setProp(_el$74, "fg", "#34d399");
+									insert(_el$74, () => `$${row.cost.toFixed(3)}`);
+									insert(_el$67, createComponent(Show, {
 										get when() {
 											return memo(() => !!sel())() && showDetail();
 										},
 										get children() {
-											var _el$58 = createElement("text");
-											insert(_el$58, () => `    id=${row.id} kind=${row.kind} tokens=${row.tokens} model=${row.model ?? "inherited"}`);
-											effect((_$p) => setProp(_el$58, "fg", muted(), _$p));
-											return _el$58;
+											var _el$75 = createElement("text");
+											insert(_el$75, () => `    id=${row.id} kind=${row.kind} tokens=${row.tokens} model=${row.model ?? "inherited"}`);
+											effect((_$p) => setProp(_el$75, "fg", muted(), _$p));
+											return _el$75;
 										}
 									}), null);
-									effect((_$p) => setProp(_el$57, "fg", sel() ? accent() : fg(), _$p));
-									return _el$56;
+									effect((_p$) => {
+										var _v$26 = sel() ? accent() : muted(), _v$27 = sel() ? accent() : fg(), _v$28 = muted();
+										_v$26 !== _p$.e && (_p$.e = setProp(_el$69, "fg", _v$26, _p$.e));
+										_v$27 !== _p$.t && (_p$.t = setProp(_el$71, "fg", _v$27, _p$.t));
+										_v$28 !== _p$.a && (_p$.a = setProp(_el$73, "fg", _v$28, _p$.a));
+										return _p$;
+									}, {
+										e: void 0,
+										t: void 0,
+										a: void 0
+									});
+									return _el$67;
 								})();
 							}
 						});
 					}
 				}), null);
 				effect((_p$) => {
-					var _v$5 = fg(), _v$6 = accent(), _v$7 = accent(), _v$8 = accent();
-					_v$5 !== _p$.e && (_p$.e = setProp(_el$19, "fg", _v$5, _p$.e));
-					_v$6 !== _p$.t && (_p$.t = setProp(_el$21, "fg", _v$6, _p$.t));
-					_v$7 !== _p$.a && (_p$.a = setProp(_el$23, "fg", _v$7, _p$.a));
-					_v$8 !== _p$.o && (_p$.o = setProp(_el$25, "fg", _v$8, _p$.o));
+					var _v$7 = fg(), _v$8 = accent(), _v$9 = accent(), _v$0 = accent();
+					_v$7 !== _p$.e && (_p$.e = setProp(_el$19, "fg", _v$7, _p$.e));
+					_v$8 !== _p$.t && (_p$.t = setProp(_el$21, "fg", _v$8, _p$.t));
+					_v$9 !== _p$.a && (_p$.a = setProp(_el$23, "fg", _v$9, _p$.a));
+					_v$0 !== _p$.o && (_p$.o = setProp(_el$29, "fg", _v$0, _p$.o));
 					return _p$;
 				}, {
 					e: void 0,
@@ -3061,40 +3158,40 @@ function CockpitView(props) {
 				});
 				return _el$18;
 			}
-		}), _el$39);
+		}), _el$43);
 		insert(_el$, createComponent(Show, {
 			get when() {
 				return tab() === "flightdeck";
 			},
 			get children() {
-				var _el$26 = createElement("box"), _el$27 = createElement("text"), _el$29 = createElement("text"), _el$30 = createElement("text"), _el$31 = createElement("box"), _el$32 = createElement("text"), _el$33 = createElement("box"), _el$34 = createElement("text"), _el$35 = createElement("box"), _el$36 = createElement("box"), _el$37 = createElement("text");
-				insertNode(_el$26, _el$27);
-				insertNode(_el$26, _el$29);
-				insertNode(_el$26, _el$30);
-				insertNode(_el$26, _el$31);
-				insertNode(_el$26, _el$33);
-				insertNode(_el$26, _el$35);
-				setProp(_el$26, "flexDirection", "column");
-				setProp(_el$26, "marginTop", 1);
-				insertNode(_el$27, createTextNode(`GATE (Safety, Guardrails &amp; Step-Ledger)`));
-				setProp(_el$27, "attributes", 1);
-				insert(_el$29, () => `  ${snapshot().flightdeck.gateGlyphs}`);
-				insert(_el$30, () => `  ${snapshot().flightdeck.gateSummary}`);
-				insertNode(_el$31, _el$32);
-				setProp(_el$31, "marginTop", 1);
-				setProp(_el$31, "flexDirection", "column");
-				setProp(_el$32, "attributes", 1);
-				insert(_el$32, () => t(I18N.cockpit.stepLedgerTitle, lang()));
-				insert(_el$31, createComponent(Show, {
+				var _el$30 = createElement("box"), _el$31 = createElement("text"), _el$33 = createElement("text"), _el$34 = createElement("text"), _el$35 = createElement("box"), _el$36 = createElement("text"), _el$37 = createElement("box"), _el$38 = createElement("text"), _el$39 = createElement("box"), _el$40 = createElement("box"), _el$41 = createElement("text");
+				insertNode(_el$30, _el$31);
+				insertNode(_el$30, _el$33);
+				insertNode(_el$30, _el$34);
+				insertNode(_el$30, _el$35);
+				insertNode(_el$30, _el$37);
+				insertNode(_el$30, _el$39);
+				setProp(_el$30, "flexDirection", "column");
+				setProp(_el$30, "marginTop", 1);
+				insertNode(_el$31, createTextNode(`GATE (Safety, Guardrails &amp; Step-Ledger)`));
+				setProp(_el$31, "attributes", 1);
+				insert(_el$33, () => `  ${snapshot().flightdeck.gateGlyphs}`);
+				insert(_el$34, () => `  ${snapshot().flightdeck.gateSummary}`);
+				insertNode(_el$35, _el$36);
+				setProp(_el$35, "marginTop", 1);
+				setProp(_el$35, "flexDirection", "column");
+				setProp(_el$36, "attributes", 1);
+				insert(_el$36, () => t(I18N.cockpit.stepLedgerTitle, lang()));
+				insert(_el$35, createComponent(Show, {
 					get when() {
 						return snapshot().flightdeck.steps.length > 0;
 					},
 					get fallback() {
 						return (() => {
-							var _el$59 = createElement("text");
-							insertNode(_el$59, createTextNode(`  (no active step-ledger entries)`));
-							effect((_$p) => setProp(_el$59, "fg", muted(), _$p));
-							return _el$59;
+							var _el$76 = createElement("text");
+							insertNode(_el$76, createTextNode(`  (no active step-ledger entries)`));
+							effect((_$p) => setProp(_el$76, "fg", muted(), _$p));
+							return _el$76;
 						})();
 					},
 					get children() {
@@ -3103,29 +3200,29 @@ function CockpitView(props) {
 								return snapshot().flightdeck.steps.slice(0, 6);
 							},
 							children: (st) => (() => {
-								var _el$61 = createElement("text");
-								insert(_el$61, () => `  ▸ ${st.stepKey.padEnd(20)} [${st.state.padEnd(11)}] @${st.agent}  ${st.objective.slice(0, 36)}`);
-								effect((_$p) => setProp(_el$61, "fg", st.state === "blocked" || st.state === "rolled_back" ? errFg() : success(), _$p));
-								return _el$61;
+								var _el$78 = createElement("text");
+								insert(_el$78, () => `  ▸ ${st.stepKey.padEnd(20)} [${st.state.padEnd(11)}] @${st.agent}  ${st.objective.slice(0, 36)}`);
+								effect((_$p) => setProp(_el$78, "fg", st.state === "blocked" || st.state === "rolled_back" ? errFg() : success(), _$p));
+								return _el$78;
 							})()
 						});
 					}
 				}), null);
-				insertNode(_el$33, _el$34);
-				setProp(_el$33, "marginTop", 1);
-				setProp(_el$33, "flexDirection", "column");
-				setProp(_el$34, "attributes", 1);
-				insert(_el$34, () => t(I18N.cockpit.eventStreamTitle, lang()));
-				insert(_el$33, createComponent(Show, {
+				insertNode(_el$37, _el$38);
+				setProp(_el$37, "marginTop", 1);
+				setProp(_el$37, "flexDirection", "column");
+				setProp(_el$38, "attributes", 1);
+				insert(_el$38, () => t(I18N.cockpit.eventStreamTitle, lang()));
+				insert(_el$37, createComponent(Show, {
 					get when() {
 						return snapshot().flightdeck.logs.length > 0;
 					},
 					get fallback() {
 						return (() => {
-							var _el$62 = createElement("text");
-							insertNode(_el$62, createTextNode(`  (no bus telemetry events captured yet)`));
-							effect((_$p) => setProp(_el$62, "fg", muted(), _$p));
-							return _el$62;
+							var _el$79 = createElement("text");
+							insertNode(_el$79, createTextNode(`  (no bus telemetry events captured yet)`));
+							effect((_$p) => setProp(_el$79, "fg", muted(), _$p));
+							return _el$79;
 						})();
 					},
 					get children() {
@@ -3134,42 +3231,42 @@ function CockpitView(props) {
 								return snapshot().flightdeck.logs.slice(0, 8);
 							},
 							children: (ev) => (() => {
-								var _el$64 = createElement("text");
-								insert(_el$64, () => `  [${ev.kind}] @${ev.agent}: ${ev.detail.slice(0, 56)}`);
-								effect((_$p) => setProp(_el$64, "fg", ev.severity === "error" ? errFg() : muted(), _$p));
-								return _el$64;
+								var _el$81 = createElement("text");
+								insert(_el$81, () => `  [${ev.kind}] @${ev.agent}: ${ev.detail.slice(0, 56)}`);
+								effect((_$p) => setProp(_el$81, "fg", ev.severity === "error" ? errFg() : muted(), _$p));
+								return _el$81;
 							})()
 						});
 					}
 				}), null);
-				insertNode(_el$35, _el$36);
-				setProp(_el$35, "marginTop", 1);
-				setProp(_el$35, "flexDirection", "row");
-				setProp(_el$35, "gap", 2);
-				insertNode(_el$36, _el$37);
-				setProp(_el$36, "onMouseDown", stopMouseEvent);
-				setProp(_el$36, "onMouseUp", (event) => handleMouseClick(event, () => cockpitController?.exportReplay()));
-				insertNode(_el$37, createTextNode(`[ x Export Replay Trace ]`));
-				setProp(_el$37, "attributes", 1);
-				insert(_el$35, createComponent(Show, {
+				insertNode(_el$39, _el$40);
+				setProp(_el$39, "marginTop", 1);
+				setProp(_el$39, "flexDirection", "row");
+				setProp(_el$39, "gap", 2);
+				insertNode(_el$40, _el$41);
+				setProp(_el$40, "onMouseDown", stopMouseEvent);
+				setProp(_el$40, "onMouseUp", (event) => handleMouseClick(event, () => cockpitController?.exportReplay()));
+				insertNode(_el$41, createTextNode(`[ x Export Replay Trace ]`));
+				setProp(_el$41, "attributes", 1);
+				insert(_el$39, createComponent(Show, {
 					get when() {
 						return exportNote();
 					},
 					children: (note) => (() => {
-						var _el$65 = createElement("text");
-						insert(_el$65, () => `✓ ${note()}`);
-						effect((_$p) => setProp(_el$65, "fg", success(), _$p));
-						return _el$65;
+						var _el$82 = createElement("text");
+						insert(_el$82, () => `✓ ${note()}`);
+						effect((_$p) => setProp(_el$82, "fg", success(), _$p));
+						return _el$82;
 					})()
 				}), null);
 				effect((_p$) => {
-					var _v$9 = accent(), _v$0 = fg(), _v$1 = muted(), _v$10 = accent(), _v$11 = accent(), _v$12 = accent();
-					_v$9 !== _p$.e && (_p$.e = setProp(_el$27, "fg", _v$9, _p$.e));
-					_v$0 !== _p$.t && (_p$.t = setProp(_el$29, "fg", _v$0, _p$.t));
-					_v$1 !== _p$.a && (_p$.a = setProp(_el$30, "fg", _v$1, _p$.a));
-					_v$10 !== _p$.o && (_p$.o = setProp(_el$32, "fg", _v$10, _p$.o));
-					_v$11 !== _p$.i && (_p$.i = setProp(_el$34, "fg", _v$11, _p$.i));
-					_v$12 !== _p$.n && (_p$.n = setProp(_el$37, "fg", _v$12, _p$.n));
+					var _v$1 = accent(), _v$10 = fg(), _v$11 = muted(), _v$12 = accent(), _v$13 = accent(), _v$14 = accent();
+					_v$1 !== _p$.e && (_p$.e = setProp(_el$31, "fg", _v$1, _p$.e));
+					_v$10 !== _p$.t && (_p$.t = setProp(_el$33, "fg", _v$10, _p$.t));
+					_v$11 !== _p$.a && (_p$.a = setProp(_el$34, "fg", _v$11, _p$.a));
+					_v$12 !== _p$.o && (_p$.o = setProp(_el$36, "fg", _v$12, _p$.o));
+					_v$13 !== _p$.i && (_p$.i = setProp(_el$38, "fg", _v$13, _p$.i));
+					_v$14 !== _p$.n && (_p$.n = setProp(_el$41, "fg", _v$14, _p$.n));
 					return _p$;
 				}, {
 					e: void 0,
@@ -3179,20 +3276,20 @@ function CockpitView(props) {
 					i: void 0,
 					n: void 0
 				});
-				return _el$26;
+				return _el$30;
 			}
-		}), _el$39);
-		insertNode(_el$39, createTextNode(`────────────────────────────────────────────────────────────────────────`));
-		setProp(_el$39, "marginTop", 1);
-		insertNode(_el$41, createTextNode(`1-3 tabs · Tab/Shift+Tab switch · ↑↓ select · Enter detail · x replay · r refresh · Esc/q close`));
+		}), _el$43);
+		insertNode(_el$43, createTextNode(`────────────────────────────────────────────────────────────────────────`));
+		setProp(_el$43, "marginTop", 1);
+		insertNode(_el$45, createTextNode(`1-3 tabs · Tab/Shift+Tab switch · ↑↓ select · Enter detail · x replay · r refresh · Esc/q close`));
 		effect((_p$) => {
-			var _v$13 = accent(), _v$14 = fg(), _v$15 = muted(), _v$16 = muted(), _v$17 = muted(), _v$18 = muted();
-			_v$13 !== _p$.e && (_p$.e = setProp(_el$4, "fg", _v$13, _p$.e));
-			_v$14 !== _p$.t && (_p$.t = setProp(_el$6, "fg", _v$14, _p$.t));
-			_v$15 !== _p$.a && (_p$.a = setProp(_el$8, "fg", _v$15, _p$.a));
-			_v$16 !== _p$.o && (_p$.o = setProp(_el$1, "fg", _v$16, _p$.o));
-			_v$17 !== _p$.i && (_p$.i = setProp(_el$39, "fg", _v$17, _p$.i));
-			_v$18 !== _p$.n && (_p$.n = setProp(_el$41, "fg", _v$18, _p$.n));
+			var _v$15 = accent(), _v$16 = fg(), _v$17 = muted(), _v$18 = muted(), _v$19 = muted(), _v$20 = muted();
+			_v$15 !== _p$.e && (_p$.e = setProp(_el$4, "fg", _v$15, _p$.e));
+			_v$16 !== _p$.t && (_p$.t = setProp(_el$6, "fg", _v$16, _p$.t));
+			_v$17 !== _p$.a && (_p$.a = setProp(_el$8, "fg", _v$17, _p$.a));
+			_v$18 !== _p$.o && (_p$.o = setProp(_el$1, "fg", _v$18, _p$.o));
+			_v$19 !== _p$.i && (_p$.i = setProp(_el$43, "fg", _v$19, _p$.i));
+			_v$20 !== _p$.n && (_p$.n = setProp(_el$45, "fg", _v$20, _p$.n));
 			return _p$;
 		}, {
 			e: void 0,
@@ -6260,7 +6357,7 @@ async function readChangelogForBundle(bundleUrl) {
 }
 /** The ambient build-time version, or null outside a tsdown build. */
 function embeddedVersion() {
-	return "2.3.2";
+	return "2.3.3";
 }
 /**
 * Resolve the running Pantheon version for the what's-new window: the plugin
@@ -6502,7 +6599,7 @@ function persistUpdateCheckState(previous, latest) {
 	} catch {}
 }
 function resolveRunningVersion() {
-	return "2.3.2";
+	return "2.3.3";
 }
 const VALUE_WIDTH = 32;
 function SettingsWindow(props) {
@@ -11622,7 +11719,7 @@ function updateCheckStateFile() {
 *  version via toast, and keeps the persistent Home/Sidebar badge updated. */
 async function checkForPantheonUpdate(context) {
 	const { statePath, readState } = updateCheckStateFile();
-	const currentVersion = "2.3.2";
+	const currentVersion = "2.3.3";
 	const initialState = readState();
 	setAvailableUpdateVersion(resolveCachedAvailableUpdate(currentVersion, initialState));
 	const nowMs = Date.now();
@@ -12480,7 +12577,7 @@ function Sidebar(props) {
 			setProp(_el$13, "paddingLeft", 1);
 			setProp(_el$13, "paddingRight", 1);
 			setProp(_el$14, "attributes", 1);
-			insert(_el$14, `Pantheon v2.3.2`);
+			insert(_el$14, `Pantheon v2.3.3`);
 			insert(_el$15, () => `Erro no painel: ${err?.message ?? "desconhecido"}`);
 			effect((_p$) => {
 				var _v$3 = text(), _v$4 = muted();
@@ -12534,9 +12631,9 @@ function SidebarInner(props) {
 	};
 	const failedSuffix = () => failedSuffixText(dispatchView()?.failures);
 	const header = () => tuiPrefs().sidebar.header;
-	const availableUpdate = useAvailableUpdate("2.3.2");
+	const availableUpdate = useAvailableUpdate("2.3.3");
 	const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
-	const updateBadge = () => formatUpdateBadge("2.3.2", availableUpdate(), { isPt: isPt() });
+	const updateBadge = () => formatUpdateBadge("2.3.3", availableUpdate(), { isPt: isPt() });
 	const artifacts = useWorkspaceArtifacts(context);
 	const activePlan = () => artifacts().find((entry) => entry.kind === "plan");
 	return (() => {
@@ -12556,7 +12653,7 @@ function SidebarInner(props) {
 			get children() {
 				var _el$18 = createElement("text");
 				setProp(_el$18, "attributes", 1);
-				insert(_el$18, `Pantheon v2.3.2`);
+				insert(_el$18, `Pantheon v2.3.3`);
 				effect((_$p) => setProp(_el$18, "fg", text(), _$p));
 				return _el$18;
 			}
@@ -13745,13 +13842,13 @@ function useWorkspaceArtifacts(context) {
 *  this keeps a compact Pantheon line visible on the home footer meanwhile. */
 function HomeStatus(props) {
 	const preset = useActivePreset(props.context).preset;
-	const availableUpdate = useAvailableUpdate("2.3.2");
+	const availableUpdate = useAvailableUpdate("2.3.3");
 	const artifacts = useWorkspaceArtifacts(props.context);
 	const activePlan = () => artifacts().find((entry) => entry.kind === "plan");
 	const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
 	const accent = () => resolveAccentColor(tuiDraftPreview()?.theme?.accent ?? tuiPrefs().theme?.accent, props.context.theme);
 	const muted = () => props.context.theme?.text?.muted ?? props.context.theme?.text?.base;
-	const updateBadge = () => formatUpdateBadge("2.3.2", availableUpdate(), {
+	const updateBadge = () => formatUpdateBadge("2.3.3", availableUpdate(), {
 		isPt: isPt(),
 		compact: true
 	});
@@ -13764,7 +13861,7 @@ function HomeStatus(props) {
 			insertNode(_el$135, _el$136);
 			insertNode(_el$135, _el$139);
 			setProp(_el$135, "flexDirection", "row");
-			insert(_el$136, () => `Pantheon v2.3.2${preset().name ? ` ▸ ${preset().name}` : ""}`);
+			insert(_el$136, () => `Pantheon v2.3.3${preset().name ? ` ▸ ${preset().name}` : ""}`);
 			insert(_el$135, createComponent(Show, {
 				get when() {
 					return updateBadge();
@@ -13897,7 +13994,7 @@ function PromptFooter(props) {
 const plugin = Plugin.define({
 	id: "pantheon.tui",
 	setup(context) {
-		const currentVer = "2.3.2";
+		const currentVer = "2.3.3";
 		const globalState = globalThis;
 		const existing = globalState[SINGLETON];
 		if (existing) {
