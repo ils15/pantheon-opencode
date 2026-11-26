@@ -466,6 +466,7 @@ test('scanLegacyArtifacts and cleanLegacyArtifacts migrate stores first and pres
     )
     writeFileSync(join(globalDir, 'plugins', 'pantheon-hooks.ts'), '// obsolete v1')
     writeFileSync(join(globalDir, 'agents', 'zeus.md'), '# legacy zeus copy')
+    writeFileSync(join(globalDir, 'agents', 'gaia.md'), '# legacy pantheon gaia copy')
     writeFileSync(join(globalDir, 'skills', 'tdd-with-agents', 'SKILL.md'), '# canonical copy')
     writeFileSync(join(globalDir, 'skills', 'my-custom-skill', 'SKILL.md'), '# user custom skill')
     writeFileSync(join(globalDir, 'opencode.json.bak.1'), '{}')
@@ -476,6 +477,10 @@ test('scanLegacyArtifacts and cleanLegacyArtifacts migrate stores first and pres
       JSON.stringify([{ id: 'goal-keep', title: 'Preserve goal before cleanup' }]),
     )
     writeFileSync(join(projectDir, '.opencode', 'commands', 'pantheon-deepwork.md'), '# cmd copy')
+    writeFileSync(
+      join(projectDir, '.opencode', 'commands', 'pantheon-settings.md'),
+      '# legacy pantheon settings copy',
+    )
     writeFileSync(join(projectDir, '.opencode', 'agents', 'custom-geo.md'), '# user forged agent')
 
     const scan = scanLegacyArtifacts({
@@ -513,9 +518,14 @@ test('scanLegacyArtifacts and cleanLegacyArtifacts migrate stores first and pres
     assert.equal(existsSync(join(globalDir, 'plugins', 'pantheon-hooks.ts')), false)
     assert.equal(existsSync(join(globalDir, 'plugins', 'pantheon-tui')), false)
     assert.equal(existsSync(join(globalDir, 'agents', 'zeus.md')), false)
+    assert.equal(existsSync(join(globalDir, 'agents', 'gaia.md')), false)
     assert.equal(existsSync(join(globalDir, 'skills', 'tdd-with-agents')), false)
     assert.equal(
       existsSync(join(projectDir, '.opencode', 'commands', 'pantheon-deepwork.md')),
+      false,
+    )
+    assert.equal(
+      existsSync(join(projectDir, '.opencode', 'commands', 'pantheon-settings.md')),
       false,
     )
 
