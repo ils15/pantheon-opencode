@@ -1,6 +1,6 @@
 {
   "name": "pantheon-opencode",
-  "version": "2.3.2",
+  "version": "2.3.3",
   "description": "Multi-agent orchestration for OpenCode \u2014 8 canonical agents + on-demand ephemeral workers, TDD, Themis review gates.",
   "type": "module",
   "workspaces": [
@@ -15,6 +15,7 @@
     ".": "./src/plugin/index.js",
     "./server": "./src/plugin/index.js",
     "./tui": "./src/plugins/tui/dist/tui.js",
+    "./gui-experimental": "./src/plugins/tui/dist/gui-experimental.cjs",
     "./mcp": "./src/mcp/pantheon-mcp-server.mjs",
     "./local-decision-router": "./src/pantheon/local-decision-router.ts",
     "./plugin": "./src/plugin.ts"

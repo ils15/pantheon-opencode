@@ -1,7 +1,7 @@
 {
   "name": "pantheon-tui",
   "type": "module",
-  "version": "2.3.2",
+  "version": "2.3.3",
   "description": "Pantheon TUI plugin \u2014 V1 rich sidebar and usage gauges; native V2 status, session and delegation sidebar",
   "license": "MIT",
   "engines": {
@@ -19,7 +19,7 @@
     "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
-    "build": "tsdown",
+    "build": "tsdown && tsdown --config tsdown.gui.config.ts",
     "typecheck": "tsc -p tsconfig.typecheck.json --noEmit"
   },
   "peerDependencies": {
