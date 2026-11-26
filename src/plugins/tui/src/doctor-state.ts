@@ -24,7 +24,7 @@ import {
 import { comparePantheonVersions } from './update-notice.ts'
 
 /** Drift-pinned against scripts/node-engine-policy.mjs MIN_SUPPORTED_NODE_VERSION. */
-export const MIN_SUPPORTED_NODE_VERSION = '26.4.0'
+export const MIN_SUPPORTED_NODE_VERSION = '26.3.0'
 
 export function opencodePantheonDir(env: Record<string, string | undefined> = process.env) {
   const xdg = env.XDG_CONFIG_HOME

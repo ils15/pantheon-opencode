@@ -355,7 +355,7 @@ test('caps without flags names both required flags and opens no ledger', async (
 
 test('CLI reports a usage error as one line without a stack', (t) => {
   if (!isSupportedNodeVersion(process.versions.node)) {
-    t.skip(`the CLI refuses Node < 26.4.0 (current: ${process.versions.node})`)
+    t.skip(`the CLI refuses Node < 26.3.0 (current: ${process.versions.node})`)
     return
   }
   const { home, env } = sandbox()

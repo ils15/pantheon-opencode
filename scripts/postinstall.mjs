@@ -3,7 +3,7 @@
  * postinstall.mjs — Pantheon OpenCode npm lifecycle hook
  *
  * Runs cleanly on `opencode plugin add pantheon-opencode` / `npm install`:
- *   1. Validates Node.js >= 26.4.0.
+ *   1. Validates Node.js >= 26.3.0.
  *   2. Automatically migrates legacy stores and cleans obsolete Python MCPs,
  *      copied TUI/agent/command/skill artifacts, and `.venv` under the user's
  *      OpenCode config directory (safe, zero file copying, zero `npm ci`).
@@ -18,7 +18,7 @@ import { isSupportedNodeVersion, unsupportedNodeVersionMessage } from './node-en
 try {
   if (!isSupportedNodeVersion(process.versions.node)) {
     console.warn(
-      `⚠️ Pantheon postinstall skipped because this runtime is unsupported.\n${unsupportedNodeVersionMessage(process.versions.node)}\n   Switch to Node.js >= 26.4.0 before using Pantheon.`,
+      `⚠️ Pantheon postinstall skipped because this runtime is unsupported.\n${unsupportedNodeVersionMessage(process.versions.node)}\n   Switch to Node.js >= 26.3.0 before using Pantheon.`,
     )
   } else {
     let cleanedCount = 0

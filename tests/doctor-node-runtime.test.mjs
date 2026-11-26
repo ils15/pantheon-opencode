@@ -102,9 +102,9 @@ function runDoctor(target) {
 }
 
 test('doctor distinguishes the package floor from the node:sqlite capability threshold', () => {
-  const unsupportedPackage = classifyNodePackageRuntime('26.3.99')
+  const unsupportedPackage = classifyNodePackageRuntime('26.2.99')
   assert.equal(unsupportedPackage.status, 'unsupported')
-  assert.match(unsupportedPackage.message, /requires Node\.js >= 26\.4\.0/)
+  assert.match(unsupportedPackage.message, /requires Node\.js >= 26\.3\.0/)
 
   const sqliteCapability = classifyNodeSqliteProbe({ available: false, version: 'v22.4.0' })
   assert.equal(sqliteCapability.status, 'unsupported')
@@ -132,7 +132,7 @@ test('doctor reports separate Node policy and SQLite capability findings in text
       [DOCTOR, '--target', target, '--profile', 'lite', '--verbose'],
       { encoding: 'utf8' },
     )
-    assert.match(text.stdout, /meets Pantheon's package requirement \(>= 26\.4\.0\)/)
+    assert.match(text.stdout, /meets Pantheon's package requirement \(>= 26\.3\.0\)/)
     assert.match(text.stdout, /node:sqlite available/)
   } finally {
     rmSync(target, { recursive: true, force: true })

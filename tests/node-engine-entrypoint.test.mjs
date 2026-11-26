@@ -83,7 +83,7 @@ test('postinstall succeeds but skips all config sync on an unsupported Node runt
       env: sandbox.env,
     })
     assert.equal(postinstall.status, 0, postinstall.stderr)
-    assert.match(postinstall.stderr, /requires Node\.js >= 26\.4\.0/)
+    assert.match(postinstall.stderr, /requires Node\.js >= 26\.3\.0/)
     assert.match(postinstall.stderr, /current: 24\.15\.0/)
     assert.deepEqual(snapshotTree(sandbox.root), before)
   } finally {
@@ -91,8 +91,8 @@ test('postinstall succeeds but skips all config sync on an unsupported Node runt
   }
 })
 
-test('doctor classifies Node 24.15 and 26.3 as unsupported before any writes', () => {
-  for (const version of ['24.15.0', '26.3.0']) {
+test('doctor classifies Node 24.15 and 26.2 as unsupported before any writes', () => {
+  for (const version of ['24.15.0', '26.2.0']) {
     const sandbox = makeSandbox()
     try {
       const before = snapshotTree(sandbox.root)
@@ -105,7 +105,7 @@ test('doctor classifies Node 24.15 and 26.3 as unsupported before any writes', (
       const output = `${result.stdout}\n${result.stderr}`
       assert.match(
         output,
-        new RegExp(`requires Node\\.js >= 26\\.4\\.0.*${version}|${version}.*26\\.4\\.0`),
+        new RegExp(`requires Node\\.js >= 26\\.3\\.0.*${version}|${version}.*26\\.3\\.0`),
       )
       assert.deepEqual(snapshotTree(sandbox.root), before)
     } finally {

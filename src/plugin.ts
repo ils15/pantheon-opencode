@@ -616,6 +616,19 @@ function readCanonicalRoster(): Record<string, Record<string, unknown>> {
   return {}
 }
 
+// V1-only agent IDs removed from the canonical roster. A host that previously
+// ran Pantheon V1 can still expose these as registered agents; the V2 transform
+// must remove them instead of leaving a mix of old and new specialists.
+const LEGACY_AGENT_IDS = new Set([
+  'artemis',
+  'gaia',
+  'hephaestus',
+  'mnemosyne',
+  'nyx',
+  'prometheus',
+  'talos',
+])
+
 function transformAgents(draft: AgentDraft): void {
   // Beta 19192 guard (issue #92): draft may not have `list`, or list()
   // may return a non-iterable. Never throw — mark unsupported and return.
@@ -662,6 +675,19 @@ function transformAgents(draft: AgentDraft): void {
     const seenIds = new Set<string>()
     for (const agent of agents) {
       if (agent?.id) seenIds.add(agent.id)
+    }
+
+    // Drop V1-only agents still registered by a host that previously ran Pantheon.
+    try {
+      if (typeof draft.remove === 'function') {
+        for (const agent of [...agents]) {
+          if (agent?.id && LEGACY_AGENT_IDS.has(agent.id) && !(agent.id in roster)) {
+            draft.remove(agent.id)
+          }
+        }
+      }
+    } catch {
+      /* fail-open: older hosts may not expose agent removal */
     }
 
     // Auto-provision any missing Pantheon agents (for single-command plugin add installs)

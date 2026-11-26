@@ -13,6 +13,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+## [v2.3.2] - 2026-11-26
+
+### 🆕 What's New
+
+- **Modern Sidebar Todo Block**: Re-enabled `todo` block by default (`▸`/`○`/`✓`/`✕` glyphs + `done/total` counter) with Settings toggle.
+- **Node `>=26.3.0` Compatibility**: Lowered `engines.node` from `>=26.4.0` so `plugin add pantheon-opencode` resolves `latest` on Node 26.3.
+- **Legacy Agent & Command Cleanup**: Purges obsolete V1 agents and `pantheon-settings.md` from config scopes and agent transforms.
+
+### Changed
+
+- **node-engine** — lowered `MIN_SUPPORTED_NODE_VERSION` and `engines.node` from `26.4.0` to `26.3.0` across manifests, doctor, and docs.
+- **tui** — enabled `sidebar.blocks.todo` by default with modern single-glyph markers and completion counter.
+- **tests** — simplified `tests/pantheon/legacy-store-migration.test.ts` with reusable workspace and SQLite fixture helpers.
+
+### Fixed
+
+- **plugin** — removed obsolete V1-only agent IDs in `transformAgents` while preserving custom user agents.
+- **migration** — classified V1-only agent/command files as `v1Obsolete` in `legacy-store-migration.mjs` and `src/plugins/tui/src/legacy-audit.ts`.
+
 ## [v2.3.1] - 2026-11-25
 
 ### 🆕 What's New

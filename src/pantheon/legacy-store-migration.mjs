@@ -990,6 +990,15 @@ function hasPendingLegacyFiles(rootDir, isGlobalConfig = false) {
       if (existsSync(join(dir, 'commands', 'pantheon.md'))) return true
       if (existsSync(join(dir, 'routing.yml'))) return true
       if (existsSync(join(dir, '.pantheon', 'install-state.json'))) return true
+      for (const agentFile of OBSOLETE_AGENT_MD_FILES) {
+        if (existsSync(join(dir, 'agents', agentFile))) return true
+        if (existsSync(join(dir, 'agent', agentFile))) return true
+        if (existsSync(join(dir, 'prompts', agentFile))) return true
+      }
+      for (const cmdFile of OBSOLETE_COMMAND_MD_FILES) {
+        if (existsSync(join(dir, 'commands', cmdFile))) return true
+        if (existsSync(join(dir, 'command', cmdFile))) return true
+      }
       if (inspectConfigAgentsFiles(dir).length > 0) return true
       if (!preserveWorkingPythonMcp) {
         for (const py of LEGACY_PYTHON_RUNTIME_SCRIPTS) {
@@ -1764,7 +1773,27 @@ export function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
         }
       }
 
+      for (const agentFile of OBSOLETE_AGENT_MD_FILES) {
+        for (const sub of ['agents', 'agent', 'prompts']) {
+          const candidate = join(dir, sub, agentFile)
+          if (existsSync(candidate) && isPantheonMarkdown(candidate)) {
+            if (!dryRun) rmSync(candidate, { force: true })
+            staleFilesDeleted.push(candidate)
+          }
+        }
+      }
+
       for (const cmdFile of CANONICAL_COMMAND_MD_FILES) {
+        for (const sub of ['commands', 'command']) {
+          const candidate = join(dir, sub, cmdFile)
+          if (existsSync(candidate) && isPantheonMarkdown(candidate)) {
+            if (!dryRun) rmSync(candidate, { force: true })
+            staleFilesDeleted.push(candidate)
+          }
+        }
+      }
+
+      for (const cmdFile of OBSOLETE_COMMAND_MD_FILES) {
         for (const sub of ['commands', 'command']) {
           const candidate = join(dir, sub, cmdFile)
           if (existsSync(candidate) && isPantheonMarkdown(candidate)) {
@@ -1949,19 +1978,24 @@ export function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
 const CANONICAL_AGENT_MD_FILES = Object.freeze([
   'aphrodite.md',
   'apollo.md',
-  'artemis.md',
   'athena.md',
   'demeter.md',
-  'gaia.md',
-  'hephaestus.md',
   'hermes.md',
   'iris.md',
+  'themis.md',
+  'zeus.md',
+])
+
+// V1-only agent prompts that the V2 roster no longer registers. Keeping these
+// copies in an OpenCode config scope makes stale agents appear in the UI.
+const OBSOLETE_AGENT_MD_FILES = Object.freeze([
+  'artemis.md',
+  'gaia.md',
+  'hephaestus.md',
   'mnemosyne.md',
   'nyx.md',
   'prometheus.md',
   'talos.md',
-  'themis.md',
-  'zeus.md',
 ])
 
 const CANONICAL_COMMAND_MD_FILES = Object.freeze([
@@ -1973,9 +2007,11 @@ const CANONICAL_COMMAND_MD_FILES = Object.freeze([
   'pantheon-forge.md',
   'pantheon-model.md',
   'pantheon-optimize.md',
-  'pantheon-settings.md',
   'pantheon-vision.md',
 ])
+
+// TUI-only/legacy command copies that the V2 server transform no longer ships.
+const OBSOLETE_COMMAND_MD_FILES = Object.freeze(['pantheon-settings.md'])
 
 const CANONICAL_SKILL_IDS = Object.freeze([
   'agent-coordination',
@@ -2338,6 +2374,24 @@ function collectScopeArtifacts(scope, baseRoot, configRoot, options = {}) {
       )
     }
 
+    for (const agentFile of OBSOLETE_AGENT_MD_FILES) {
+      addItem(
+        join(configRoot, 'agents', agentFile),
+        'v1Obsolete',
+        'V1-only Pantheon agent removed from the V2 roster',
+      )
+      addItem(
+        join(configRoot, 'agent', agentFile),
+        'v1Obsolete',
+        'V1-only Pantheon agent removed from the V2 roster',
+      )
+      addItem(
+        join(configRoot, 'prompts', agentFile),
+        'v1Obsolete',
+        'V1-only Pantheon agent prompt removed from the V2 roster',
+      )
+    }
+
     for (const cmdFile of CANONICAL_COMMAND_MD_FILES) {
       addItem(
         join(configRoot, 'commands', cmdFile),
@@ -2348,6 +2402,19 @@ function collectScopeArtifacts(scope, baseRoot, configRoot, options = {}) {
         join(configRoot, 'command', cmdFile),
         'redundantAsset',
         'Legacy singular command directory copy',
+      )
+    }
+
+    for (const cmdFile of OBSOLETE_COMMAND_MD_FILES) {
+      addItem(
+        join(configRoot, 'commands', cmdFile),
+        'v1Obsolete',
+        'Legacy Pantheon command no longer registered by the V2 server transform',
+      )
+      addItem(
+        join(configRoot, 'command', cmdFile),
+        'v1Obsolete',
+        'Legacy Pantheon command no longer registered by the V2 server transform',
       )
     }
 
