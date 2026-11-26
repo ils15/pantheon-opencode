@@ -6,16 +6,28 @@
  *
  * Provides:
  * - Side Panel (`Pantheon Cockpit`) with Olympus Topology (DAG + Timeline/Gantt
- *   + replay scrubber), Agora Board (`#seq` stream), Ephemeral & Bots, Settings.
- * - Native `SettingsPage` (`Pantheon`) in Desktop Settings.
+ *   + replay scrubber), interactive Agora Board (`#seq` stream + post), Ephemeral
+ *   & Bots (`state.json` + `board-signals/*.signal.json`), and Settings/Cost.
+ * - `ComposerPill` (`pantheon.status`) showing live bots & quick actions.
+ * - Interactive `SettingsPage` (`Pantheon`) in Desktop Settings reading/writing
+ *   overrides via Electron `main(ctx)` IPC + host `tui-prefs` storage.
  * - Slash commands `/pantheon-cockpit` and `/pantheon-settings`.
- * - Electron `main(ctx)` IPC bridge reading `.pantheon/` state files safely.
  */
 
-import { existsSync, readFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import {
   Command,
+  ComposerPill,
   Ipc,
   Panel,
   type PanelTab,
@@ -29,6 +41,7 @@ import { createEffect, createMemo, createSignal, For, onCleanup, Show } from 'so
 interface BoardMsg {
   seq: number
   timestamp: number
+  channel?: string
   from: string
   mentions: string[]
   tag?: string
@@ -52,13 +65,25 @@ interface GuiSnapshot {
   messages: BoardMsg[]
   events: CockpitEvent[]
   activeJobs: Array<{ id: string; agent: string; status: string; cost: number }>
+  todayCostUSD: number
+  monthCostUSD: number
   overridesCount: number
+  gateMode: string
+  artifactsCount: number
 }
 
 const PantheonBridge = Ipc.define({
   id: 'pantheon-opencode.bridge',
   methods: {
     snapshot: {
+      input: Schema.String,
+      output: Schema.String,
+    },
+    postBoardMessage: {
+      input: Schema.String,
+      output: Schema.String,
+    },
+    saveSettings: {
       input: Schema.String,
       output: Schema.String,
     },
@@ -85,6 +110,41 @@ function readNdjsonLines<T>(filePath: string, limit = 80): T[] {
   }
 }
 
+function readOpenCodeCosts(): { todayCostUSD: number; monthCostUSD: number } {
+  const xdgData = process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share')
+  const dbPath = join(xdgData, 'opencode', 'opencode.db')
+  if (!existsSync(dbPath)) return { todayCostUSD: 0, monthCostUSD: 0 }
+
+  try {
+    const db = new DatabaseSync(dbPath, { readOnly: true })
+    try {
+      const now = Date.now()
+      const startOfDay = new Date()
+      startOfDay.setHours(0, 0, 0, 0)
+      const dayMs = startOfDay.getTime()
+      const monthMs = now - 30 * 24 * 60 * 60 * 1000
+
+      const row = db
+        .prepare(
+          `SELECT
+            COALESCE(SUM(CASE WHEN time_created >= ? THEN COALESCE(json_extract(data, '$.cost'), 0) ELSE 0 END), 0) AS today_cost,
+            COALESCE(SUM(CASE WHEN time_created >= ? THEN COALESCE(json_extract(data, '$.cost'), 0) ELSE 0 END), 0) AS month_cost
+          FROM message`,
+        )
+        .get(dayMs, monthMs) as { today_cost?: number; month_cost?: number } | undefined
+
+      return {
+        todayCostUSD: Number(row?.today_cost ?? 0) || 0,
+        monthCostUSD: Number(row?.month_cost ?? 0) || 0,
+      }
+    } finally {
+      db.close()
+    }
+  } catch {
+    return { todayCostUSD: 0, monthCostUSD: 0 }
+  }
+}
+
 function readSnapshotFromDisk(directory: string): GuiSnapshot {
   const root = directory.trim() || process.cwd()
   const messages = readNdjsonLines<BoardMsg>(
@@ -97,6 +157,7 @@ function readSnapshotFromDisk(directory: string): GuiSnapshot {
   )
 
   const activeJobs: GuiSnapshot['activeJobs'] = []
+  const seenJobIds = new Set<string>()
   const statePath = join(root, '.pantheon', 'board', 'state.json')
   if (existsSync(statePath)) {
     try {
@@ -105,6 +166,7 @@ function readSnapshotFromDisk(directory: string): GuiSnapshot {
       }
       if (state.jobs && typeof state.jobs === 'object') {
         for (const [id, job] of Object.entries(state.jobs)) {
+          seenJobIds.add(id)
           activeJobs.push({
             id,
             agent: job.agent ?? 'specialist',
@@ -118,40 +180,187 @@ function readSnapshotFromDisk(directory: string): GuiSnapshot {
     }
   }
 
-  let overridesCount = 0
-  const overridesPath = join(root, '.pantheon', 'overrides.json')
-  if (existsSync(overridesPath)) {
+  const signalsDir = join(root, '.pantheon', 'deepwork', 'board-signals')
+  if (existsSync(signalsDir)) {
     try {
-      const ov = JSON.parse(readFileSync(overridesPath, 'utf8')) as Record<string, unknown>
-      overridesCount = Object.keys(ov).length
+      for (const file of readdirSync(signalsDir)) {
+        if (!file.endsWith('.signal.json')) continue
+        try {
+          const sig = JSON.parse(readFileSync(join(signalsDir, file), 'utf8')) as {
+            jobId?: string
+            agent?: string
+            status?: string
+            cost?: number
+          }
+          const id = sig.jobId ?? file.replace('.signal.json', '')
+          if (seenJobIds.has(id)) continue
+          seenJobIds.add(id)
+          activeJobs.push({
+            id,
+            agent: sig.agent ?? 'specialist',
+            status: sig.status ?? 'completed',
+            cost: typeof sig.cost === 'number' ? sig.cost : 0,
+          })
+        } catch {
+          /* ignore malformed signal */
+        }
+      }
     } catch {
       /* ignore */
     }
   }
 
-  return { messages, events, activeJobs, overridesCount }
+  let overridesCount = 0
+  let gateMode = 'shadow'
+  const overridesPath = join(root, '.pantheon', 'overrides.json')
+  if (existsSync(overridesPath)) {
+    try {
+      const ov = JSON.parse(readFileSync(overridesPath, 'utf8')) as Record<string, any>
+      overridesCount = Object.keys(ov).length
+      if (typeof ov.gateMode === 'string') gateMode = ov.gateMode
+    } catch {
+      /* ignore */
+    }
+  }
+
+  let artifactsCount = 0
+  const plansDir = join(root, '.pantheon', 'plans')
+  if (existsSync(plansDir)) {
+    try {
+      artifactsCount = readdirSync(plansDir).filter((f) => f.endsWith('.md')).length
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const { todayCostUSD, monthCostUSD } = readOpenCodeCosts()
+
+  return {
+    messages,
+    events,
+    activeJobs,
+    todayCostUSD,
+    monthCostUSD,
+    overridesCount,
+    gateMode,
+    artifactsCount,
+  }
+}
+
+function appendBoardMessageToDisk(payloadRaw: string): string {
+  const payload = JSON.parse(payloadRaw) as {
+    directory?: string
+    body?: string
+    channel?: string
+  }
+  const root = payload.directory?.trim() || process.cwd()
+  const body = String(payload.body ?? '').trim()
+  if (!body) return JSON.stringify({ ok: false, error: 'Empty message' })
+
+  const boardDir = join(root, '.pantheon', 'board')
+  mkdirSync(boardDir, { recursive: true })
+  const msgPath = join(boardDir, 'messages.ndjson')
+  const existing = readNdjsonLines<BoardMsg>(msgPath, 500)
+  const nextSeq = existing.length > 0 ? (existing[existing.length - 1]?.seq ?? 0) + 1 : 1
+  const mentions = [...body.matchAll(/@([a-zA-Z0-9_-]+)/g)].map((m) => `@${m[1]}`)
+
+  const record: BoardMsg = {
+    seq: nextSeq,
+    timestamp: Date.now(),
+    channel: payload.channel?.trim() || 'default',
+    from: 'user',
+    mentions,
+    tag: 'note',
+    body,
+  }
+  appendFileSync(msgPath, `${JSON.stringify(record)}\n`, 'utf8')
+  return JSON.stringify({ ok: true, seq: nextSeq })
+}
+
+function saveSettingsToDisk(payloadRaw: string): string {
+  const payload = JSON.parse(payloadRaw) as {
+    directory?: string
+    gateMode?: string
+  }
+  const root = payload.directory?.trim() || process.cwd()
+  const pantheonDir = join(root, '.pantheon')
+  mkdirSync(pantheonDir, { recursive: true })
+  const overridesPath = join(pantheonDir, 'overrides.json')
+  let current: Record<string, unknown> = {}
+  if (existsSync(overridesPath)) {
+    try {
+      current = JSON.parse(readFileSync(overridesPath, 'utf8')) as Record<string, unknown>
+    } catch {
+      current = {}
+    }
+  }
+  if (typeof payload.gateMode === 'string') {
+    current.gateMode = payload.gateMode
+  }
+  writeFileSync(overridesPath, `${JSON.stringify(current, null, 2)}\n`, 'utf8')
+  return JSON.stringify({ ok: true })
 }
 
 type GuiSubTab = 'topology' | 'board' | 'ephemeral' | 'settings'
 
+const [sharedSnapshot, setSharedSnapshot] = createSignal<GuiSnapshot>({
+  messages: [],
+  events: [],
+  activeJobs: [],
+  todayCostUSD: 0,
+  monthCostUSD: 0,
+  overridesCount: 0,
+  gateMode: 'shadow',
+  artifactsCount: 0,
+})
+
 function PantheonCockpitView(props: { ctx: SetupContext; directory: () => string }) {
   const [subTab, setSubTab] = createSignal<GuiSubTab>('topology')
   const [topoView, setTopoView] = createSignal<'dag' | 'gantt'>('dag')
-  const [snapshot, setSnapshot] = createSignal<GuiSnapshot>({
-    messages: [],
-    events: [],
-    activeJobs: [],
-    overridesCount: 0,
-  })
   const [scrubberSeq, setScrubberSeq] = createSignal<number | null>(null)
+  const [draftMsg, setDraftMsg] = createSignal('')
+  const [draftChannel, setDraftChannel] = createSignal('default')
 
   const refresh = async () => {
     try {
       const raw = await props.ctx.main(PantheonBridge).snapshot(props.directory())
-      const parsed = JSON.parse(raw) as GuiSnapshot
-      setSnapshot(parsed)
+      setSharedSnapshot(JSON.parse(raw) as GuiSnapshot)
     } catch {
       /* fail-open when main process bridge is unavailable (e.g. Web) */
+    }
+  }
+
+  const sendBoardMsg = async () => {
+    const body = draftMsg().trim()
+    if (!body) return
+    try {
+      await props.ctx.main(PantheonBridge).postBoardMessage(
+        JSON.stringify({
+          directory: props.directory(),
+          channel: draftChannel(),
+          body,
+        }),
+      )
+      setDraftMsg('')
+      await refresh()
+    } catch {
+      /* fail-open */
+    }
+  }
+
+  const cycleGateMode = async () => {
+    const order = ['shadow', 'enforce', 'off']
+    const next = order[(order.indexOf(sharedSnapshot().gateMode) + 1) % order.length] ?? 'shadow'
+    try {
+      await props.ctx.main(PantheonBridge).saveSettings(
+        JSON.stringify({
+          directory: props.directory(),
+          gateMode: next,
+        }),
+      )
+      await refresh()
+    } catch {
+      /* fail-open */
     }
   }
 
@@ -163,13 +372,13 @@ function PantheonCockpitView(props: { ctx: SetupContext; directory: () => string
   })
 
   const maxSeq = createMemo(() => {
-    const msgs = snapshot().messages
+    const msgs = sharedSnapshot().messages
     return msgs.length > 0 ? (msgs[msgs.length - 1]?.seq ?? 0) : 0
   })
 
   const visibleMessages = createMemo(() => {
     const cap = scrubberSeq()
-    const msgs = snapshot().messages
+    const msgs = sharedSnapshot().messages
     return cap === null ? msgs : msgs.filter((m) => m.seq <= cap)
   })
 
@@ -182,14 +391,14 @@ function PantheonCockpitView(props: { ctx: SetupContext; directory: () => string
     for (const m of visibleMessages()) {
       if (m.from) set.add(m.from)
     }
-    for (const j of snapshot().activeJobs) {
+    for (const j of sharedSnapshot().activeJobs) {
       if (j.agent) set.add(j.agent)
     }
     return [...set].slice(0, 6)
   })
 
   const totalCost = createMemo(() =>
-    snapshot().activeJobs.reduce((sum, j) => sum + (Number.isFinite(j.cost) ? j.cost : 0), 0),
+    sharedSnapshot().activeJobs.reduce((sum, j) => sum + (Number.isFinite(j.cost) ? j.cost : 0), 0),
   )
 
   return (
@@ -220,7 +429,7 @@ function PantheonCockpitView(props: { ctx: SetupContext; directory: () => string
         </div>
         <div style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
           <span style={{ opacity: 0.8 }}>
-            {`${snapshot().activeJobs.filter((j) => j.status === 'running').length} active · $${totalCost().toFixed(2)}`}
+            {`${sharedSnapshot().activeJobs.filter((j) => j.status === 'running').length} active · $${totalCost().toFixed(2)}`}
           </span>
           <button
             type="button"
@@ -250,9 +459,9 @@ function PantheonCockpitView(props: { ctx: SetupContext; directory: () => string
         {(
           [
             ['topology', 'Topology & Timeline'],
-            ['board', `Agora Board (${snapshot().messages.length})`],
-            ['ephemeral', `Ephemeral & Bots (${snapshot().activeJobs.length})`],
-            ['settings', 'Settings'],
+            ['board', `Agora Board (${sharedSnapshot().messages.length})`],
+            ['ephemeral', `Ephemeral & Bots (${sharedSnapshot().activeJobs.length})`],
+            ['settings', 'Settings & Cost'],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -278,7 +487,11 @@ function PantheonCockpitView(props: { ctx: SetupContext; directory: () => string
       <Show when={subTab() === 'topology'}>
         <div style={{ display: 'flex', 'flex-direction': 'column', gap: '10px' }}>
           <div
-            style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' }}
+            style={{
+              display: 'flex',
+              'justify-content': 'space-between',
+              'align-items': 'center',
+            }}
           >
             <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
               <input
@@ -417,9 +630,57 @@ function PantheonCockpitView(props: { ctx: SetupContext; directory: () => string
         </div>
       </Show>
 
-      {/* Tab 2: Agora Board */}
+      {/* Tab 2: Interactive Agora Board */}
       <Show when={subTab() === 'board'}>
-        <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
+        <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <input
+              type="text"
+              placeholder="Channel"
+              value={draftChannel()}
+              onInput={(e) => setDraftChannel(e.currentTarget.value)}
+              style={{
+                width: '90px',
+                padding: '4px 6px',
+                'border-radius': '4px',
+                border: '1px solid var(--border-weak-base, #3f3f46)',
+                background: 'transparent',
+                color: 'inherit',
+              }}
+            />
+            <input
+              type="text"
+              placeholder="Post message to Agora Board (@agent)..."
+              value={draftMsg()}
+              onInput={(e) => setDraftMsg(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void sendBoardMsg()
+              }}
+              style={{
+                flex: 1,
+                padding: '4px 8px',
+                'border-radius': '4px',
+                border: '1px solid var(--border-weak-base, #3f3f46)',
+                background: 'transparent',
+                color: 'inherit',
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => void sendBoardMsg()}
+              style={{
+                padding: '4px 10px',
+                'border-radius': '4px',
+                border: 'none',
+                background: '#fba970',
+                color: '#111',
+                'font-weight': 600,
+                cursor: 'pointer',
+              }}
+            >
+              Send
+            </button>
+          </div>
           <For
             each={[...visibleMessages()].reverse().slice(0, 20)}
             fallback={<div style={{ opacity: 0.6 }}>No board messages recorded yet.</div>}
@@ -447,7 +708,7 @@ function PantheonCockpitView(props: { ctx: SetupContext; directory: () => string
       <Show when={subTab() === 'ephemeral'}>
         <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
           <For
-            each={snapshot().activeJobs}
+            each={sharedSnapshot().activeJobs}
             fallback={<div style={{ opacity: 0.6 }}>No active background jobs.</div>}
           >
             {(job) => (
@@ -475,13 +736,52 @@ function PantheonCockpitView(props: { ctx: SetupContext; directory: () => string
         </div>
       </Show>
 
-      {/* Tab 4: Settings summary */}
+      {/* Tab 4: Settings & Cost */}
       <Show when={subTab() === 'settings'}>
         <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
-          <div>{`Project overrides: ${snapshot().overridesCount}`}</div>
+          <div
+            style={{
+              display: 'flex',
+              'justify-content': 'space-between',
+              padding: '8px',
+              'border-radius': '6px',
+              border: '1px solid var(--border-weak-base, #2e2e32)',
+            }}
+          >
+            <span>OpenCode Spend (Today / 30d)</span>
+            <span style={{ 'font-family': 'monospace' }}>
+              {`$${sharedSnapshot().todayCostUSD.toFixed(2)} / $${sharedSnapshot().monthCostUSD.toFixed(2)}`}
+            </span>
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              'justify-content': 'space-between',
+              'align-items': 'center',
+              padding: '8px',
+              'border-radius': '6px',
+              border: '1px solid var(--border-weak-base, #2e2e32)',
+            }}
+          >
+            <span>Auto-Permissions Gate</span>
+            <button
+              type="button"
+              onClick={() => void cycleGateMode()}
+              style={{
+                padding: '2px 10px',
+                'border-radius': '4px',
+                border: '1px solid var(--border-weak-base, #3f3f46)',
+                background: 'transparent',
+                color: '#fba970',
+                'font-family': 'monospace',
+                cursor: 'pointer',
+              }}
+            >
+              {sharedSnapshot().gateMode}
+            </button>
+          </div>
           <div style={{ opacity: 0.75 }}>
-            Open Desktop Settings → Pantheon for full configuration, or use /pantheon-settings in
-            TUI.
+            {`Overrides: ${sharedSnapshot().overridesCount} · Plans: ${sharedSnapshot().artifactsCount}`}
           </div>
         </div>
       </Show>
@@ -493,6 +793,8 @@ export default Plugin.define({
   main(ctx) {
     ctx.provide(PantheonBridge, {
       snapshot: (directory) => JSON.stringify(readSnapshotFromDisk(directory)),
+      postBoardMessage: (payload) => appendBoardMessageToDisk(payload),
+      saveSettings: (payload) => saveSettingsToDisk(payload),
     })
   },
   setup(ctx) {
@@ -516,6 +818,34 @@ export default Plugin.define({
       ),
     }))
 
+    ctx.add(ComposerPill, () => ({
+      id: 'pantheon.status',
+      show: () => {
+        const running = sharedSnapshot().activeJobs.filter((j) => j.status === 'running').length
+        return {
+          label: running > 0 ? `Pantheon · ${running} active` : 'Pantheon · ready',
+          tone: running > 0 ? 'success' : undefined,
+          rows: [
+            {
+              id: 'open-cockpit',
+              label: 'Open Pantheon Cockpit',
+              detail: `${sharedSnapshot().messages.length} msgs`,
+              run: () => {
+                const screen = ctx.screen.current()
+                if (screen) screen.panel.open({ tab: 'pantheon-cockpit' })
+              },
+            },
+            {
+              id: 'open-settings',
+              label: 'Open Pantheon Settings',
+              detail: sharedSnapshot().gateMode,
+              run: () => ctx.layout.settings('pantheon'),
+            },
+          ],
+        }
+      },
+    }))
+
     ctx.add(SettingsPage, () => ({
       id: 'pantheon',
       title: 'Pantheon',
@@ -531,8 +861,11 @@ export default Plugin.define({
         <div style={{ padding: '16px', display: 'flex', 'flex-direction': 'column', gap: '12px' }}>
           <h2 style={{ 'font-size': '16px', 'font-weight': 600 }}>Pantheon v2.3.3</h2>
           <p style={{ 'font-size': '13px', opacity: 0.8 }}>
-            Olympus Topology, Agora Board, and Ephemeral Worker telemetry are active in the Pantheon
-            side panel.
+            {`Spend today: $${sharedSnapshot().todayCostUSD.toFixed(2)} · 30d: $${sharedSnapshot().monthCostUSD.toFixed(2)} · Gate: ${sharedSnapshot().gateMode}`}
+          </p>
+          <p style={{ 'font-size': '13px', opacity: 0.8 }}>
+            Olympus Topology, interactive Agora Board, and Ephemeral Worker telemetry are active in
+            the Pantheon side panel.
           </p>
         </div>
       ),
