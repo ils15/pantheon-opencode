@@ -13,6 +13,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+## [v2.3.4] - 2026-11-27
+
+### 🆕 What's New
+
+- **Swarm Mode (Phase 1–2)** — ephemeral worker hierarchy with `#seq` board handoffs, file leases, and deterministic replay.
+- **File Leases on `init_step`** — `ownedFiles`/`forbiddenFiles` now block tool writes and shell redirects at the guardrail.
+- **Real `wallClockMs` Enforcement** — workers abort mid-turn on timeout instead of merely accepting the field.
+- **Windows Shell Auto-Detection** — `resolveShellBin()` finds Git Bash, `COMSPEC`, or `cmd.exe` with no manual patch.
+
+### Added
+
+- **swarm** — implement Phase 1 + Phase 2 Swarm Mode guardrails, leases, wait/deadlock, and replay (#495)
+- **tui** — full TUI Settings parity, i18n, and session_v2 DAG detection (#494)
+- **tui** — add full TUI Settings parity to GUI and fix session_v2 DAG detection (#493)
+
+### Fixed
+
+- **pantheon** — resolve Windows shell binary, enforce mid-turn wallClockMs, and wire init_step leases (#496)
+- **tui** — modernize GUI Settings, fix live DAG telemetry, and harden ephemeral workers (#492)
+- **tui** — read PanelProps.session as reactive getter in Desktop Cockpit (#491)
+- **tui** — open Desktop Cockpit via ctx.layout.open and bump v2.3.4 (#488)
+
 ## [v2.3.4-beta.1] - 2026-11-26
 
 ### Fixed
