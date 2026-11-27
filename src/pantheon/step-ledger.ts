@@ -407,7 +407,30 @@ function assertLockStillOwned(lockPath: string, token: string): void {
   )
 }
 
-/** Write the store via a per-process temp file + `renameSync` (atomic on POSIX). */
+/**
+ * Run `fn` while holding an exclusive lock at `lockPath`, using the ledger's
+ * own lock primitive (atomic `open(..., 'wx')`, unique owner token, stale
+ * break via quarantine, bounded wait).
+ *
+ * `ephemeral-merge.ts` uses it on its own path so two applies can never
+ * interleave their mutation windows — `updateStepLedger`'s lock only protects
+ * the ledger file, not the worktree.
+ */
+export async function withExclusiveLedgerLock<T>(
+  lockPath: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const token = acquireLedgerLock(lockPath)
+  try {
+    return await fn()
+  } finally {
+    releaseLedgerLock(lockPath, token)
+  }
+}
+
+/**
+ * Write the store via a per-process temp file + `renameSync` (atomic on POSIX).
+ */
 function writeLedgerFileAtomic(filePath: string, store: StepLedgerStore): void {
   const tmpPath = `${filePath}.tmp.${process.pid}`
   try {

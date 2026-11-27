@@ -38,13 +38,20 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, rmSync, unlinkSync } from 'node:fs'
-import { isAbsolute, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { appendBoardMessage } from './board-messages.ts'
 import { getSharedBus } from './bus.ts'
 import { type FileLeaseRecord, leaseClaimsPath, listActiveLeases } from './file-leases.ts'
 import { captureGitCheckpoint, isGitWorkspace, restoreGitCheckpoint } from './git-checkpoint.ts'
-import { type EphemeralStepMetadata, readStepLedger, updateStepLedger } from './step-ledger.ts'
+import {
+  describeLedgerError,
+  type EphemeralStepMetadata,
+  readStepLedger,
+  StepLedgerLockError,
+  updateStepLedger,
+  withExclusiveLedgerLock,
+} from './step-ledger.ts'
 import { resolveSharedPantheonRoot } from './tool-context.ts'
 import { resolvePantheonWorktreePath } from './worktree-orchestrator.ts'
 
@@ -59,6 +66,12 @@ const EPH_BRANCH_PREFIX = 'pantheon/eph/'
 const SAFE_EPH_BRANCH_RE = /^[A-Za-z0-9._/-]+$/
 const TOKEN_STORE_KEY = '__pantheonMergeTokens'
 const MERGE_TREE_MIN_GIT: readonly [number, number] = [2, 38]
+/**
+ * One mutation window per checkout, kept beside (not inside) the ledger
+ * directory: a broken `.pantheon/ledger/` must fail the ledger write without
+ * also making the merge lock unreachable, so the two failures stay separable.
+ */
+const MERGE_LOCK_NAME = '.ephemeral-merge.lock'
 
 /**
  * `.pantheon/` is live runtime state, never work-tree state (same predicate as
@@ -106,6 +119,13 @@ export interface MergeEphemeralInput {
    * concurrent writer would occupy. Never called on a refusal.
    */
   readonly onBeforeMerge?: () => Promise<void> | void
+  /**
+   * Deterministic seam for the lock-wait window: runs immediately after the
+   * merge lock is acquired and before the state is re-verified, so a test can
+   * prove that a writer who moved HEAD while we queued is detected. Never called
+   * on a refusal.
+   */
+  readonly onAfterLock?: () => Promise<void> | void
 }
 
 export interface MergeEphemeralResult {
@@ -144,6 +164,8 @@ export interface MergeEphemeralResult {
   readonly discarded?: boolean
   readonly mergedAt?: string
   readonly metadataRecorded?: boolean
+  /** The merge landed but the ledger write failed; re-record, never re-merge. */
+  readonly metadataError?: string
   readonly recovery?: MergeRecovery
   /** Verified pre-merge tree is back in place. */
   readonly treeRestored?: boolean
@@ -166,6 +188,17 @@ export interface MergeRecovery {
   readonly statusRestored: boolean
   /** `MERGE_HEAD` or `MERGE_MSG` survived recovery (must never be true). */
   readonly mergeStatePresent: boolean
+  /**
+   * A merge that this call did not start was in progress. Nothing was touched:
+   * destroying another writer's merge state is worse than leaving ours dirty.
+   */
+  readonly foreignMergeDetected?: boolean
+  /**
+   * Restores cover tracked content plus non-ignored untracked files (the
+   * checkpoint uses `--exclude-standard`), so a `.gitignore`d file created by
+   * the aborted merge is not removed. Stated, not hidden.
+   */
+  readonly restoreLimitation?: string
   readonly notes: readonly string[]
 }
 
@@ -216,6 +249,23 @@ interface StatusEntry {
 }
 
 /**
+ * A read that could not be answered. Never substitute a plausible-looking empty
+ * answer: "we could not look" and "there is nothing there" are different facts,
+ * and the gate must fail closed on the first one (a corrupt index makes
+ * `git status` exit 128 while `rev-list`/`diff`/`merge-tree` still succeed).
+ */
+interface Unavailable {
+  readonly ok: false
+  readonly reason: string
+}
+
+type ReadResult<T> = { readonly ok: true; readonly value: T } | Unavailable
+
+function unavailableReason(what: string, res: GitOutcome): string {
+  return `${what} failed (exit ${res.code}): ${firstLine(res.stderr) || firstLine(res.stdout) || 'no output'}`
+}
+
+/**
  * Parse `git status --porcelain=v1 -z`, skipping `.pantheon/` runtime state.
  * Renames/copies carry two NUL-separated paths (destination first).
  */
@@ -241,10 +291,12 @@ function parseStatus(raw: string): StatusEntry[] {
   return entries
 }
 
-async function readStatus(root: string): Promise<StatusEntry[]> {
+async function readStatus(root: string): Promise<ReadResult<StatusEntry[]>> {
   const res = await git(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])
-  if (!res.ok) return []
-  return parseStatus(res.stdout)
+  if (!res.ok) {
+    return { ok: false, reason: unavailableReason('git status', res) }
+  }
+  return { ok: true, value: parseStatus(res.stdout) }
 }
 
 function statusFingerprint(entries: readonly StatusEntry[]): string {
@@ -264,16 +316,24 @@ function stagedPaths(entries: readonly StatusEntry[]): string[] {
     .flatMap((entry) => [...entry.paths])
 }
 
-async function changedFiles(root: string, from: string, to: string): Promise<string[]> {
+async function changedFiles(root: string, from: string, to: string): Promise<ReadResult<string[]>> {
   const res = await git(root, ['diff', '--name-only', '-z', from, to])
-  if (!res.ok) return []
-  return splitNul(res.stdout)
+  if (!res.ok)
+    return {
+      ok: false,
+      reason: unavailableReason(`git diff ${from.slice(0, 12)}..${to.slice(0, 12)}`, res),
+    }
+  return { ok: true, value: splitNul(res.stdout) }
 }
 
-async function commitCount(root: string, range: string): Promise<number> {
+async function commitCount(root: string, range: string): Promise<ReadResult<number>> {
   const res = await git(root, ['rev-list', '--count', range])
+  if (!res.ok) return { ok: false, reason: unavailableReason(`git rev-list ${range}`, res) }
   const parsed = Number.parseInt(res.stdout.trim(), 10)
-  return Number.isFinite(parsed) ? parsed : 0
+  if (!Number.isFinite(parsed)) {
+    return { ok: false, reason: `git rev-list ${range} returned an unparsable count` }
+  }
+  return { ok: true, value: parsed }
 }
 
 async function resolveCommit(root: string, ref: string): Promise<string | undefined> {
@@ -297,10 +357,18 @@ function supportsMergeTree(version: readonly [number, number]): boolean {
   return minor >= MERGE_TREE_MIN_GIT[1]
 }
 
-/** Stable digest of the branch's own change set (`baseHead..branch`). */
-async function diffDigest(root: string, baseHead: string, branch: string): Promise<string> {
-  const res = await git(root, ['diff', '--binary', '--no-color', baseHead, branch])
-  return createHash('sha256').update(res.stdout).digest('hex')
+/** Stable digest of the branch's own change set (`base..branchRef`). */
+async function diffDigest(
+  root: string,
+  base: string,
+  branchRef: string,
+): Promise<ReadResult<string>> {
+  const res = await git(root, ['diff', '--binary', '--no-color', base, branchRef])
+  if (!res.ok) return { ok: false, reason: unavailableReason('git diff --binary', res) }
+  if (!res.stdout) {
+    return { ok: false, reason: 'git diff --binary produced no output (contentless digest)' }
+  }
+  return { ok: true, value: createHash('sha256').update(res.stdout).digest('hex') }
 }
 
 // ---------------------------------------------------------------------------
@@ -350,10 +418,13 @@ function parseMergeTreeOutput(stdout: string, code: number): MergePreview {
  * Merge trial inside a disposable worktree, for git < 2.38 (no
  * `merge-tree --write-tree`). Never touches the caller's checkout: the trial
  * tree lives at `<project-parent>/.pantheon-worktrees/<repo>/merge-preview-*`.
+ *
+ * A filesystem failure here is a *payload* (`preview_failed`), never an
+ * exception: a preview that cannot run must still let `discard` clean up.
  */
 async function previewInTempWorktree(
   root: string,
-  branch: string,
+  branchRef: string,
   stepKey: string,
 ): Promise<MergePreview> {
   const previewDir = resolvePantheonWorktreePath(root, `merge-preview-${stepKey}`)
@@ -372,7 +443,7 @@ async function previewInTempWorktree(
       }
     }
     added = true
-    const merge = await git(previewDir, ['merge', '--no-commit', '--no-ff', '--no-edit', branch])
+    const merge = await git(previewDir, ['merge', '--no-commit', '--no-ff', '--no-edit', branchRef])
     if (merge.ok) {
       const tree = await git(previewDir, ['write-tree'])
       const treeSha = tree.stdout.trim()
@@ -396,6 +467,14 @@ async function previewInTempWorktree(
         ? { error: `git merge failed: ${firstLine(merge.stderr) || firstLine(merge.stdout)}` }
         : {}),
     }
+  } catch (err: unknown) {
+    return {
+      ok: false,
+      clean: false,
+      conflicts: [],
+      via: 'temp-worktree',
+      error: `temp-worktree preview failed: ${err instanceof Error ? err.message : String(err)}`,
+    }
   } finally {
     if (added) await git(root, ['worktree', 'remove', '--force', previewDir])
     rmSync(previewDir, { recursive: true, force: true })
@@ -404,12 +483,12 @@ async function previewInTempWorktree(
 
 async function previewMerge(
   root: string,
-  branch: string,
+  branchRef: string,
   stepKey: string,
   forceLegacy: boolean,
 ): Promise<MergePreview> {
   if (!forceLegacy && supportsMergeTree(await gitVersion(root))) {
-    const res = await git(root, ['merge-tree', '--write-tree', '--name-only', 'HEAD', branch])
+    const res = await git(root, ['merge-tree', '--write-tree', '--name-only', 'HEAD', branchRef])
     if (res.code === 0 || res.code === 1) return parseMergeTreeOutput(res.stdout, res.code)
     return {
       ok: false,
@@ -419,7 +498,7 @@ async function previewMerge(
       error: `git merge-tree failed: ${firstLine(res.stderr) || firstLine(res.stdout)}`,
     }
   }
-  return previewInTempWorktree(root, branch, stepKey)
+  return previewInTempWorktree(root, branchRef, stepKey)
 }
 
 // ---------------------------------------------------------------------------
@@ -463,10 +542,13 @@ export interface MergeFingerprint {
 /**
  * The `git status` fingerprint the recovery post-condition compares against.
  * Exported so the half-merge test can capture the same value the apply path
- * records before the first mutation.
+ * records before the first mutation. Throws when status cannot be read — a
+ * diagnostic accessor must not report "clean" for "unknown".
  */
 export async function mergeStatusFingerprint(root: string): Promise<string> {
-  return statusFingerprint(await readStatus(resolve(root)))
+  const status = await readStatus(resolve(root))
+  if (!status.ok) throw new Error(`mergeStatusFingerprint: ${status.reason}`)
+  return statusFingerprint(status.value)
 }
 
 /** `MERGE-<sha256(stepKey|branch|baseHead|headNow|diffDigest)[:12]>` (D06). */
@@ -579,26 +661,48 @@ async function removeMergeArtifacts(root: string): Promise<void> {
 }
 
 /**
- * Undo a failed or abandoned merge and verify the tree is back.
+ * Undo a merge failure and verify the tree is back.
  *
- * Order is deliberate: `git merge --abort` only when `MERGE_HEAD` exists (a
- * squashed merge never creates it, and aborting unconditionally exits 128),
- * then `git reset --merge` to drop unmerged index entries and conflict markers,
- * then a content restore from the pre-merge checkpoint when the tree still
- * differs. `treeRestored` is only ever true after a *verified* comparison.
+ * Ownership is explicit: a squash merge never creates `MERGE_HEAD`, so an
+ * in-progress merge found here is **not ours** unless the caller says it is
+ * (`ownedMergeState`). A foreign merge is left completely untouched and
+ * reported — aborting or resetting it would destroy a user's work to clean up
+ * our own failure.
  *
- * Exported for the half-merged-recovery test; the apply path calls it on every
- * failure after the first mutation.
+ * When owned: `git merge --abort` (only with `MERGE_HEAD`), then
+ * `git reset --merge` to drop unmerged index entries and conflict markers, then
+ * a content restore from the pre-merge checkpoint when the tree still differs.
+ * `treeRestored` is only ever true after a *verified* comparison.
+ *
+ * Exported for the half-merge recovery tests; the apply path calls it on every
+ * failure after the first mutation, always with `ownedMergeState: false`.
  */
 export async function recoverFromFailedMerge(
   root: string,
   preMerge: { readonly treeHash?: string; readonly statusFingerprint: string },
+  options: { readonly ownedMergeState?: boolean } = {},
 ): Promise<MergeRecovery> {
   const notes: string[] = []
   let aborted = false
   let resetApplied = false
 
-  if ((await inspectMergeState(root)).mergeHead) {
+  const stateBefore = await inspectMergeState(root)
+  if (stateBefore.mergeHead && options.ownedMergeState !== true) {
+    return {
+      aborted: false,
+      resetApplied: false,
+      treeRestored: false,
+      compensated: false,
+      statusRestored: false,
+      mergeStatePresent: true,
+      foreignMergeDetected: true,
+      notes: [
+        'a merge this call did not start is in progress (MERGE_HEAD present); it was left untouched',
+      ],
+    }
+  }
+
+  if (stateBefore.mergeHead) {
     const abort = await git(root, ['merge', '--abort'])
     aborted = abort.ok
     if (!abort.ok) notes.push(`git merge --abort failed: ${firstLine(abort.stderr)}`)
@@ -644,8 +748,11 @@ export async function recoverFromFailedMerge(
   // A compensated restore rewrites file content, not the staging area; the
   // pre-merge index was required to be clean, so the status fingerprint is
   // reproducible. Report the comparison instead of assuming it.
-  const statusRestored = statusFingerprint(await readStatus(root)) === preMerge.statusFingerprint
-  if (!statusRestored) notes.push('git status differs from the pre-merge fingerprint')
+  const statusAfter = await readStatus(root)
+  const statusRestored =
+    statusAfter.ok && statusFingerprint(statusAfter.value) === preMerge.statusFingerprint
+  if (!statusAfter.ok) notes.push(statusAfter.reason)
+  else if (!statusRestored) notes.push('git status differs from the pre-merge fingerprint')
 
   const state = await inspectMergeState(root)
   const mergeStatePresent = state.mergeHead || state.mergeMsg
@@ -659,6 +766,12 @@ export async function recoverFromFailedMerge(
     ...(restoreFailed !== undefined ? { restoreFailed } : {}),
     statusRestored,
     mergeStatePresent,
+    ...(compensated
+      ? {
+          restoreLimitation:
+            "the checkpoint covers tracked files and non-ignored untracked files; a .gitignore'd file the merge created was not removed",
+        }
+      : {}),
     notes,
   }
 }
@@ -714,7 +827,11 @@ async function branchConflictsFor(
       continue
     }
     const otherFiles = await changedFiles(root, baseSha, `refs/heads/${other}`)
-    for (const file of otherFiles.filter((entry) => files.includes(entry))) {
+    if (!otherFiles.ok) {
+      warnings.push(`branch ${other} diff unavailable: ${otherFiles.reason}`)
+      continue
+    }
+    for (const file of otherFiles.value.filter((entry) => files.includes(entry))) {
       conflicts.push({ file, holder: other, source: 'branch' })
     }
   }
@@ -821,38 +938,68 @@ export async function mergeEphemeralStep(
       message: 'The branch to merge is the checked-out branch.',
     })
   }
-  if (!(await resolveCommit(root, `refs/heads/${branch}`))) {
+
+  // A short name is ambiguous: git resolves `pantheon/eph/x` as
+  // `refs/<name>` → `refs/tags/<name>` → `refs/heads/<name>`, so a same-named
+  // tag (or a `refs/pantheon/eph/...` ref) can shadow the worker branch. Every
+  // git call below uses `branchRef`; this guard refuses when the short name does
+  // not resolve to the branch either, so the ambiguity is never silent.
+  const branchRef = `refs/heads/${branch}`
+  const branchCommit = await resolveCommit(root, branchRef)
+  if (!branchCommit) {
     return refuse(base, 'branch_missing', {
       branch,
       head: headNow,
       hint: 'The preserved branch no longer exists; there is nothing to merge or discard.',
     })
   }
+  const branchSymbolic = await git(root, ['rev-parse', '--symbolic-full-name', branch])
+  if (!branchSymbolic.ok || branchSymbolic.stdout.trim() !== branchRef) {
+    return refuse(base, 'ambiguous_branch', {
+      branch,
+      head: headNow,
+      message: `"${branch}" does not resolve unambiguously to ${branchRef} (a tag or another ref shadows it).`,
+      hint: `Remove the shadowing ref (\`git tag -d ${branch}\`, or the refs/pantheon/... entry) and re-run; the reviewed content must be the branch, never a same-named ref.`,
+    })
+  }
 
-  const baseHead = entry.ephemeral?.baseHead
-  if (!baseHead) {
+  const recordedBase = entry.ephemeral?.baseHead
+  if (!recordedBase) {
     return refuse(base, 'missing_base_head', {
       branch,
       head: headNow,
       hint: 'ephemeral.baseHead is required: without it the drift and content checks cannot be bound to the branch.',
     })
   }
-  if (!(await resolveCommit(root, baseHead))) {
+  // Resolve once to a sha and use that sha in every comparison: `baseHead` can
+  // be a sha, a ref, or an abbreviation, and pinning it removes the second
+  // resolution (and the chance that it means something different by then).
+  const baseHead = await resolveCommit(root, recordedBase)
+  if (!baseHead) {
     return refuse(base, 'unknown_base_head', {
       branch,
-      baseHead,
+      baseHead: recordedBase,
       head: headNow,
       hint: 'ephemeral.baseHead is not a commit in this repository (history rewritten or wrong checkout).',
     })
   }
 
-  const digest = await diffDigest(root, baseHead, branch)
+  const digest = await diffDigest(root, baseHead, branchRef)
+  if (!digest.ok) {
+    return refuse(base, 'diff_unavailable', {
+      branch,
+      baseHead,
+      head: headNow,
+      message: digest.reason,
+      hint: 'The branch diff could not be computed, so neither the drift check nor the token can be bound to content. Fix the repository state (corrupt object/index) and re-run.',
+    })
+  }
   const computedToken = computeMergeToken({
     stepKey,
     branch,
     baseHead,
     head: headNow,
-    diffDigest: digest,
+    diffDigest: digest.value,
   })
   const storeKey = tokenStoreKey(root, stepKey)
 
@@ -873,17 +1020,57 @@ export async function mergeEphemeralStep(
     })
   }
 
-  const statusEntries = await readStatus(root)
+  const statusRead = await readStatus(root)
+  if (!statusRead.ok) {
+    return refuse(base, 'status_unavailable', {
+      branch,
+      baseHead,
+      head: headNow,
+      message: statusRead.reason,
+      hint: 'git cannot report the working tree (corrupt index, unreadable repository), so "clean" would be a guess. Repair the index (`git reset`) and re-run.',
+    })
+  }
+  const statusEntries = statusRead.value
   const statusPrint = statusFingerprint(statusEntries)
   const dirty = dirtyPaths(statusEntries)
   const staged = stagedPaths(statusEntries)
-  const mergeFiles = await changedFiles(root, baseHead, branch)
 
-  const driftCommits = await commitCount(root, `${baseHead}..HEAD`)
-  const headDrift: MergeHeadDrift | undefined =
-    driftCommits > 0
-      ? { commits: driftCommits, files: await changedFiles(root, baseHead, 'HEAD') }
-      : undefined
+  const mergeFilesRead = await changedFiles(root, baseHead, branchRef)
+  if (!mergeFilesRead.ok) {
+    return refuse(base, 'diff_unavailable', {
+      branch,
+      baseHead,
+      head: headNow,
+      message: mergeFilesRead.reason,
+      hint: 'The branch diff could not be computed, so the overlap checks would be a guess. Fix the repository state and re-run.',
+    })
+  }
+  const mergeFiles = mergeFilesRead.value
+
+  const driftRead = await commitCount(root, `${baseHead}..HEAD`)
+  if (!driftRead.ok) {
+    return refuse(base, 'drift_unavailable', {
+      branch,
+      baseHead,
+      head: headNow,
+      message: driftRead.reason,
+      hint: 'HEAD drift could not be measured, so the merge is refused rather than assumed drift-free.',
+    })
+  }
+  const driftCommits = driftRead.value
+  let headDrift: MergeHeadDrift | undefined
+  if (driftCommits > 0) {
+    const driftFiles = await changedFiles(root, baseHead, 'HEAD')
+    if (!driftFiles.ok) {
+      return refuse(base, 'drift_unavailable', {
+        branch,
+        baseHead,
+        head: headNow,
+        message: driftFiles.reason,
+      })
+    }
+    headDrift = { commits: driftCommits, files: driftFiles.value }
+  }
 
   const dirtySet = new Set(dirty)
   const leaseConflicts: MergeLeaseConflict[] = mergeFiles
@@ -901,8 +1088,30 @@ export async function mergeEphemeralStep(
     ...(await branchConflictsFor(root, mergeFiles, branch, stepKey, mergedSteps, warnings)),
   )
 
+  // ---- A merge that is not ours -------------------------------------------
+  // `git merge --squash` never creates MERGE_HEAD, so an in-progress merge here
+  // belongs to the user (or a concurrent writer). A `--no-commit` merge whose
+  // result is net-zero leaves a clean status, so the dirty gate cannot catch it:
+  // this has to be asked explicitly, before anything is touched.
+  const mergeStateBefore = await inspectMergeState(root)
+  const mergeInProgress = mergeStateBefore.mergeHead || mergeStateBefore.mergeMsg
+
+  // ---- Preview minting happens BEFORE the preview attempt ------------------
+  // The token is a content binding, not an approval: a preview that cannot run
+  // must still leave the caller able to `discard` the branch.
+  if (mode === 'preview') {
+    tokenStore().set(storeKey, {
+      token: computedToken,
+      fingerprint: `${stepKey}|${branch}|${baseHead}|${headNow}|${digest.value}`,
+      stepKey,
+      branch,
+      expiresAt: now + MERGE_TOKEN_TTL_MS,
+      consumed: false,
+    })
+  }
+
   // ---- Clean preview (never the user's tree) -----------------------------
-  const preview = await previewMerge(root, branch, stepKey, input.forceLegacyPreview === true)
+  const preview = await previewMerge(root, branchRef, stepKey, input.forceLegacyPreview === true)
   if (!preview.ok) {
     return refuse(base, 'preview_failed', {
       branch,
@@ -911,11 +1120,21 @@ export async function mergeEphemeralStep(
       changes: mergeFiles,
       previewVia: preview.via,
       ...(preview.error ? { message: preview.error } : {}),
-      tokenValid: false,
+      // The merge could not be rehearsed, so it cannot be authorised — but the
+      // single-use token stays usable for `discard`, which needs only the branch.
+      ...(mode === 'preview'
+        ? {
+            token: computedToken,
+            tokenExpiresAt: new Date(now + MERGE_TOKEN_TTL_MS).toISOString(),
+            tokenValid: true,
+            hint: 'The merge preview failed, so apply is not authorised; the token is still usable for mode:"discard".',
+          }
+        : { tokenValid: false }),
     })
   }
 
   const blockers: string[] = []
+  if (mergeInProgress) blockers.push('merge_in_progress')
   if (staged.length > 0) blockers.push('dirty_index')
   else if (input.allowDirty !== true && dirty.length > 0) blockers.push('worktree_dirty')
   if (headDrift) blockers.push('head_drift')
@@ -923,25 +1142,19 @@ export async function mergeEphemeralStep(
   if (mergeFiles.length === 0) blockers.push('nothing_to_merge')
   if (!preview.clean) blockers.push('merge_conflict')
 
-  // ---- Preview: report + mint the token ----------------------------------
+  // ---- Preview: report ----------------------------------------------------
   if (mode === 'preview') {
-    tokenStore().set(storeKey, {
-      token: computedToken,
-      fingerprint: `${stepKey}|${branch}|${baseHead}|${headNow}|${digest}`,
-      stepKey,
-      branch,
-      expiresAt: now + MERGE_TOKEN_TTL_MS,
-      consumed: false,
-    })
-    const statusAfter = statusFingerprint(await readStatus(root))
+    const statusAfterRead = await readStatus(root)
+    const statusAfter = statusAfterRead.ok ? statusFingerprint(statusAfterRead.value) : undefined
     const headAfter = await resolveCommit(root, 'HEAD')
+    const commitsRead = await commitCount(root, `${headNow}..${branchRef}`)
     const result: MergeEphemeralResult = {
       ok: true,
       ...base,
       branch,
       baseHead,
       head: headNow,
-      commits: await commitCount(root, `${headNow}..${branch}`),
+      ...(commitsRead.ok ? { commits: commitsRead.value } : {}),
       changes: mergeFiles,
       clean: preview.clean,
       ...(preview.mergeTree ? { mergeTree: preview.mergeTree } : {}),
@@ -956,12 +1169,23 @@ export async function mergeEphemeralStep(
       tokenValid: true,
       treeUntouched: statusAfter === statusPrint && headAfter === headNow,
       noOp: true,
+      ...(statusAfterRead.ok ? {} : { warnings: [...warnings, statusAfterRead.reason] }),
       ...(warnings.length > 0 ? { warnings } : {}),
     }
     return result
   }
 
   // ---- Apply: refuse before mutating -------------------------------------
+  if (mergeInProgress) {
+    return refuse(base, 'merge_in_progress', {
+      branch,
+      baseHead,
+      head: headNow,
+      changes: mergeFiles,
+      message: `A merge is already in progress in this checkout (MERGE_HEAD${mergeStateBefore.mergeMsg ? ' + MERGE_MSG' : ''}); it was left untouched.`,
+      hint: 'Finish or abort that merge first (`git merge --continue` / `git merge --abort`), then re-run. This gate never aborts a merge it did not start.',
+    })
+  }
   if (staged.length > 0) {
     // `git merge --squash` refuses with a dirty index, and `git reset --merge`
     // discards staged content irrecoverably — an index with staged entries can
@@ -1046,56 +1270,237 @@ export async function mergeEphemeralStep(
     })
   }
 
-  const preMerge = await captureGitCheckpoint(root, `${stepKey}-pre-merge`)
-  if (!preMerge.ok || !preMerge.treeHash) {
-    return refuse(base, 'checkpoint_failed', {
-      branch,
-      baseHead,
-      head: headNow,
-      tokenValid: true,
-      message: `Could not capture the pre-merge checkpoint: ${preMerge.reason ?? 'unknown error'}`,
-      hint: 'Refusing to merge without a restore point.',
+  return applyMerge({
+    base,
+    root,
+    sharedRoot,
+    stepKey,
+    branch,
+    branchRef,
+    baseHead,
+    headNow,
+    statusPrint,
+    mergeFiles,
+    preview,
+    storeKey,
+    currentBranch,
+    warnings,
+    input,
+    now,
+  })
+}
+
+interface MergeApplyContext {
+  readonly base: Pick<MergeEphemeralResult, 'mode' | 'stepKey'>
+  readonly root: string
+  readonly sharedRoot: string
+  readonly stepKey: string
+  readonly branch: string
+  readonly branchRef: string
+  readonly baseHead: string
+  readonly headNow: string
+  readonly statusPrint: string
+  readonly mergeFiles: readonly string[]
+  readonly preview: MergePreview
+  readonly storeKey: string
+  readonly currentBranch: string
+  readonly warnings: readonly string[]
+  readonly input: MergeEphemeralInput
+  readonly now: number
+}
+
+/**
+ * The mutation window of `apply`. Everything from the checkpoint to the ledger
+ * write runs under one lock so two applies can never interleave (the ledger's own
+ * lock only protects the ledger file, not the worktree), and the state is
+ * re-verified *inside* the lock because a writer queued behind us may have
+ * changed HEAD while we waited.
+ */
+async function applyMerge(ctx: MergeApplyContext): Promise<MergeEphemeralResult> {
+  const {
+    base,
+    root,
+    sharedRoot,
+    stepKey,
+    branch,
+    branchRef,
+    baseHead,
+    headNow,
+    statusPrint,
+    mergeFiles,
+    preview,
+    storeKey,
+    input,
+  } = ctx
+  const lockPath = join(sharedRoot, '.pantheon', MERGE_LOCK_NAME)
+  mkdirSync(dirname(lockPath), { recursive: true })
+  let locked: { ok: true; value: MergeEphemeralResult } | { ok: false; error: unknown }
+  try {
+    const value = await withExclusiveLedgerLock(lockPath, async () => {
+      // `preMerge` outlives a throw so an unexpected failure inside the window can
+      // still be compensated against a real checkpoint.
+      let preMerge: { ok: boolean; treeHash?: string } | undefined
+      try {
+        if (input.onAfterLock) await input.onAfterLock()
+
+        // Burn the token before mutating: a failed attempt still requires a fresh
+        // preview, because the tree may have been touched transiently (rerere,
+        // index). Pre-flight refusals happen before this point, so they keep it.
+        const record = tokenStore().get(storeKey)
+        if (record) record.consumed = true
+
+        const headSeen = await resolveCommit(root, 'HEAD')
+        if (headSeen !== headNow) {
+          return refuse(base, 'head_changed', {
+            branch,
+            baseHead,
+            head: headSeen ?? headNow,
+            changes: mergeFiles,
+            tokenValid: false,
+            message: `HEAD changed while this apply waited for the merge lock (${headNow.slice(0, 12)} -> ${(headSeen ?? 'unknown').slice(0, 12)}).`,
+            hint: 'Nothing was merged. Re-run mode:"preview" against the new HEAD.',
+          })
+        }
+        const statusRecheck = await readStatus(root)
+        if (!statusRecheck.ok || statusFingerprint(statusRecheck.value) !== statusPrint) {
+          return refuse(base, 'worktree_changed', {
+            branch,
+            baseHead,
+            head: headNow,
+            changes: mergeFiles,
+            message: statusRecheck.ok
+              ? 'The working tree changed while this apply waited for the merge lock.'
+              : statusRecheck.reason,
+            hint: 'Nothing was merged. Re-run mode:"preview" once the checkout is stable.',
+          })
+        }
+
+        const preMergeSnapshot = await captureGitCheckpoint(root, `${stepKey}-pre-merge`)
+        preMerge = preMergeSnapshot
+        if (!preMergeSnapshot.ok || !preMergeSnapshot.treeHash) {
+          return refuse(base, 'checkpoint_failed', {
+            branch,
+            baseHead,
+            head: headNow,
+            tokenValid: true,
+            message: `Could not capture the pre-merge checkpoint: ${preMergeSnapshot.reason ?? 'unknown error'}`,
+            hint: 'Refusing to merge without a restore point.',
+          })
+        }
+
+        if (input.onBeforeMerge) await input.onBeforeMerge()
+
+        const merge = await git(root, ['merge', '--squash', '--no-edit', branchRef])
+        if (!merge.ok) {
+          const unmerged = await git(root, ['diff', '--name-only', '-z', '--diff-filter=U'])
+          const recovery = await recoverFromFailedMerge(root, {
+            ...(preMergeSnapshot.treeHash ? { treeHash: preMergeSnapshot.treeHash } : {}),
+            statusFingerprint: statusPrint,
+          })
+          return {
+            ...base,
+            ok: false,
+            error: 'merge_conflict',
+            branch,
+            baseHead,
+            head: headNow,
+            changes: mergeFiles,
+            clean: false,
+            conflicts: splitNul(unmerged.stdout),
+            previewVia: preview.via,
+            ...(preview.mergeTree ? { mergeTree: preview.mergeTree } : {}),
+            tokenValid: true,
+            noOp: recovery.treeRestored && !recovery.mergeStatePresent,
+            treeUntouched: false,
+            recovery,
+            treeRestored: recovery.treeRestored,
+            ...(recovery.restoredTree ? { restoredTree: recovery.restoredTree } : {}),
+            ...(recovery.restoreFailed ? { restoreFailed: recovery.restoreFailed } : {}),
+            message: `git merge --squash failed: ${firstLine(merge.stderr) || firstLine(merge.stdout)}`,
+            hint: recovery.foreignMergeDetected
+              ? 'A merge started by someone else appeared mid-apply; it was left untouched. This call changed nothing further.'
+              : recovery.treeRestored
+                ? 'The worktree is back in its exact pre-merge state and no merge is in progress.'
+                : 'The worktree could NOT be fully restored — recover it from recovery.restoreFailed.checkpoint.',
+          }
+        }
+
+        return finishMerge(ctx, preMergeSnapshot)
+      } catch (err: unknown) {
+        // An unexpected failure inside the mutation window: compensate with the
+        // checkpoint if we have one, and never pretend nothing happened.
+        const recovery = preMerge?.treeHash
+          ? await recoverFromFailedMerge(root, {
+              treeHash: preMerge.treeHash,
+              statusFingerprint: statusPrint,
+            })
+          : undefined
+        return {
+          ...base,
+          ok: false,
+          error: 'merge_failed',
+          branch,
+          baseHead,
+          head: headNow,
+          changes: mergeFiles,
+          tokenValid: true,
+          ...(recovery ? { recovery, treeRestored: recovery.treeRestored } : {}),
+          ...(recovery?.restoredTree ? { restoredTree: recovery.restoredTree } : {}),
+          ...(recovery?.restoreFailed ? { restoreFailed: recovery.restoreFailed } : {}),
+          noOp: recovery ? recovery.treeRestored && !recovery.mergeStatePresent : false,
+          treeUntouched: false,
+          message: `unexpected failure inside the merge window: ${err instanceof Error ? err.message : String(err)}`,
+          hint: recovery?.treeRestored
+            ? 'The worktree was restored to its pre-merge state.'
+            : 'The worktree state is unknown — inspect `git status` before retrying.',
+        }
+      }
     })
+    locked = { ok: true, value }
+  } catch (err: unknown) {
+    locked = { ok: false, error: err }
   }
+  if (locked.ok) return locked.value
 
-  // Burn the token before mutating: a failed attempt still requires a fresh
-  // preview, because the tree may have been touched transiently (rerere, index).
-  const record = tokenStore().get(storeKey)
-  if (record) record.consumed = true
+  const detail = locked.error instanceof Error ? locked.error.message : String(locked.error)
+  const isLockError = locked.error instanceof StepLedgerLockError
+  return refuse(base, isLockError ? 'merge_busy' : 'merge_failed', {
+    branch,
+    baseHead,
+    head: headNow,
+    changes: mergeFiles,
+    tokenValid: false,
+    message: isLockError
+      ? `another merge is in progress in this checkout: ${detail}`
+      : `the merge lock could not be taken: ${detail}`,
+    hint: isLockError
+      ? 'Nothing was merged and the other merge was left alone. Retry once it finishes (the lock is released in its finally block), or remove a stale .ephemeral-merge.lock after confirming no merge is running.'
+      : 'Nothing was merged. Check the checkout and ledger, then retry.',
+    noOp: true,
+    treeUntouched: true,
+  })
+}
 
-  if (input.onBeforeMerge) await input.onBeforeMerge()
-
-  const merge = await git(root, ['merge', '--squash', '--no-edit', branch])
-  if (!merge.ok) {
-    const unmerged = await git(root, ['diff', '--name-only', '-z', '--diff-filter=U'])
-    const recovery = await recoverFromFailedMerge(root, {
-      treeHash: preMerge.treeHash,
-      statusFingerprint: statusPrint,
-    })
-    return {
-      ...base,
-      ok: false,
-      error: 'merge_conflict',
-      branch,
-      baseHead,
-      head: headNow,
-      changes: mergeFiles,
-      clean: false,
-      conflicts: splitNul(unmerged.stdout),
-      previewVia: preview.via,
-      ...(preview.mergeTree ? { mergeTree: preview.mergeTree } : {}),
-      tokenValid: true,
-      noOp: recovery.treeRestored && !recovery.mergeStatePresent,
-      recovery,
-      treeRestored: recovery.treeRestored,
-      ...(recovery.restoredTree ? { restoredTree: recovery.restoredTree } : {}),
-      ...(recovery.restoreFailed ? { restoreFailed: recovery.restoreFailed } : {}),
-      message: `git merge --squash failed: ${firstLine(merge.stderr) || firstLine(merge.stdout)}`,
-      hint: recovery.treeRestored
-        ? 'The worktree is back in its exact pre-merge state and no merge is in progress.'
-        : 'The worktree could NOT be fully restored — recover it from recovery.restoreFailed.checkpoint.',
-    }
-  }
+async function finishMerge(
+  ctx: MergeApplyContext,
+  preMerge: { readonly ok: boolean; readonly treeHash?: string },
+): Promise<MergeEphemeralResult> {
+  const {
+    base,
+    root,
+    sharedRoot,
+    stepKey,
+    branch,
+    baseHead,
+    headNow,
+    statusPrint,
+    mergeFiles,
+    preview,
+    currentBranch,
+    warnings,
+    input,
+    now,
+  } = ctx
 
   let committed = false
   let commitHash: string | undefined
@@ -1129,7 +1534,7 @@ export async function mergeEphemeralStep(
     // rejected it, or the identity was unusable). Leaving the squash staged
     // would be a half-applied merge, so undo it and say so.
     const recovery = await recoverFromFailedMerge(root, {
-      treeHash: preMerge.treeHash,
+      ...(preMerge.treeHash ? { treeHash: preMerge.treeHash } : {}),
       statusFingerprint: statusPrint,
     })
     return {
@@ -1159,7 +1564,7 @@ export async function mergeEphemeralStep(
     const unstaged = await git(root, ['reset'])
     if (!unstaged.ok) {
       const recovery = await recoverFromFailedMerge(root, {
-        treeHash: preMerge.treeHash,
+        ...(preMerge.treeHash ? { treeHash: preMerge.treeHash } : {}),
         statusFingerprint: statusPrint,
       })
       return {
@@ -1172,10 +1577,17 @@ export async function mergeEphemeralStep(
         changes: mergeFiles,
         tokenValid: true,
         recovery,
+        // Post-mutation: the squash ran, so `noOp` is only true when the recovery
+        // verified the tree is back.
+        noOp: recovery.treeRestored && !recovery.mergeStatePresent,
+        treeUntouched: false,
         treeRestored: recovery.treeRestored,
         ...(recovery.restoredTree ? { restoredTree: recovery.restoredTree } : {}),
         ...(recovery.restoreFailed ? { restoreFailed: recovery.restoreFailed } : {}),
         message: `git reset failed after the squash: ${firstLine(unstaged.stderr)}`,
+        hint: recovery.treeRestored
+          ? 'The squash was undone and the worktree is back in its exact pre-merge state.'
+          : 'The worktree could NOT be fully restored — recover it from recovery.restoreFailed.checkpoint.',
       }
     }
   }
@@ -1187,22 +1599,36 @@ export async function mergeEphemeralStep(
 
   const mergedAt = new Date(now).toISOString()
   const mergeTree = preview.mergeTree ?? (await resolveCommit(root, 'HEAD^{tree}'))
-  const recorded = updateStepLedger(sharedRoot, (ledger) => {
-    const target = ledger.steps[stepKey]
-    if (!target) return { recorded: false as const }
-    const ephemeral: EphemeralStepMetadata = {
-      ...target.ephemeral,
-      branch,
-      baseHead,
-      ...(mergeTree ? { mergeTree } : {}),
-      mergedAt,
-      role: target.ephemeral?.role ?? target.agent,
-    }
-    delete ephemeral.discardedAt
-    target.ephemeral = ephemeral
-    target.updatedAt = mergedAt
-    return { recorded: true as const, step: target }
-  })
+
+  // The merge has landed. A ledger write failure must never be reported as a
+  // failed merge: the caller would re-run the merge on an already-merged tree.
+  let recorded: { recorded: boolean; step?: unknown } = { recorded: false }
+  let metadataError: string | undefined
+  try {
+    recorded = updateStepLedger(sharedRoot, (ledger) => {
+      const target = ledger.steps[stepKey]
+      if (!target) return { recorded: false as const, error: 'step_not_found' }
+      const ephemeral: EphemeralStepMetadata = {
+        ...target.ephemeral,
+        branch,
+        baseHead,
+        ...(mergeTree ? { mergeTree } : {}),
+        mergedAt,
+        role: target.ephemeral?.role ?? target.agent,
+      }
+      delete ephemeral.discardedAt
+      target.ephemeral = ephemeral
+      target.updatedAt = mergedAt
+      return { recorded: true as const, step: target }
+    })
+  } catch (err: unknown) {
+    const structured = describeLedgerError(err)
+    metadataError = structured
+      ? `${structured.error}: ${structured.detail}`
+      : err instanceof Error
+        ? err.message
+        : String(err)
+  }
 
   getSharedBus().emit('step:merge', {
     stepKey,
@@ -1217,8 +1643,11 @@ export async function mergeEphemeralStep(
     timestamp: now,
   })
 
+  const targetStep = recorded.step as
+    | { ephemeral?: EphemeralStepMetadata; agent?: string }
+    | undefined
   const workerRole = recorded.recorded
-    ? (recorded.step?.ephemeral?.role ?? recorded.step?.agent ?? 'zeus')
+    ? (targetStep?.ephemeral?.role ?? targetStep?.agent ?? 'zeus')
     : 'zeus'
   try {
     await appendBoardMessage(sharedRoot, {
@@ -1253,6 +1682,12 @@ export async function mergeEphemeralStep(
     branchKept: true,
     mergedAt,
     metadataRecorded: recorded.recorded,
+    ...(metadataError ? { metadataError } : {}),
+    ...(metadataError
+      ? {
+          hint: 'The merge landed in the working tree; only the ledger metadata is missing. Re-record it with pantheon_step_ledger(action:"merge_ephemeral", mode:"preview") + apply once the ledger lock clears — do NOT re-run the merge.',
+        }
+      : {}),
     noOp: false,
     treeUntouched: false,
     ...(recorded.recorded && recorded.step ? { step: recorded.step } : {}),
@@ -1263,8 +1698,11 @@ export async function mergeEphemeralStep(
       ...result,
       ok: false,
       error: 'merge_state_left_behind',
+      noOp: false,
+      treeUntouched: false,
       message:
         'MERGE_HEAD/MERGE_MSG survived a successful squash; inspect the checkout before committing.',
+      hint: 'The squash landed (see mergeTree/mergedAt/unstaged). Remove the stray .git/MERGE_HEAD or .git/MERGE_MSG only after confirming no merge is in progress.',
     }
   }
   return result
@@ -1302,6 +1740,10 @@ async function discardEphemeralBranch(input: DiscardInput): Promise<MergeEphemer
   const record = tokenStore().get(storeKey)
   if (record) record.consumed = true
 
+  // `git branch -D` accepts only a branch name (a full ref errors), and it
+  // resolves inside `refs/heads/` alone — it also refuses a branch checked out in
+  // another worktree, which `update-ref -d` would not. The ambiguity guard above
+  // already refused a short name that resolves to anything but the branch.
   const deleted = await git(root, ['branch', '-D', branch])
   if (!deleted.ok) {
     return refuse(base, 'discard_failed', {

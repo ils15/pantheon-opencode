@@ -12903,13 +12903,13 @@ import {
   writeFileSync as writeFileSync8,
   writeSync
 } from "node:fs";
-import { basename as basename7, dirname as dirname14, join as join24, resolve as resolve19, sep as sep8 } from "node:path";
+import { basename as basename7, dirname as dirname15, join as join24, resolve as resolve19, sep as sep8 } from "node:path";
 
 // src/pantheon/ephemeral-merge.ts
 import { execFile as execFile5 } from "node:child_process";
 import { createHash as createHash7 } from "node:crypto";
 import { existsSync as existsSync15, mkdirSync as mkdirSync10, rmSync as rmSync3, unlinkSync as unlinkSync4 } from "node:fs";
-import { isAbsolute as isAbsolute6, join as join20, resolve as resolve16 } from "node:path";
+import { dirname as dirname14, isAbsolute as isAbsolute6, join as join20, resolve as resolve16 } from "node:path";
 import { promisify as promisify5 } from "node:util";
 
 // src/pantheon/board-messages.ts
@@ -14683,6 +14683,7 @@ var EPH_BRANCH_PREFIX = "pantheon/eph/";
 var SAFE_EPH_BRANCH_RE = /^[A-Za-z0-9._/-]+$/;
 var TOKEN_STORE_KEY = "__pantheonMergeTokens";
 var MERGE_TREE_MIN_GIT = [2, 38];
+var MERGE_LOCK_NAME = ".ephemeral-merge.lock";
 function isPantheonRuntimePath2(rel) {
   return rel === ".pantheon" || rel.startsWith(".pantheon/");
 }
@@ -14711,6 +14712,9 @@ function firstLine(text2) {
 function splitNul(text2) {
   return text2.split("\0").filter((entry) => entry.length > 0);
 }
+function unavailableReason(what, res) {
+  return `${what} failed (exit ${res.code}): ${firstLine(res.stderr) || firstLine(res.stdout) || "no output"}`;
+}
 function parseStatus(raw) {
   const fields = splitNul(raw);
   const entries = [];
@@ -14734,8 +14738,10 @@ function parseStatus(raw) {
 }
 async function readStatus(root) {
   const res = await git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
-  if (!res.ok) return [];
-  return parseStatus(res.stdout);
+  if (!res.ok) {
+    return { ok: false, reason: unavailableReason("git status", res) };
+  }
+  return { ok: true, value: parseStatus(res.stdout) };
 }
 function statusFingerprint(entries) {
   return entries.map((entry) => `${entry.index}${entry.worktree} ${entry.paths.join("\0")}`).sort().join("\n");
@@ -14748,13 +14754,21 @@ function stagedPaths(entries) {
 }
 async function changedFiles(root, from, to) {
   const res = await git(root, ["diff", "--name-only", "-z", from, to]);
-  if (!res.ok) return [];
-  return splitNul(res.stdout);
+  if (!res.ok)
+    return {
+      ok: false,
+      reason: unavailableReason(`git diff ${from.slice(0, 12)}..${to.slice(0, 12)}`, res)
+    };
+  return { ok: true, value: splitNul(res.stdout) };
 }
 async function commitCount(root, range) {
   const res = await git(root, ["rev-list", "--count", range]);
+  if (!res.ok) return { ok: false, reason: unavailableReason(`git rev-list ${range}`, res) };
   const parsed = Number.parseInt(res.stdout.trim(), 10);
-  return Number.isFinite(parsed) ? parsed : 0;
+  if (!Number.isFinite(parsed)) {
+    return { ok: false, reason: `git rev-list ${range} returned an unparsable count` };
+  }
+  return { ok: true, value: parsed };
 }
 async function resolveCommit(root, ref) {
   const res = await git(root, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
@@ -14774,9 +14788,13 @@ function supportsMergeTree(version) {
   if (major < MERGE_TREE_MIN_GIT[0]) return false;
   return minor >= MERGE_TREE_MIN_GIT[1];
 }
-async function diffDigest(root, baseHead, branch) {
-  const res = await git(root, ["diff", "--binary", "--no-color", baseHead, branch]);
-  return createHash7("sha256").update(res.stdout).digest("hex");
+async function diffDigest(root, base, branchRef) {
+  const res = await git(root, ["diff", "--binary", "--no-color", base, branchRef]);
+  if (!res.ok) return { ok: false, reason: unavailableReason("git diff --binary", res) };
+  if (!res.stdout) {
+    return { ok: false, reason: "git diff --binary produced no output (contentless digest)" };
+  }
+  return { ok: true, value: createHash7("sha256").update(res.stdout).digest("hex") };
 }
 function parseMergeTreeOutput(stdout, code) {
   const lines = stdout.split(/\r?\n/);
@@ -14803,7 +14821,7 @@ function parseMergeTreeOutput(stdout, code) {
     via: "merge-tree"
   };
 }
-async function previewInTempWorktree(root, branch, stepKey) {
+async function previewInTempWorktree(root, branchRef, stepKey) {
   const previewDir = resolvePantheonWorktreePath(root, `merge-preview-${stepKey}`);
   let added = false;
   try {
@@ -14820,7 +14838,7 @@ async function previewInTempWorktree(root, branch, stepKey) {
       };
     }
     added = true;
-    const merge = await git(previewDir, ["merge", "--no-commit", "--no-ff", "--no-edit", branch]);
+    const merge = await git(previewDir, ["merge", "--no-commit", "--no-ff", "--no-edit", branchRef]);
     if (merge.ok) {
       const tree = await git(previewDir, ["write-tree"]);
       const treeSha = tree.stdout.trim();
@@ -14842,14 +14860,22 @@ async function previewInTempWorktree(root, branch, stepKey) {
       conflicts,
       ...conflicts.length === 0 ? { error: `git merge failed: ${firstLine(merge.stderr) || firstLine(merge.stdout)}` } : {}
     };
+  } catch (err) {
+    return {
+      ok: false,
+      clean: false,
+      conflicts: [],
+      via: "temp-worktree",
+      error: `temp-worktree preview failed: ${err instanceof Error ? err.message : String(err)}`
+    };
   } finally {
     if (added) await git(root, ["worktree", "remove", "--force", previewDir]);
     rmSync3(previewDir, { recursive: true, force: true });
   }
 }
-async function previewMerge(root, branch, stepKey, forceLegacy) {
+async function previewMerge(root, branchRef, stepKey, forceLegacy) {
   if (!forceLegacy && supportsMergeTree(await gitVersion(root))) {
-    const res = await git(root, ["merge-tree", "--write-tree", "--name-only", "HEAD", branch]);
+    const res = await git(root, ["merge-tree", "--write-tree", "--name-only", "HEAD", branchRef]);
     if (res.code === 0 || res.code === 1) return parseMergeTreeOutput(res.stdout, res.code);
     return {
       ok: false,
@@ -14859,7 +14885,7 @@ async function previewMerge(root, branch, stepKey, forceLegacy) {
       error: `git merge-tree failed: ${firstLine(res.stderr) || firstLine(res.stdout)}`
     };
   }
-  return previewInTempWorktree(root, branch, stepKey);
+  return previewInTempWorktree(root, branchRef, stepKey);
 }
 function tokenStore() {
   const host = globalThis;
@@ -14951,11 +14977,26 @@ async function removeMergeArtifacts(root) {
     }
   }
 }
-async function recoverFromFailedMerge(root, preMerge) {
+async function recoverFromFailedMerge(root, preMerge, options = {}) {
   const notes = [];
   let aborted = false;
   let resetApplied = false;
-  if ((await inspectMergeState(root)).mergeHead) {
+  const stateBefore = await inspectMergeState(root);
+  if (stateBefore.mergeHead && options.ownedMergeState !== true) {
+    return {
+      aborted: false,
+      resetApplied: false,
+      treeRestored: false,
+      compensated: false,
+      statusRestored: false,
+      mergeStatePresent: true,
+      foreignMergeDetected: true,
+      notes: [
+        "a merge this call did not start is in progress (MERGE_HEAD present); it was left untouched"
+      ]
+    };
+  }
+  if (stateBefore.mergeHead) {
     const abort = await git(root, ["merge", "--abort"]);
     aborted = abort.ok;
     if (!abort.ok) notes.push(`git merge --abort failed: ${firstLine(abort.stderr)}`);
@@ -14991,8 +15032,10 @@ async function recoverFromFailedMerge(root, preMerge) {
       }
     }
   }
-  const statusRestored = statusFingerprint(await readStatus(root)) === preMerge.statusFingerprint;
-  if (!statusRestored) notes.push("git status differs from the pre-merge fingerprint");
+  const statusAfter = await readStatus(root);
+  const statusRestored = statusAfter.ok && statusFingerprint(statusAfter.value) === preMerge.statusFingerprint;
+  if (!statusAfter.ok) notes.push(statusAfter.reason);
+  else if (!statusRestored) notes.push("git status differs from the pre-merge fingerprint");
   const state = await inspectMergeState(root);
   const mergeStatePresent = state.mergeHead || state.mergeMsg;
   return {
@@ -15004,6 +15047,9 @@ async function recoverFromFailedMerge(root, preMerge) {
     ...restoreFailed !== void 0 ? { restoreFailed } : {},
     statusRestored,
     mergeStatePresent,
+    ...compensated ? {
+      restoreLimitation: "the checkpoint covers tracked files and non-ignored untracked files; a .gitignore'd file the merge created was not removed"
+    } : {},
     notes
   };
 }
@@ -15038,7 +15084,11 @@ async function branchConflictsFor(root, files, branch, stepKey, mergedSteps, war
       continue;
     }
     const otherFiles = await changedFiles(root, baseSha, `refs/heads/${other}`);
-    for (const file of otherFiles.filter((entry) => files.includes(entry))) {
+    if (!otherFiles.ok) {
+      warnings.push(`branch ${other} diff unavailable: ${otherFiles.reason}`);
+      continue;
+    }
+    for (const file of otherFiles.value.filter((entry) => files.includes(entry))) {
       conflicts.push({ file, holder: other, source: "branch" });
     }
   }
@@ -15112,36 +15162,57 @@ async function mergeEphemeralStep(input) {
       message: "The branch to merge is the checked-out branch."
     });
   }
-  if (!await resolveCommit(root, `refs/heads/${branch}`)) {
+  const branchRef = `refs/heads/${branch}`;
+  const branchCommit = await resolveCommit(root, branchRef);
+  if (!branchCommit) {
     return refuse(base, "branch_missing", {
       branch,
       head: headNow,
       hint: "The preserved branch no longer exists; there is nothing to merge or discard."
     });
   }
-  const baseHead = entry.ephemeral?.baseHead;
-  if (!baseHead) {
+  const branchSymbolic = await git(root, ["rev-parse", "--symbolic-full-name", branch]);
+  if (!branchSymbolic.ok || branchSymbolic.stdout.trim() !== branchRef) {
+    return refuse(base, "ambiguous_branch", {
+      branch,
+      head: headNow,
+      message: `"${branch}" does not resolve unambiguously to ${branchRef} (a tag or another ref shadows it).`,
+      hint: `Remove the shadowing ref (\`git tag -d ${branch}\`, or the refs/pantheon/... entry) and re-run; the reviewed content must be the branch, never a same-named ref.`
+    });
+  }
+  const recordedBase = entry.ephemeral?.baseHead;
+  if (!recordedBase) {
     return refuse(base, "missing_base_head", {
       branch,
       head: headNow,
       hint: "ephemeral.baseHead is required: without it the drift and content checks cannot be bound to the branch."
     });
   }
-  if (!await resolveCommit(root, baseHead)) {
+  const baseHead = await resolveCommit(root, recordedBase);
+  if (!baseHead) {
     return refuse(base, "unknown_base_head", {
       branch,
-      baseHead,
+      baseHead: recordedBase,
       head: headNow,
       hint: "ephemeral.baseHead is not a commit in this repository (history rewritten or wrong checkout)."
     });
   }
-  const digest = await diffDigest(root, baseHead, branch);
+  const digest = await diffDigest(root, baseHead, branchRef);
+  if (!digest.ok) {
+    return refuse(base, "diff_unavailable", {
+      branch,
+      baseHead,
+      head: headNow,
+      message: digest.reason,
+      hint: "The branch diff could not be computed, so neither the drift check nor the token can be bound to content. Fix the repository state (corrupt object/index) and re-run."
+    });
+  }
   const computedToken = computeMergeToken({
     stepKey,
     branch,
     baseHead,
     head: headNow,
-    diffDigest: digest
+    diffDigest: digest.value
   });
   const storeKey = tokenStoreKey(root, stepKey);
   if (mode === "discard") {
@@ -15159,13 +15230,55 @@ async function mergeEphemeralStep(input) {
       now
     });
   }
-  const statusEntries = await readStatus(root);
+  const statusRead = await readStatus(root);
+  if (!statusRead.ok) {
+    return refuse(base, "status_unavailable", {
+      branch,
+      baseHead,
+      head: headNow,
+      message: statusRead.reason,
+      hint: 'git cannot report the working tree (corrupt index, unreadable repository), so "clean" would be a guess. Repair the index (`git reset`) and re-run.'
+    });
+  }
+  const statusEntries = statusRead.value;
   const statusPrint = statusFingerprint(statusEntries);
   const dirty = dirtyPaths(statusEntries);
   const staged = stagedPaths(statusEntries);
-  const mergeFiles = await changedFiles(root, baseHead, branch);
-  const driftCommits = await commitCount(root, `${baseHead}..HEAD`);
-  const headDrift = driftCommits > 0 ? { commits: driftCommits, files: await changedFiles(root, baseHead, "HEAD") } : void 0;
+  const mergeFilesRead = await changedFiles(root, baseHead, branchRef);
+  if (!mergeFilesRead.ok) {
+    return refuse(base, "diff_unavailable", {
+      branch,
+      baseHead,
+      head: headNow,
+      message: mergeFilesRead.reason,
+      hint: "The branch diff could not be computed, so the overlap checks would be a guess. Fix the repository state and re-run."
+    });
+  }
+  const mergeFiles = mergeFilesRead.value;
+  const driftRead = await commitCount(root, `${baseHead}..HEAD`);
+  if (!driftRead.ok) {
+    return refuse(base, "drift_unavailable", {
+      branch,
+      baseHead,
+      head: headNow,
+      message: driftRead.reason,
+      hint: "HEAD drift could not be measured, so the merge is refused rather than assumed drift-free."
+    });
+  }
+  const driftCommits = driftRead.value;
+  let headDrift;
+  if (driftCommits > 0) {
+    const driftFiles = await changedFiles(root, baseHead, "HEAD");
+    if (!driftFiles.ok) {
+      return refuse(base, "drift_unavailable", {
+        branch,
+        baseHead,
+        head: headNow,
+        message: driftFiles.reason
+      });
+    }
+    headDrift = { commits: driftCommits, files: driftFiles.value };
+  }
   const dirtySet = new Set(dirty);
   const leaseConflicts = mergeFiles.filter((file) => dirtySet.has(file)).map((file) => ({ file, holder: "working-tree", source: "dirty" }));
   leaseConflicts.push(
@@ -15177,7 +15290,19 @@ async function mergeEphemeralStep(input) {
   leaseConflicts.push(
     ...await branchConflictsFor(root, mergeFiles, branch, stepKey, mergedSteps, warnings)
   );
-  const preview = await previewMerge(root, branch, stepKey, input.forceLegacyPreview === true);
+  const mergeStateBefore = await inspectMergeState(root);
+  const mergeInProgress = mergeStateBefore.mergeHead || mergeStateBefore.mergeMsg;
+  if (mode === "preview") {
+    tokenStore().set(storeKey, {
+      token: computedToken,
+      fingerprint: `${stepKey}|${branch}|${baseHead}|${headNow}|${digest.value}`,
+      stepKey,
+      branch,
+      expiresAt: now + MERGE_TOKEN_TTL_MS,
+      consumed: false
+    });
+  }
+  const preview = await previewMerge(root, branchRef, stepKey, input.forceLegacyPreview === true);
   if (!preview.ok) {
     return refuse(base, "preview_failed", {
       branch,
@@ -15186,10 +15311,18 @@ async function mergeEphemeralStep(input) {
       changes: mergeFiles,
       previewVia: preview.via,
       ...preview.error ? { message: preview.error } : {},
-      tokenValid: false
+      // The merge could not be rehearsed, so it cannot be authorised — but the
+      // single-use token stays usable for `discard`, which needs only the branch.
+      ...mode === "preview" ? {
+        token: computedToken,
+        tokenExpiresAt: new Date(now + MERGE_TOKEN_TTL_MS).toISOString(),
+        tokenValid: true,
+        hint: 'The merge preview failed, so apply is not authorised; the token is still usable for mode:"discard".'
+      } : { tokenValid: false }
     });
   }
   const blockers = [];
+  if (mergeInProgress) blockers.push("merge_in_progress");
   if (staged.length > 0) blockers.push("dirty_index");
   else if (input.allowDirty !== true && dirty.length > 0) blockers.push("worktree_dirty");
   if (headDrift) blockers.push("head_drift");
@@ -15197,23 +15330,17 @@ async function mergeEphemeralStep(input) {
   if (mergeFiles.length === 0) blockers.push("nothing_to_merge");
   if (!preview.clean) blockers.push("merge_conflict");
   if (mode === "preview") {
-    tokenStore().set(storeKey, {
-      token: computedToken,
-      fingerprint: `${stepKey}|${branch}|${baseHead}|${headNow}|${digest}`,
-      stepKey,
-      branch,
-      expiresAt: now + MERGE_TOKEN_TTL_MS,
-      consumed: false
-    });
-    const statusAfter = statusFingerprint(await readStatus(root));
+    const statusAfterRead = await readStatus(root);
+    const statusAfter = statusAfterRead.ok ? statusFingerprint(statusAfterRead.value) : void 0;
     const headAfter = await resolveCommit(root, "HEAD");
-    const result2 = {
+    const commitsRead = await commitCount(root, `${headNow}..${branchRef}`);
+    const result = {
       ok: true,
       ...base,
       branch,
       baseHead,
       head: headNow,
-      commits: await commitCount(root, `${headNow}..${branch}`),
+      ...commitsRead.ok ? { commits: commitsRead.value } : {},
       changes: mergeFiles,
       clean: preview.clean,
       ...preview.mergeTree ? { mergeTree: preview.mergeTree } : {},
@@ -15228,9 +15355,20 @@ async function mergeEphemeralStep(input) {
       tokenValid: true,
       treeUntouched: statusAfter === statusPrint && headAfter === headNow,
       noOp: true,
+      ...statusAfterRead.ok ? {} : { warnings: [...warnings, statusAfterRead.reason] },
       ...warnings.length > 0 ? { warnings } : {}
     };
-    return result2;
+    return result;
+  }
+  if (mergeInProgress) {
+    return refuse(base, "merge_in_progress", {
+      branch,
+      baseHead,
+      head: headNow,
+      changes: mergeFiles,
+      message: `A merge is already in progress in this checkout (MERGE_HEAD${mergeStateBefore.mergeMsg ? " + MERGE_MSG" : ""}); it was left untouched.`,
+      hint: "Finish or abort that merge first (`git merge --continue` / `git merge --abort`), then re-run. This gate never aborts a merge it did not start."
+    });
   }
   if (staged.length > 0) {
     return refuse(base, "dirty_index", {
@@ -15310,49 +15448,178 @@ async function mergeEphemeralStep(input) {
       hint: "The preview found conflicts; nothing was touched. Resolve them on the branch and re-preview."
     });
   }
-  const preMerge = await captureGitCheckpoint(root, `${stepKey}-pre-merge`);
-  if (!preMerge.ok || !preMerge.treeHash) {
-    return refuse(base, "checkpoint_failed", {
-      branch,
-      baseHead,
-      head: headNow,
-      tokenValid: true,
-      message: `Could not capture the pre-merge checkpoint: ${preMerge.reason ?? "unknown error"}`,
-      hint: "Refusing to merge without a restore point."
+  return applyMerge({
+    base,
+    root,
+    sharedRoot,
+    stepKey,
+    branch,
+    branchRef,
+    baseHead,
+    headNow,
+    statusPrint,
+    mergeFiles,
+    preview,
+    storeKey,
+    currentBranch,
+    warnings,
+    input,
+    now
+  });
+}
+async function applyMerge(ctx) {
+  const {
+    base,
+    root,
+    sharedRoot,
+    stepKey,
+    branch,
+    branchRef,
+    baseHead,
+    headNow,
+    statusPrint,
+    mergeFiles,
+    preview,
+    storeKey,
+    input
+  } = ctx;
+  const lockPath = join20(sharedRoot, ".pantheon", MERGE_LOCK_NAME);
+  mkdirSync10(dirname14(lockPath), { recursive: true });
+  let locked;
+  try {
+    const value = await withExclusiveLedgerLock(lockPath, async () => {
+      let preMerge;
+      try {
+        if (input.onAfterLock) await input.onAfterLock();
+        const record2 = tokenStore().get(storeKey);
+        if (record2) record2.consumed = true;
+        const headSeen = await resolveCommit(root, "HEAD");
+        if (headSeen !== headNow) {
+          return refuse(base, "head_changed", {
+            branch,
+            baseHead,
+            head: headSeen ?? headNow,
+            changes: mergeFiles,
+            tokenValid: false,
+            message: `HEAD changed while this apply waited for the merge lock (${headNow.slice(0, 12)} -> ${(headSeen ?? "unknown").slice(0, 12)}).`,
+            hint: 'Nothing was merged. Re-run mode:"preview" against the new HEAD.'
+          });
+        }
+        const statusRecheck = await readStatus(root);
+        if (!statusRecheck.ok || statusFingerprint(statusRecheck.value) !== statusPrint) {
+          return refuse(base, "worktree_changed", {
+            branch,
+            baseHead,
+            head: headNow,
+            changes: mergeFiles,
+            message: statusRecheck.ok ? "The working tree changed while this apply waited for the merge lock." : statusRecheck.reason,
+            hint: 'Nothing was merged. Re-run mode:"preview" once the checkout is stable.'
+          });
+        }
+        const preMergeSnapshot = await captureGitCheckpoint(root, `${stepKey}-pre-merge`);
+        preMerge = preMergeSnapshot;
+        if (!preMergeSnapshot.ok || !preMergeSnapshot.treeHash) {
+          return refuse(base, "checkpoint_failed", {
+            branch,
+            baseHead,
+            head: headNow,
+            tokenValid: true,
+            message: `Could not capture the pre-merge checkpoint: ${preMergeSnapshot.reason ?? "unknown error"}`,
+            hint: "Refusing to merge without a restore point."
+          });
+        }
+        if (input.onBeforeMerge) await input.onBeforeMerge();
+        const merge = await git(root, ["merge", "--squash", "--no-edit", branchRef]);
+        if (!merge.ok) {
+          const unmerged = await git(root, ["diff", "--name-only", "-z", "--diff-filter=U"]);
+          const recovery = await recoverFromFailedMerge(root, {
+            ...preMergeSnapshot.treeHash ? { treeHash: preMergeSnapshot.treeHash } : {},
+            statusFingerprint: statusPrint
+          });
+          return {
+            ...base,
+            ok: false,
+            error: "merge_conflict",
+            branch,
+            baseHead,
+            head: headNow,
+            changes: mergeFiles,
+            clean: false,
+            conflicts: splitNul(unmerged.stdout),
+            previewVia: preview.via,
+            ...preview.mergeTree ? { mergeTree: preview.mergeTree } : {},
+            tokenValid: true,
+            noOp: recovery.treeRestored && !recovery.mergeStatePresent,
+            treeUntouched: false,
+            recovery,
+            treeRestored: recovery.treeRestored,
+            ...recovery.restoredTree ? { restoredTree: recovery.restoredTree } : {},
+            ...recovery.restoreFailed ? { restoreFailed: recovery.restoreFailed } : {},
+            message: `git merge --squash failed: ${firstLine(merge.stderr) || firstLine(merge.stdout)}`,
+            hint: recovery.foreignMergeDetected ? "A merge started by someone else appeared mid-apply; it was left untouched. This call changed nothing further." : recovery.treeRestored ? "The worktree is back in its exact pre-merge state and no merge is in progress." : "The worktree could NOT be fully restored \u2014 recover it from recovery.restoreFailed.checkpoint."
+          };
+        }
+        return finishMerge(ctx, preMergeSnapshot);
+      } catch (err) {
+        const recovery = preMerge?.treeHash ? await recoverFromFailedMerge(root, {
+          treeHash: preMerge.treeHash,
+          statusFingerprint: statusPrint
+        }) : void 0;
+        return {
+          ...base,
+          ok: false,
+          error: "merge_failed",
+          branch,
+          baseHead,
+          head: headNow,
+          changes: mergeFiles,
+          tokenValid: true,
+          ...recovery ? { recovery, treeRestored: recovery.treeRestored } : {},
+          ...recovery?.restoredTree ? { restoredTree: recovery.restoredTree } : {},
+          ...recovery?.restoreFailed ? { restoreFailed: recovery.restoreFailed } : {},
+          noOp: recovery ? recovery.treeRestored && !recovery.mergeStatePresent : false,
+          treeUntouched: false,
+          message: `unexpected failure inside the merge window: ${err instanceof Error ? err.message : String(err)}`,
+          hint: recovery?.treeRestored ? "The worktree was restored to its pre-merge state." : "The worktree state is unknown \u2014 inspect `git status` before retrying."
+        };
+      }
     });
+    locked = { ok: true, value };
+  } catch (err) {
+    locked = { ok: false, error: err };
   }
-  const record2 = tokenStore().get(storeKey);
-  if (record2) record2.consumed = true;
-  if (input.onBeforeMerge) await input.onBeforeMerge();
-  const merge = await git(root, ["merge", "--squash", "--no-edit", branch]);
-  if (!merge.ok) {
-    const unmerged = await git(root, ["diff", "--name-only", "-z", "--diff-filter=U"]);
-    const recovery = await recoverFromFailedMerge(root, {
-      treeHash: preMerge.treeHash,
-      statusFingerprint: statusPrint
-    });
-    return {
-      ...base,
-      ok: false,
-      error: "merge_conflict",
-      branch,
-      baseHead,
-      head: headNow,
-      changes: mergeFiles,
-      clean: false,
-      conflicts: splitNul(unmerged.stdout),
-      previewVia: preview.via,
-      ...preview.mergeTree ? { mergeTree: preview.mergeTree } : {},
-      tokenValid: true,
-      noOp: recovery.treeRestored && !recovery.mergeStatePresent,
-      recovery,
-      treeRestored: recovery.treeRestored,
-      ...recovery.restoredTree ? { restoredTree: recovery.restoredTree } : {},
-      ...recovery.restoreFailed ? { restoreFailed: recovery.restoreFailed } : {},
-      message: `git merge --squash failed: ${firstLine(merge.stderr) || firstLine(merge.stdout)}`,
-      hint: recovery.treeRestored ? "The worktree is back in its exact pre-merge state and no merge is in progress." : "The worktree could NOT be fully restored \u2014 recover it from recovery.restoreFailed.checkpoint."
-    };
-  }
+  if (locked.ok) return locked.value;
+  const detail = locked.error instanceof Error ? locked.error.message : String(locked.error);
+  const isLockError = locked.error instanceof StepLedgerLockError;
+  return refuse(base, isLockError ? "merge_busy" : "merge_failed", {
+    branch,
+    baseHead,
+    head: headNow,
+    changes: mergeFiles,
+    tokenValid: false,
+    message: isLockError ? `another merge is in progress in this checkout: ${detail}` : `the merge lock could not be taken: ${detail}`,
+    hint: isLockError ? "Nothing was merged and the other merge was left alone. Retry once it finishes (the lock is released in its finally block), or remove a stale .ephemeral-merge.lock after confirming no merge is running." : "Nothing was merged. Check the checkout and ledger, then retry.",
+    noOp: true,
+    treeUntouched: true
+  });
+}
+async function finishMerge(ctx, preMerge) {
+  const {
+    base,
+    root,
+    sharedRoot,
+    stepKey,
+    branch,
+    baseHead,
+    headNow,
+    statusPrint,
+    mergeFiles,
+    preview,
+    currentBranch,
+    warnings,
+    input,
+    now
+  } = ctx;
   let committed = false;
   let commitHash;
   let commitError;
@@ -15379,7 +15646,7 @@ async function mergeEphemeralStep(input) {
   }
   if (input.commit === true && !committed) {
     const recovery = await recoverFromFailedMerge(root, {
-      treeHash: preMerge.treeHash,
+      ...preMerge.treeHash ? { treeHash: preMerge.treeHash } : {},
       statusFingerprint: statusPrint
     });
     return {
@@ -15404,7 +15671,7 @@ async function mergeEphemeralStep(input) {
     const unstaged = await git(root, ["reset"]);
     if (!unstaged.ok) {
       const recovery = await recoverFromFailedMerge(root, {
-        treeHash: preMerge.treeHash,
+        ...preMerge.treeHash ? { treeHash: preMerge.treeHash } : {},
         statusFingerprint: statusPrint
       });
       return {
@@ -15417,10 +15684,15 @@ async function mergeEphemeralStep(input) {
         changes: mergeFiles,
         tokenValid: true,
         recovery,
+        // Post-mutation: the squash ran, so `noOp` is only true when the recovery
+        // verified the tree is back.
+        noOp: recovery.treeRestored && !recovery.mergeStatePresent,
+        treeUntouched: false,
         treeRestored: recovery.treeRestored,
         ...recovery.restoredTree ? { restoredTree: recovery.restoredTree } : {},
         ...recovery.restoreFailed ? { restoreFailed: recovery.restoreFailed } : {},
-        message: `git reset failed after the squash: ${firstLine(unstaged.stderr)}`
+        message: `git reset failed after the squash: ${firstLine(unstaged.stderr)}`,
+        hint: recovery.treeRestored ? "The squash was undone and the worktree is back in its exact pre-merge state." : "The worktree could NOT be fully restored \u2014 recover it from recovery.restoreFailed.checkpoint."
       };
     }
   }
@@ -15428,22 +15700,29 @@ async function mergeEphemeralStep(input) {
   const finalState = await inspectMergeState(root);
   const mergedAt = new Date(now).toISOString();
   const mergeTree = preview.mergeTree ?? await resolveCommit(root, "HEAD^{tree}");
-  const recorded = updateStepLedger(sharedRoot, (ledger) => {
-    const target = ledger.steps[stepKey];
-    if (!target) return { recorded: false };
-    const ephemeral = {
-      ...target.ephemeral,
-      branch,
-      baseHead,
-      ...mergeTree ? { mergeTree } : {},
-      mergedAt,
-      role: target.ephemeral?.role ?? target.agent
-    };
-    delete ephemeral.discardedAt;
-    target.ephemeral = ephemeral;
-    target.updatedAt = mergedAt;
-    return { recorded: true, step: target };
-  });
+  let recorded = { recorded: false };
+  let metadataError;
+  try {
+    recorded = updateStepLedger(sharedRoot, (ledger) => {
+      const target = ledger.steps[stepKey];
+      if (!target) return { recorded: false, error: "step_not_found" };
+      const ephemeral = {
+        ...target.ephemeral,
+        branch,
+        baseHead,
+        ...mergeTree ? { mergeTree } : {},
+        mergedAt,
+        role: target.ephemeral?.role ?? target.agent
+      };
+      delete ephemeral.discardedAt;
+      target.ephemeral = ephemeral;
+      target.updatedAt = mergedAt;
+      return { recorded: true, step: target };
+    });
+  } catch (err) {
+    const structured = describeLedgerError(err);
+    metadataError = structured ? `${structured.error}: ${structured.detail}` : err instanceof Error ? err.message : String(err);
+  }
   getSharedBus().emit("step:merge", {
     stepKey,
     branch,
@@ -15456,7 +15735,8 @@ async function mergeEphemeralStep(input) {
     ...commitHash ? { commit: commitHash } : {},
     timestamp: now
   });
-  const workerRole = recorded.recorded ? recorded.step?.ephemeral?.role ?? recorded.step?.agent ?? "zeus" : "zeus";
+  const targetStep = recorded.step;
+  const workerRole = recorded.recorded ? targetStep?.ephemeral?.role ?? targetStep?.agent ?? "zeus" : "zeus";
   try {
     await appendBoardMessage(sharedRoot, {
       channel: "swarm",
@@ -15486,6 +15766,10 @@ async function mergeEphemeralStep(input) {
     branchKept: true,
     mergedAt,
     metadataRecorded: recorded.recorded,
+    ...metadataError ? { metadataError } : {},
+    ...metadataError ? {
+      hint: 'The merge landed in the working tree; only the ledger metadata is missing. Re-record it with pantheon_step_ledger(action:"merge_ephemeral", mode:"preview") + apply once the ledger lock clears \u2014 do NOT re-run the merge.'
+    } : {},
     noOp: false,
     treeUntouched: false,
     ...recorded.recorded && recorded.step ? { step: recorded.step } : {},
@@ -15496,7 +15780,10 @@ async function mergeEphemeralStep(input) {
       ...result,
       ok: false,
       error: "merge_state_left_behind",
-      message: "MERGE_HEAD/MERGE_MSG survived a successful squash; inspect the checkout before committing."
+      noOp: false,
+      treeUntouched: false,
+      message: "MERGE_HEAD/MERGE_MSG survived a successful squash; inspect the checkout before committing.",
+      hint: "The squash landed (see mergeTree/mergedAt/unstaged). Remove the stray .git/MERGE_HEAD or .git/MERGE_MSG only after confirming no merge is in progress."
     };
   }
   return result;
@@ -18762,7 +19049,7 @@ function sleepMs(ms) {
   Atomics.wait(sleepBuffer, 0, 0, ms);
 }
 function resolveLockPath(ledgerPath) {
-  return join24(dirname14(ledgerPath), ".step-ledger.lock");
+  return join24(dirname15(ledgerPath), ".step-ledger.lock");
 }
 function createLockToken() {
   return `${process.pid}:${randomUUID4()}`;
@@ -18780,7 +19067,7 @@ function readLockToken(lockPath) {
   }
 }
 function sweepOrphanTempFiles(filePath) {
-  const dir = dirname14(filePath);
+  const dir = dirname15(filePath);
   const prefix = `${basename7(filePath)}.tmp.`;
   let entries;
   try {
@@ -18886,6 +19173,14 @@ function assertLockStillOwned(lockPath, token) {
     "lock_lost",
     `step-ledger lock ${lockPath} is no longer owned by this writer (token mismatch): another writer took over mid-mutation. Aborting before commit; re-run the action.`
   );
+}
+async function withExclusiveLedgerLock(lockPath, fn) {
+  const token = acquireLedgerLock(lockPath);
+  try {
+    return await fn();
+  } finally {
+    releaseLedgerLock(lockPath, token);
+  }
 }
 function writeLedgerFileAtomic(filePath, store2) {
   const tmpPath = `${filePath}.tmp.${process.pid}`;
@@ -22534,7 +22829,7 @@ function createCodemapTools(fallbackDir) {
 // src/pantheon/cost-command.ts
 import { execFile as execFile7 } from "node:child_process";
 import { accessSync as accessSync2, constants as constants4, existsSync as existsSync24, statSync as statSync9 } from "node:fs";
-import { delimiter, dirname as dirname16, join as join31 } from "node:path";
+import { delimiter, dirname as dirname17, join as join31 } from "node:path";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
 import { z } from "zod";
 
@@ -22545,7 +22840,7 @@ import { join as join30 } from "node:path";
 // src/plugins/tui/src/model-pricing.ts
 import { existsSync as existsSync23, mkdirSync as mkdirSync15, readFileSync as readFileSync20, renameSync as renameSync5, writeFileSync as writeFileSync11 } from "node:fs";
 import { homedir as homedir7 } from "node:os";
-import { dirname as dirname15, join as join29 } from "node:path";
+import { dirname as dirname16, join as join29 } from "node:path";
 var MODELS_DEV_URL = "https://models.dev/api.json";
 var PRICING_CACHE_VERSION = 1;
 var PRICING_TTL_MS = 24 * 60 * 60 * 1e3;
@@ -22698,7 +22993,7 @@ function readPricingCache(cachePath) {
 function writePricingCache(cachePath, catalog) {
   const temp = `${cachePath}.tmp-${process.pid}`;
   try {
-    mkdirSync15(dirname15(cachePath), { recursive: true });
+    mkdirSync15(dirname16(cachePath), { recursive: true });
     writeFileSync11(temp, `${JSON.stringify(catalog)}
 `, "utf8");
     renameSync5(temp, cachePath);
@@ -22908,7 +23203,7 @@ function priceTokens(pricing, provider, model, tokens) {
 
 // src/pantheon/cost-command.ts
 var __filename = fileURLToPath5(import.meta.url);
-var __dirname = dirname16(__filename);
+var __dirname = dirname17(__filename);
 var costArgs = {
   days: z.number().int().min(1).max(365).optional().describe("Number of rolling 24-hour days of history to include (default 7)."),
   session: z.string().min(1).optional().describe(
@@ -24993,7 +25288,7 @@ import { randomBytes } from "node:crypto";
 import { constants as constants5 } from "node:fs";
 import { lstat as lstat2, mkdir as mkdir8, open as open3, rename as rename7, unlink as unlink4 } from "node:fs/promises";
 import { homedir as homedir9 } from "node:os";
-import { basename as basename8, dirname as dirname17, join as join34, resolve as resolve25 } from "node:path";
+import { basename as basename8, dirname as dirname18, join as join34, resolve as resolve25 } from "node:path";
 import { z as z5 } from "zod";
 var MODEL_REF_PATTERN2 = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._:+-]*$/;
 var SAFE_PRESET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -25078,7 +25373,7 @@ async function syncDirectory(path6) {
   }
 }
 async function createTemporaryFile(path6) {
-  const directory = dirname17(path6);
+  const directory = dirname18(path6);
   const prefix = `.${basename8(path6)}.tmp-`;
   const flags = constants5.O_WRONLY | constants5.O_CREAT | constants5.O_EXCL | NO_FOLLOW;
   for (let attempt = 0; attempt < 10; attempt += 1) {
@@ -25118,7 +25413,7 @@ async function atomicReplace(path6, content, mode, label, expectedExists) {
     }
     await rename7(temporaryPath, path6);
     renamed = true;
-    await syncDirectory(dirname17(path6));
+    await syncDirectory(dirname18(path6));
   } finally {
     await temporaryFile?.close().catch(() => void 0);
     if (temporaryPath !== void 0 && !renamed) {
@@ -25168,9 +25463,9 @@ function activePresetCandidatesList(options) {
   if (options.activePresetCandidates !== void 0) {
     return options.activePresetCandidates.map((p) => resolve25(p));
   }
-  const projectPreset = join34(dirname17(projectConfigPath(options)), ".pantheon", "active-preset.json");
+  const projectPreset = join34(dirname18(projectConfigPath(options)), ".pantheon", "active-preset.json");
   const globalPresets = globalConfigCandidates(options).map(
-    (p) => join34(dirname17(p), ".pantheon", "active-preset.json")
+    (p) => join34(dirname18(p), ".pantheon", "active-preset.json")
   );
   return [...new Set([projectPreset, ...globalPresets].map((p) => resolve25(p)))];
 }
@@ -25184,7 +25479,7 @@ function presetPathForScope(options, scope) {
   const second = candidates[1];
   if (second) return second;
   const globalCandidates = globalConfigCandidates(options).map(
-    (p) => resolve25(join34(dirname17(p), ".pantheon", "active-preset.json"))
+    (p) => resolve25(join34(dirname18(p), ".pantheon", "active-preset.json"))
   );
   const fallback = globalCandidates[0] ?? candidates[0];
   if (!fallback) throw new ModelCommandError("global preset path is unavailable");
@@ -25314,7 +25609,7 @@ function validateMutationAuthorization(args, scope) {
 }
 async function writeActivePresetAtomically(path6, data, current) {
   const backupPath = `${path6}.bak`;
-  await mkdir8(dirname17(path6), { recursive: true });
+  await mkdir8(dirname18(path6), { recursive: true });
   const originalMode = current.mode ?? DEFAULT_FILE_MODE;
   const backupMode = originalMode & 384;
   const backup = await regularPath(backupPath, "configuration backup");

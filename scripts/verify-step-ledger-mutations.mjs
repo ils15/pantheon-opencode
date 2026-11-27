@@ -107,10 +107,13 @@ const MUTANTS = [
     edits: [
       {
         file: LEDGER,
-        from: 'const token = acquireLedgerLock(lockPath)',
+        // Anchored on the whole function head: `acquireLedgerLock(lockPath)` also
+        // appears in `restoreLedgerSnapshotUnderLock`, so the bare line stops
+        // being unique as soon as another lock helper exists.
+        from: 'export function updateStepLedger<T>(\n  workspaceDir: string,\n  mutator: (store: StepLedgerStore) => T,\n): T {\n  const filePath = resolveLedgerPath(workspaceDir)\n  const lockPath = resolveLockPath(filePath)\n  const token = acquireLedgerLock(lockPath)',
         // The token literal is split so this shipped script never looks like a
         // credential to `scripts/redaction-gate.mjs` (which scans the tarball).
-        to: "const token = 'mutant' + '-no-lock'",
+        to: "export function updateStepLedger<T>(\n  workspaceDir: string,\n  mutator: (store: StepLedgerStore) => T,\n): T {\n  const filePath = resolveLedgerPath(workspaceDir)\n  const lockPath = resolveLockPath(filePath)\n  const token = 'mutant' + '-no-lock'",
       },
     ],
   },
@@ -373,8 +376,10 @@ const MUTANTS = [
     edits: [
       {
         file: MERGE,
-        from: '  const record = tokenStore().get(storeKey)\n  if (record) record.consumed = true',
-        to: '  const record = tokenStore().get(storeKey)\n  if (record) void record',
+        // Anchored on the apply-path indentation: the discard path burns its own
+        // token with the same two lines at a shallower indent.
+        from: '        const record = tokenStore().get(storeKey)\n        if (record) record.consumed = true',
+        to: '        const record = tokenStore().get(storeKey)\n        if (record) void record',
       },
     ],
   },
@@ -444,6 +449,129 @@ const MUTANTS = [
         file: MERGE,
         from: "    const unstaged = await git(root, ['reset'])",
         to: "    const unstaged = await git(root, ['status'])",
+      },
+    ],
+  },
+  // --- review round 2: B1 ref resolution, B2 foreign merge, B3 ledger write --
+  {
+    id: 'B1-symbolic-guard-removed',
+    description: 'a short branch name shadowed by a tag is accepted instead of refused',
+    slice: MERGE_SLICE,
+    expect: 'S3-B1 a same-named tag or refs/pantheon ref is refused, never merged',
+    edits: [
+      {
+        file: MERGE,
+        from: '  if (!branchSymbolic.ok || branchSymbolic.stdout.trim() !== branchRef) {',
+        to: '  if (false && branchSymbolic.ok) {',
+      },
+    ],
+  },
+  {
+    id: 'B1-short-ref-merge',
+    description: 'the squash re-resolves the short name, so a mid-apply tag redirects it',
+    slice: MERGE_SLICE,
+    expect: 'S3-B1b a tag planted mid-apply cannot redirect the merge (full-ref resolution)',
+    edits: [
+      {
+        file: MERGE,
+        from: "        const merge = await git(root, ['merge', '--squash', '--no-edit', branchRef])",
+        to: "        const merge = await git(root, ['merge', '--squash', '--no-edit', branch])",
+      },
+    ],
+  },
+  {
+    id: 'B2-preflight-merge-state-ignored',
+    description: 'apply no longer notices that a foreign merge is in progress',
+    slice: MERGE_SLICE,
+    expect: 'S3-B2 apply refuses merge_in_progress and leaves the user merge untouched',
+    edits: [
+      {
+        file: MERGE,
+        from: '  const mergeInProgress = mergeStateBefore.mergeHead || mergeStateBefore.mergeMsg',
+        to: '  const mergeInProgress = false && (mergeStateBefore.mergeHead || mergeStateBefore.mergeMsg)',
+      },
+    ],
+  },
+  {
+    id: 'B2-foreign-abort-restored',
+    description: 'recovery aborts a MERGE_HEAD it does not own',
+    slice: MERGE_SLICE,
+    expect: 'S3-5e recovery leaves a merge it does not own completely untouched',
+    edits: [
+      {
+        file: MERGE,
+        from: '  if (stateBefore.mergeHead && options.ownedMergeState !== true) {',
+        to: '  if (false && stateBefore.mergeHead && options.ownedMergeState !== true) {',
+      },
+    ],
+  },
+  {
+    id: 'B3-metadata-write-uncaught',
+    description: 'a ledger write failure after the squash escapes instead of being reported',
+    slice: MERGE_SLICE,
+    expect: 'S3-B3 a ledger write failure after the squash still reports the merge as landed',
+    edits: [
+      {
+        file: MERGE,
+        from: '  } catch (err: unknown) {\n    const structured = describeLedgerError(err)',
+        to: '  } catch (err: unknown) {\n    throw err\n    const structured = describeLedgerError(err)',
+      },
+    ],
+  },
+  {
+    id: 'S1-status-fail-open',
+    description: 'an unreadable git status is reported as an empty (clean) tree again',
+    slice: MERGE_SLICE,
+    expect: 'S3-S1 an unreadable git status refuses instead of reporting a clean tree',
+    edits: [
+      {
+        file: MERGE,
+        from: "  if (!res.ok) {\n    return { ok: false, reason: unavailableReason('git status', res) }\n  }",
+        to: '  if (!res.ok) {\n    return { ok: true, value: [] }\n  }',
+      },
+    ],
+  },
+  {
+    id: 'S2-merge-lock-removed',
+    description: 'apply runs its mutation window without the merge lock',
+    slice: MERGE_SLICE,
+    expect: 'S3-S2 a second apply on a non-overlapping branch is refused while one is mid-merge',
+    edits: [
+      {
+        file: MERGE,
+        from: '    const value = await withExclusiveLedgerLock(lockPath, async () => {',
+        to: '    const value = await (async (): Promise<MergeEphemeralResult> => {',
+      },
+      {
+        file: MERGE,
+        from: '      }\n    })\n    locked = { ok: true, value }',
+        to: '      }\n    })()\n    locked = { ok: true, value }',
+      },
+    ],
+  },
+  {
+    id: 'S2-reverify-removed',
+    description: 'the queued apply no longer re-checks HEAD inside the lock',
+    slice: MERGE_SLICE,
+    expect: 'S3-S2b a writer that moved HEAD while queued is detected before the merge',
+    edits: [
+      {
+        file: MERGE,
+        from: '        if (headSeen !== headNow) {',
+        to: '        if (false && headSeen !== headNow) {',
+      },
+    ],
+  },
+  {
+    id: 'S3-preview-token-deferred',
+    description: 'the token is minted only after a successful preview, so discard can deadlock',
+    slice: MERGE_SLICE,
+    expect: 'S3-S3 a preview that cannot run still mints the token discard needs',
+    edits: [
+      {
+        file: MERGE,
+        from: "  if (mode === 'preview') {\n    tokenStore().set(storeKey, {",
+        to: "  if (false && mode === 'preview') {\n    tokenStore().set(storeKey, {",
       },
     ],
   },

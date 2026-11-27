@@ -166,37 +166,63 @@ is the only supported way to land that branch:
 
 - **Two steps, one token.** `mode:"preview"` returns
   `MERGE-<sha256(stepKey|branch|baseHead|headNow|diffDigest)[:12]>`, valid for 10
-  minutes. `mode:"apply"`/`"discard"` require it as `confirmToken`: it is
-  single-use (a failed attempt burns it), and it is bound to the exact branch
-  content *and* HEAD, so any new commit on either side makes it unusable
-  (`confirm_token_required`, with `already_used` / `expired` / `stale` / `missing`
-  in the message).
+  minutes. `mode:"apply"`/`"discard"` require it as `confirmToken`. It is bound to
+  the exact branch content *and* HEAD, so any new commit on either side makes it
+  unusable (`confirm_token_required`, with `already_used` / `expired` / `stale` /
+  `missing` in the message). It is a **two-phase confirmation, not an
+  authorization**: it proves a preview of this exact content happened, nothing
+  more. Single-use means an *attempted mutation* burns it (including one that then
+  fails); pure pre-flight refusals happen before the burn, so they leave it usable.
+  Tokens live **in process memory only** — a restarted host cannot replay or
+  recover one, and must `preview` again.
 - **Preview never touches your checkout.** The trial merge runs through
   `git merge-tree --write-tree --name-only` (git ≥ 2.38); older git merges inside
   a disposable worktree at
   `<project-parent>/.pantheon-worktrees/<repo>/merge-preview-<stepKey>` that is
   removed afterwards. A preview returns `treeUntouched: true` after comparing
   HEAD and `git status` before/after, plus `mergeTree`, `changes`, `conflicts`,
-  `blockers`, and `readyToApply`.
+  `blockers`, and `readyToApply`. The token is minted *before* the preview attempt,
+  so a branch whose merge cannot even be rehearsed (`preview_failed`) can still be
+  `discard`ed instead of becoming undeletable.
 - **Preview reports, `apply` refuses.** Preview deliberately keeps working on a
-  drifted, dirty, or already-conflicting tree so the token is always obtainable
-  (otherwise a branch could never be cleaned up); `readyToApply: false` and
-  `blockers` name exactly what an `apply` would refuse with.
+  drifted, dirty, already-conflicting or merge-in-progress tree so the token is
+  always obtainable; `readyToApply: false` and `blockers` name exactly what an
+  `apply` would refuse with.
 - **Refusals, all before the first mutation** (`treeUntouched` / `noOp: true`):
   `not_a_git_repository`, `detached_head`, `step_not_found`, `missing_branch`,
   `branch_missing`, `missing_base_head`, `unknown_base_head`,
+  `ambiguous_branch` (the short name resolves to a tag or another ref instead of
+  `refs/heads/<branch>` — see below),
+  `status_unavailable` / `diff_unavailable` / `drift_unavailable` (git could not
+  answer, so the gate refuses rather than reading "unknown" as "clean"),
+  `merge_in_progress` (a merge this gate did not start is in progress),
   `dirty_index` (staged changes are never an `allowDirty` case — see below),
   `worktree_dirty` (without `allowDirty: true`), `head_drift` (HEAD moved past
   `ephemeral.baseHead`: the Themis verdict no longer covers that tree),
   `lease_conflict` (`{file, holder, source: 'dirty' | 'lease' | 'branch'}`),
-  `nothing_to_merge`, `merge_conflict`, `merge_state_left_behind`.
+  `nothing_to_merge`, `merge_conflict`, `merge_busy` (another merge holds the
+  mutation lock), `head_changed` / `worktree_changed` (a writer moved the
+  checkout while this apply queued for the lock).
   `unsupported_option` is returned for `cascade: true`: `merge_ephemeral` is not a
   rollback, and silently accepting a flag that changes nothing would be a lie.
+- **The branch is addressed by full ref.** `ephemeral.branch` is a plain
+  `pantheon/eph/*` name, but every differential call (`diff`, `rev-list`,
+  `merge-tree`, `git merge --squash`) uses `refs/heads/<branch>`, and
+  `baseHead` is resolved once to a sha. A same-named tag or `refs/pantheon/...`
+  ref can no longer be merged in place of the reviewed branch: the ambiguity is
+  refused up front (`ambiguous_branch`) *and* cannot take effect if it appears
+  mid-apply.
 - **Overlap sources.** `dirty` is a local edit to a file the branch rewrites;
-  `lease` is another session's active `ownedFiles`/`forbiddenFiles` claim
-  (`listActiveLeases()`, the real registry accessor — the caller's own lease is
-  excluded); `branch` is a second live `pantheon/eph/*` branch (no
-  `ephemeral.mergedAt`) whose own diff overlaps.
+  `branch` is a second live `pantheon/eph/*` branch (no `ephemeral.mergedAt`)
+  whose own diff overlaps; `lease` is another session's active
+  `ownedFiles`/`forbiddenFiles` claim, read through the real `listActiveLeases()`
+  accessor with the caller's own lease excluded. **`lease` cannot fire in
+  production today**: nothing in `src/` installs the `globalThis.__pantheonFileLeases`
+  hook that `init_step`/`spawn_ephemeral` look for (only tests do, with a
+  different signature than `acquireFileLease(sessionID, lease)`), so the live
+  sources are `dirty` and `branch`. It stays as defence-in-depth until the launch
+  path is wired to `acquireFileLease` — its own task, because it changes
+  merge outcomes.
 - **Try before you touch.** The merge is validated with `git merge-tree` before
   any git command mutates the checkout, so a conflict is a refusal with an
   untouched tree.
@@ -205,15 +231,31 @@ is the only supported way to land that branch:
   unstaged with `git reset`, `ephemeral.mergedAt`/`mergeTree` are written back,
   `step:merge` is emitted, and a `[done]` board slot announces the merge. The
   branch is **kept**; only `mode:"discard"` deletes it (and records
-  `ephemeral.discardedAt`).
+  `ephemeral.discardedAt`). If the ledger write fails *after* the squash, the
+  result is still `ok: true` with `metadataRecorded: false` + `metadataError`: the
+  merge landed, only the bookkeeping is missing (re-record, never re-merge).
+- **One mutation window per checkout.** The squash, the recovery and the ledger
+  write run under `.pantheon/.ephemeral-merge.lock` (the ledger's own lock
+  primitive, on its own path). A second apply — same process or another — gets
+  `merge_busy` and touches nothing; a writer that moved HEAD while an apply
+  queued is detected inside the lock (`head_changed` / `worktree_changed`) before
+  anything is mutated.
 - **Never a half-merged tree.** Every failure after the first mutation runs the
-  same recovery: `git merge --abort` when `MERGE_HEAD` exists (a squashed merge
-  never creates one), `git reset --merge` to drop unmerged index entries and
-  conflict markers, then a restore of the pre-merge checkpoint when the tree still
-  differs. `treeRestored` is only ever `true` after a verified comparison, and a
-  surviving `MERGE_HEAD`/`MERGE_MSG` is reported as `merge_state_left_behind`
-  rather than hidden. `commit: true` that a user hook rejects is undone the same
-  way (`commit_failed` + `recovery`).
+  same recovery: `git reset --merge` to drop unmerged index entries and conflict
+  markers, then a restore of the pre-merge checkpoint when the tree still differs.
+  `treeRestored` is only ever `true` after a verified comparison. A `MERGE_HEAD`
+  that this call did not create is **never aborted** — it is reported
+  (`foreignMergeDetected`) and left exactly as found; `apply` additionally refuses
+  such a checkout up front. A restore covers tracked files plus non-ignored
+  untracked files (the checkpoint uses `--exclude-standard`), so a `.gitignore`d
+  file the aborted merge created survives: that limitation is stated in
+  `recovery.restoreLimitation` rather than hidden.
+- **Post-mutation outcomes.** A surviving `MERGE_HEAD`/`MERGE_MSG` after a
+  successful squash is reported as `merge_state_left_behind` (`ok: false`,
+  `treeUntouched: false`, with `mergeTree`/`mergedAt`/`unstaged` still describing
+  what landed); `commit: true` that a user hook rejects is undone the same way
+  (`commit_failed` + `recovery`). No post-mutation payload ever claims
+  `treeUntouched: true`.
 - **Why staged changes are refused outright.** `git merge --squash` will not run
   with a dirty index, and `git reset --merge` discards staged content
   irrecoverably — so an index with staged entries cannot be restored exactly. The
