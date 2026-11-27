@@ -52,6 +52,8 @@ GitHub does not emit `push` workflows for commits pushed with the default `GITHU
 This repo therefore uses the optional `PR_MERGE_TOKEN` secret (a fine-grained PAT with `contents: write` and `pull-requests: write`) for auto-merge, so the merge is attributed to a user and the resulting push triggers `ci.yml` on `main`.
 When the secret is absent the workflow degrades to `GITHUB_TOKEN` with a warning; release evidence for that SHA is then limited to the PR-head run plus tree equality — treat that as **audit debt, not green evidence**.
 
+Reading an auto-merge run in the UI: a `workflow_run`-triggered run's run-level SHA is `main`'s HEAD when the run started, **not** the commit the triggering CI run tested — the tested (and merged) commit is `github.event.workflow_run.head_sha`.
+
 ---
 
 ## Versioning Policy
