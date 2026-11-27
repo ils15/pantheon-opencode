@@ -24716,7 +24716,7 @@ function createReviewVerdictTool(sessionDomain) {
         const stepKey = typeof input.stepKey === "string" && input.stepKey.trim() ? input.stepKey.trim() : void 0;
         const attach = attachThemisVerdictSafe(resolveMemoryStoreCwd(context), {
           verdict,
-          ...stepKey ? { stepKey } : {}
+          ...stepKey ? { stepKey } : { agent: targetAgent }
         });
         strategy = {
           attached: attach.attached,

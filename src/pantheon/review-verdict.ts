@@ -209,9 +209,11 @@ export function createReviewVerdictTool(
           typeof input.stepKey === 'string' && input.stepKey.trim()
             ? input.stepKey.trim()
             : undefined
+        // Without a step key the review still names the agent under review, so
+        // attach to that agent's latest run — never to an unrelated agent's.
         const attach = attachThemisVerdictSafe(resolveMemoryStoreCwd(context), {
           verdict,
-          ...(stepKey ? { stepKey } : {}),
+          ...(stepKey ? { stepKey } : { agent: targetAgent }),
         })
         strategy = {
           attached: attach.attached,

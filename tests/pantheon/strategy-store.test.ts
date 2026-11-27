@@ -764,6 +764,32 @@ test('a Themis BLOCK verdict attaches to the latest run through the review tool'
     (await tool.execute({ verdict: 'APPROVE', summary: 'fine' }, ctx)).output,
   ) as Json
   assert.equal(approve.strategy, undefined)
+
+  // Without a step key the BLOCK still lands on the reviewed agent's latest run.
+  recordStrategyRun(dir, {
+    strategyId: deriveStrategyKey('aphrodite', 'feature'),
+    agent: 'aphrodite',
+    success: true,
+    stepKey: 'step-ui',
+    attempt: 1,
+    createdAt: new Date(Date.now() + 1000).toISOString(),
+  })
+  const agentScoped = JSON.parse(
+    (
+      await tool.execute(
+        { verdict: 'BLOCK', summary: 'a11y failure', targetAgent: 'aphrodite' },
+        ctx,
+      )
+    ).output,
+  ) as Json
+  const agentStrategy = agentScoped.strategy as Json
+  assert.equal(agentStrategy.attached, true)
+  assert.equal(agentStrategy.runId, 'step-ui:1')
+  assert.equal(
+    queryStrategies(dir, { strategyId: deriveStrategyKey('aphrodite', 'feature') }).results[0]
+      ?.successes,
+    0,
+  )
 })
 
 test('pantheon_strategy exposes record | query | stats | prune', async () => {
