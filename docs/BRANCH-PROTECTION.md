@@ -36,14 +36,30 @@ job id when a job has no `name:` override):
 - `plugin-ts-coverage`
 - `commitlint`
 - `security-scan`
-- `CodeQL`
+- `Analyze (actions)`
+- `Analyze (javascript-typescript)`
+
+> **CodeQL reports one check per matrix language.** The advanced workflow in
+> `codeql.yml` produces `Analyze (actions)`, `Analyze (javascript-typescript)`
+> and `Analyze (python)`; a bare `CodeQL` context never reports on this
+> repository, so requiring it would lock `main` permanently. Discover the real
+> names — and confirm they pass on `main` — before registering them:
+>
+> ```bash
+> gh api repos/ils15/pantheon-opencode/commits/main/check-runs \
+>   --jq '.check_runs[].name'
+> ```
 
 > **`version-check` is not a check.** That job was folded into `validate`.
 > There is no `PR Checks` workflow in this repository; do not add
 > `PR Checks / label-by-title` or `PR Checks / recommend-version`.
 >
-> **Applying protection is a manual maintainer action.** No workflow changes
-> branch protection and an agent must not do it.
+> **Branch protection is external repository configuration.** It is not
+> stored in this repository, and no workflow applies it — a workflow cannot
+> grant itself protection. The `protection-audit` job in
+> `.github/workflows/auto-merge.yml` only reads it and fails when it drifts
+> from the documented set above. Applying or changing protection is a
+> **manual maintainer action**; an agent must never do it.
 
 > **Tip:** Type each name in the search box and select it. GitHub will auto-suggest
 > matching check names once the workflow has run at least once on `main`.
@@ -75,10 +91,11 @@ gh api repos/:owner/:repo/branches/main/protection \
     "checks": [
       {"context": "validate"},
       {"context": "test-suite"},
-      {"context": "plugin-v2-ts-coverage"},
+      {"context": "plugin-ts-coverage"},
       {"context": "commitlint"},
       {"context": "security-scan"},
-      {"context": "CodeQL"}
+      {"context": "Analyze (actions)"},
+      {"context": "Analyze (javascript-typescript)"}
     ]
   }' \
   --field enforce_admins=true \
@@ -101,13 +118,15 @@ gh api repos/:owner/:repo/branches/main/protection \
 If a required check never passes, every push to `main` is locked out, including
 the release pipeline. Confirm all of the following before the `PUT`:
 
-- [ ] **(a)** All six checks exist as workflow jobs: `validate`, `test-suite`,
-      and `plugin-v2-ts-coverage` in `ci.yml`; `commitlint` in
-      `commit-lint.yml`; `security-scan` in `security-scan.yml`; and CodeQL
-      analysis in `codeql.yml`.
-- [ ] **(b)** They all pass on current `main` (or a PR), including the push run
-      on `main`. If any fails, fix the workflow first — never enable protection
-      on a failing check.
+- [ ] **(a)** All required checks exist: `validate`, `test-suite`, and
+      `plugin-ts-coverage` in `ci.yml`; `commitlint` in `commit-lint.yml`;
+      `security-scan` in `security-scan.yml`; and the `Analyze (…)` matrix
+      legs in `codeql.yml` (confirm the exact names with the `check-runs`
+      command above). A required context that never reports locks `main`.
+- [ ] **(b)** They all pass on the pull request head. The `Analyze (…)` legs
+      also pass on the push run for `main` once `codeql.yml`'s `push` trigger
+      has completed. If a check has never reported, fix the producing workflow
+      first — never enable protection on a check that has never run.
 - [ ] **(c)** Only then apply the `PUT`, and verify with
       `gh api repos/ils15/pantheon-opencode/branches/main/protection`.
 
@@ -145,10 +164,11 @@ Expected output:
 [
   "validate",
   "test-suite",
-  "plugin-v2-ts-coverage",
+  "plugin-ts-coverage",
   "commitlint",
   "security-scan",
-  "CodeQL"
+  "Analyze (actions)",
+  "Analyze (javascript-typescript)"
 ]
 ```
 
@@ -169,7 +189,7 @@ a green "Protection enabled" badge.
                               ┌─────────────────────────────┐
                               │  Iris opens Draft PR        │
                               │  → validate, test-suite,    │
-                              │    plugin-v2-ts-coverage,   │
+                              │    plugin-ts-coverage,      │
                               │    commitlint, security-scan│
                               │  → CodeQL analysis          │
                               └──────────┬──────────────────┘

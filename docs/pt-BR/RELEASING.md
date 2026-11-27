@@ -42,7 +42,7 @@ flowchart TD
 ```
 
 ### Princípios Fundamentais:
-1. **O `main` Está Sempre Testado e Pronto:** O código na branch `main` nunca está quebrado. Todo merge exige aprovação em todos os 10 checks de CI (`validate`, `test-suite`, `plugin-ts-coverage`, `security-scan`, `commitlint`, `CodeQL`, etc.).
+1. **O `main` Está Sempre Testado e Pronto:** O código na branch `main` nunca está quebrado. Todo merge exige aprovação em todos os 10 checks de CI (`validate`, `test-suite`, `plugin-ts-coverage`, `security-scan`, `commitlint`, `Analyze (actions)`, `Analyze (javascript-typescript)`, etc.).
 2. **Merges no `main` NÃO Publicam Pacotes:** O merge de um PR no `main` atualiza a documentação ao vivo no GitHub Pages (`latest`), mas **nunca publica no npm** nem cria tags de versão no Git de forma automática.
 3. **Buffer de Features em `[Unreleased]`:** As melhorias concluídas se acumulam ordenadamente na seção `## [Unreleased]` do `CHANGELOG.md` até que o mantenedor decida que o lote de features está pronto para virar versão.
 4. **Corte Explícito de Release:** O lançamento de uma nova versão oficial só ocorre quando o mantenedor roda o script de release (`node scripts/versioning.mjs apply [patch|minor|major]`), que promove o bloco `[Unreleased]` para a nova versão, sincroniza os manifestos e cria a tag no Git.

@@ -32,7 +32,17 @@ Adicione exatamente os seguintes nomes de checks que rodam nas esteiras do GitHu
 - `plugin-ts-coverage`
 - `commitlint`
 - `security-scan`
-- `CodeQL`
+- `Analyze (actions)`
+- `Analyze (javascript-typescript)`
+
+> O CodeQL reporta um check por linguagem da matriz (`Analyze (…)`). O contexto
+> `CodeQL` não reporta neste repositório e travaria o `main`. Descubra os nomes
+> reais com:
+>
+> ```bash
+> gh api repos/ils15/pantheon-opencode/commits/main/check-runs \
+>   --jq '.check_runs[].name'
+> ```
 
 ### 🔒 Proteções Adicionais
 
@@ -63,7 +73,8 @@ gh api repos/:owner/:repo/branches/main/protection \
       "plugin-ts-coverage",
       "commitlint",
       "security-scan",
-      "CodeQL"
+      "Analyze (actions)",
+      "Analyze (javascript-typescript)"
     ]
   },
   "enforce_admins": true,

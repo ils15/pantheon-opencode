@@ -38,6 +38,23 @@ repos:
         args: [--maxkb=5120]  # hard cap at 5 MB
       - id: forbid-new-submodules
 
+  # --- Local: generated artifacts must match their sources before commit ---
+  # Rebuild + diff (the same semantics as CI), not `build-roster --check`:
+  # that check trims both sides, so formatter-level rewrites (trailing newline,
+  # quoting) pass locally and fail CI.
+  #
+  # Tradeoff: rebuilding normalizes the working tree to canonical output.
+  # Unstaged/untracked generated files are copied to a temp directory first
+  # (path printed) so a hand-edit is never lost; staged drift still fails.
+  # Both generators run before the hook exits, so one attempt reports both.
+  - repo: local
+    hooks:
+      - id: generated-artifacts
+        name: generated-artifacts — rebuild and diff src/agents + src/plugin
+        entry: node scripts/check-generated-hook.mjs
+        language: system
+        pass_filenames: false
+
   # --- Local: custom Bifrost/API credential scan (header + value patterns) ---
   # scripts/secret-scan.mjs scans the full versionable set (index + untracked)
   # and never prints secret values, only file + label.

@@ -35,6 +35,13 @@ site/
 __pycache__/
 .coverage*
 .DS_Store
+# Editor droppings must be ignored, not commit-blocking: the generated-artifacts
+# gate fails on any untracked file under src/agents and src/plugin.
+*~
+*.swp
+*.swo
+*.orig
+*.rej
 .vscode/
 opencode.zen.json
 opencode.multimodal.json

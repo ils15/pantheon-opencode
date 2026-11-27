@@ -3104,7 +3104,7 @@ var PANTHEON_SKILL_CATALOG = Object.freeze([
   },
   {
     id: "fast-path-execution",
-    description: "Fast-track execution protocol for bounded micro-edits."
+    description: "Fast-track and lean execution: one owner, no re-verification, gates only for irreversible actions."
   },
   { id: "git-workflow-and-versioning", description: "Atomic commits and versioning workflow." },
   { id: "incremental-implementation", description: "Thin, testable, rollback-safe slices." },
