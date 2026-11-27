@@ -15,7 +15,10 @@
  * Run: node --test tests/generated-artifacts-drift.test.mjs
  */
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { load } from 'js-yaml'
@@ -187,4 +190,106 @@ test('pre-commit rebuilds both generators, backs up unstaged drift, and reports 
     /working tree was rewritten/,
     'unstaged normalization must be announced explicitly, not silently',
   )
+})
+
+/**
+ * The hook must be proven by behaviour, not by grepping its source. Each case
+ * builds a throwaway git repo with a copy of the real hook script and stub
+ * generators, so the real exit status and stderr are exercised without
+ * touching the working tree.
+ */
+const HOOK_SOURCE = fileURLToPath(new URL('../scripts/check-generated-hook.mjs', import.meta.url))
+
+function makeHookFixture() {
+  const base = mkdtempSync(join(tmpdir(), 'pantheon-hook-fixture-'))
+  const tmp = mkdtempSync(join(tmpdir(), 'pantheon-hook-tmp-'))
+  mkdirSync(join(base, 'scripts'), { recursive: true })
+  mkdirSync(join(base, 'src', 'agents'), { recursive: true })
+  mkdirSync(join(base, 'src', 'plugin'), { recursive: true })
+  writeFileSync(
+    join(base, 'scripts', 'check-generated-hook.mjs'),
+    readFileSync(HOOK_SOURCE, 'utf8'),
+  )
+  writeFileSync(
+    join(base, 'scripts', 'build-roster.mjs'),
+    "import { writeFileSync } from 'node:fs'\nwriteFileSync('src/agents/a.md', 'canonical\\n')\n",
+  )
+  writeFileSync(
+    join(base, 'scripts', 'build-plugin.mjs'),
+    "import { writeFileSync } from 'node:fs'\nwriteFileSync('src/plugin/index.js', 'canonical\\n')\n",
+  )
+  writeFileSync(join(base, 'src', 'agents', 'a.md'), 'canonical\n')
+  writeFileSync(join(base, 'src', 'plugin', 'index.js'), 'canonical\n')
+  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: base })
+  execFileSync('git', ['add', '.'], { cwd: base })
+  execFileSync(
+    'git',
+    ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-q', '-m', 'init'],
+    { cwd: base },
+  )
+
+  return {
+    base,
+    run: () =>
+      spawnSync(process.execPath, [join(base, 'scripts', 'check-generated-hook.mjs')], {
+        cwd: base,
+        encoding: 'utf8',
+        env: { ...process.env, TMPDIR: tmp },
+      }),
+    cleanup: () => {
+      rmSync(base, { recursive: true, force: true })
+      rmSync(tmp, { recursive: true, force: true })
+    },
+  }
+}
+
+test('hook behaviour: a clean generated tree exits zero and checks both generators', () => {
+  const fixture = makeHookFixture()
+  try {
+    const result = fixture.run()
+    assert.equal(result.status, 0, result.stderr)
+    assert.match(result.stderr, /checking agent roster/)
+    assert.match(result.stderr, /checking plugin bundle/)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('hook behaviour: a deleted generated file fails and still runs both generators', () => {
+  const fixture = makeHookFixture()
+  try {
+    rmSync(join(fixture.base, 'src', 'agents', 'a.md'))
+    const result = fixture.run()
+    assert.notEqual(result.status, 0, 'a deleted generated file must fail the hook')
+    assert.match(result.stderr, /missing\/deleted: src\/agents\/a\.md/)
+    assert.match(result.stderr, /checking agent roster/)
+    assert.match(result.stderr, /checking plugin bundle/)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('hook behaviour: an untracked stray under a generated dir fails and is named', () => {
+  const fixture = makeHookFixture()
+  try {
+    writeFileSync(join(fixture.base, 'src', 'agents', 'stray.md'), 'stray\n')
+    const result = fixture.run()
+    assert.notEqual(result.status, 0, 'an untracked stray must fail the hook')
+    assert.match(result.stderr, /unexpected untracked/)
+    assert.match(result.stderr, /src\/agents\/stray\.md/)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('.gitignore neutralises editor droppings under the generated trees', () => {
+  const root = fileURLToPath(new URL('..', import.meta.url))
+  for (const name of ['x.md~', 'x.md.swp', 'x.md.swo', 'x.md.orig', 'x.md.rej']) {
+    const result = spawnSync('git', ['check-ignore', '-q', `src/agents/${name}`], { cwd: root })
+    assert.equal(
+      result.status,
+      0,
+      `src/agents/${name} must be ignored, not an untracked gate failure`,
+    )
+  }
 })

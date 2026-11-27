@@ -111,31 +111,51 @@ test('CodeQL concurrency is event-scoped so schedule cannot cancel a required ma
   )
 })
 
-/** Requirement-list lines that must never present `CodeQL` as a check name. */
-const REQUIRED_CHECK_LINE = /required|must pass|status check|checks\b|bloque|obrigat/i
+/** A blank-line-delimited block that presents CodeQL as a required check. */
+const REQUIRED_PHRASE = /required|must pass|status check|checks\b|bloque|obrigat/i
+const DISCLAIMER = /not (a )?required|optional|never|default setup|não .*obrigat|opcional/i
 
-function phantomRequiredMentions(text) {
-  return text
-    .split('\n')
-    .filter((line) => /`CodeQL`|"CodeQL"/.test(line) && REQUIRED_CHECK_LINE.test(line))
+function phantomRequiredBlocks(text) {
+  const blocks = []
+  let current = []
+  const flush = () => {
+    if (current.length > 0) blocks.push(current.join(' '))
+    current = []
+  }
+  for (const line of text.split('\n')) {
+    if (line.trim() === '') flush()
+    else current.push(line)
+  }
+  flush()
+
+  return blocks.filter(
+    (block) =>
+      /`CodeQL`|"CodeQL"/.test(block) && REQUIRED_PHRASE.test(block) && !DISCLAIMER.test(block),
+  )
 }
 
-test('the backticked-CodeQL discriminator flags requirement lists and spares prose', () => {
+test('the CodeQL discriminator flags requirement blocks and spares disclaimers', () => {
   const shouldFail = [
     'Every merge must pass all 10 CI checks (`validate`, `CodeQL`).',
-    'Todos os checks de CI (`validate`, `CodeQL`, etc.).',
     'All required checks green (`validate`, `CodeQL`).',
+    // A wrapped checkbox list, the style RELEASING.md itself uses.
+    '- [ ] All required checks green on the bump PR **and on the push run for the\n      merged `main` SHA** (`validate`, `test-suite`,\n      `commitlint`, `CodeQL`)\n',
+    'The PR must pass `validate`, `test-suite`,\n`commitlint`, `CodeQL` before merging.\n',
   ]
   const shouldPass = [
+    'a `CodeQL` check; **it is not required** here',
+    '`CodeQL` is an optional extra check, not required',
+    '`CodeQL` never appears as a required check',
+    'O contexto `CodeQL` não é **obrigat**ório',
     'a bare `CodeQL` context never reports on this repository.',
     'GitHub default setup reports a single `CodeQL` check.',
     'O contexto `CodeQL` não reporta neste repositório.',
   ]
-  for (const line of shouldFail) {
-    assert.equal(phantomRequiredMentions(line).length, 1, `must flag: ${line}`)
+  for (const block of shouldFail) {
+    assert.equal(phantomRequiredBlocks(block).length, 1, `must flag: ${block}`)
   }
-  for (const line of shouldPass) {
-    assert.equal(phantomRequiredMentions(line).length, 0, `must not flag: ${line}`)
+  for (const block of shouldPass) {
+    assert.equal(phantomRequiredBlocks(block).length, 0, `must not flag: ${block}`)
   }
 })
 
@@ -152,7 +172,7 @@ test('no doc registers a bare CodeQL required context', () => {
       `docs/${rel} must not register "CodeQL" as a required context; it never reports`,
     )
     assert.deepEqual(
-      phantomRequiredMentions(text),
+      phantomRequiredBlocks(text),
       [],
       `docs/${rel} must not list \`CodeQL\` as a required check name`,
     )
