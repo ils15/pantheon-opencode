@@ -297,22 +297,92 @@ test('the protection audit rejects required contexts that never report', () => {
   const audit = jobSection('protection-audit')
   assert.match(
     audit,
-    /commits\/main\/check-runs/,
-    'required contexts must be cross-checked against the check names that really report',
+    /--paginate/,
+    'the check-runs read must paginate: >100 checks truncates and creates false phantoms',
   )
   assert.match(
     audit,
-    /::error::required contexts never reported/,
-    'a required-but-never-reporting context must fail the audit',
+    /if \[ -z "\$reporting" \]/,
+    'an empty reporting set must be a hard error, not an empty phantom list',
   )
   assert.match(
     audit,
-    /::warning::.*gh api/,
-    'missing protection must emit an actionable warning with the remediation command',
+    /::error::no check runs reported/,
+    'the empty-reporting error must be explicit',
+  )
+})
+
+test('the phantom remediation is non-destructive and names the bootstrap window', () => {
+  const audit = jobSection('protection-audit')
+  assert.match(
+    audit,
+    /Do NOT remove a context that still protects pull requests/,
+    'the remediation must not tell maintainers to delete a protecting context',
+  )
+  assert.match(
+    audit,
+    /push trigger/i,
+    'the remediation must point at a missing push trigger as the likely cause',
+  )
+  assert.match(
+    audit,
+    /bootstrap/i,
+    'the message must acknowledge the window before the first push-triggered run',
   )
   assert.doesNotMatch(
     audit,
-    /\.context\] \| any\(\. == "CodeQL"/,
-    'the audit must not accept a hardcoded context that never reports',
+    /protection\.json/,
+    'the remediation must not reference a protection payload file that does not exist',
+  )
+  assert.doesNotMatch(audit, /remove the phantom/i, 'the old destructive wording must be gone')
+  assert.doesNotMatch(audit, /-X PATCH|--method PATCH/, 'protection updates are PUT, not PATCH')
+})
+
+test('the phantom jq program is empty only for healthy protection fixtures', {
+  skip: skipWithoutJq,
+}, () => {
+  const step = stepSection(
+    jobSection('protection-audit'),
+    'Assert main branch protection matches the checks that really report',
+  )
+  const program = runBlock(step).match(/jq -r --arg names "\$reporting" '\n([\s\S]*?)\n\s*'\)"/)
+  assert.ok(program, 'the audit must compute phantom contexts from the reporting names')
+
+  const phantom = (protection, reporting) => {
+    const result = spawnSync('jq', ['-r', '--arg', 'names', reporting, program[1]], {
+      input: JSON.stringify(protection),
+      encoding: 'utf8',
+    })
+    assert.equal(result.status, 0, result.stderr)
+    return result.stdout.trim()
+  }
+  const protection = (contexts) => ({ required_status_checks: { checks: contexts } })
+
+  assert.equal(
+    phantom(
+      protection([
+        { context: 'validate' },
+        { context: 'test-suite' },
+        { context: 'Analyze (actions)' },
+      ]),
+      'validate\ntest-suite\nAnalyze (actions)',
+    ),
+    '',
+    'required contexts that all report must produce no phantom',
+  )
+  assert.equal(
+    phantom(protection([{ context: 'CodeQL' }]), 'validate\ntest-suite'),
+    'CodeQL',
+    'a required context that never reports must be a phantom',
+  )
+  assert.equal(
+    phantom(protection([{ context: 'Analyze (actions)' }]), 'validate\ntest-suite'),
+    'Analyze (actions)',
+    'a CodeQL matrix leg with no main-head run must be a phantom',
+  )
+  assert.equal(
+    phantom(protection([{ context: 'validate' }]), ''),
+    'validate',
+    'an empty reporting string must not silently satisfy required contexts',
   )
 })

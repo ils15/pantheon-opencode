@@ -123,9 +123,10 @@ the release pipeline. Confirm all of the following before the `PUT`:
       `security-scan` in `security-scan.yml`; and the `Analyze (…)` matrix
       legs in `codeql.yml` (confirm the exact names with the `check-runs`
       command above). A required context that never reports locks `main`.
-- [ ] **(b)** They all pass on current `main` (or a PR), including the push run
-      on `main`. If any fails, fix the workflow first — never enable protection
-      on a failing check.
+- [ ] **(b)** They all pass on the pull request head. The `Analyze (…)` legs
+      also pass on the push run for `main` once `codeql.yml`'s `push` trigger
+      has completed. If a check has never reported, fix the producing workflow
+      first — never enable protection on a check that has never run.
 - [ ] **(c)** Only then apply the `PUT`, and verify with
       `gh api repos/ils15/pantheon-opencode/branches/main/protection`.
 

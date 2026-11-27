@@ -15,7 +15,7 @@
  * Run: node --test tests/generated-artifacts-drift.test.mjs
  */
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { load } from 'js-yaml'
@@ -126,7 +126,7 @@ test('CI rebuilds the plugin bundle and fails on any diff', () => {
   assert.doesNotMatch(step, /continue-on-error:\s*true/, 'a stale bundle must fail the job')
 })
 
-test('pre-commit rebuilds generated artifacts and diffs them, not a trimming --check', () => {
+test('pre-commit rebuilds both generators, backs up unstaged drift, and reports both', () => {
   const localHooks = (preCommit.repos ?? []).flatMap((repo) =>
     repo.repo === 'local' ? (repo.hooks ?? []) : [],
   )
@@ -138,20 +138,25 @@ test('pre-commit rebuilds generated artifacts and diffs them, not a trimming --c
     false,
     'the hook must check the whole generated set, not only staged filenames',
   )
-  const entry = String(hook.entry)
+  assert.equal(
+    String(hook.entry).trim(),
+    'node scripts/check-generated-hook.mjs',
+    'the hook must run the checked hook script',
+  )
+
+  const scriptPath = fileURLToPath(new URL('../scripts/check-generated-hook.mjs', import.meta.url))
+  assert.ok(existsSync(scriptPath), 'scripts/check-generated-hook.mjs must exist')
+  const script = readFileSync(scriptPath, 'utf8')
+  assert.match(script, /build-roster\.mjs/, 'the hook must rebuild the roster')
+  assert.match(script, /build-plugin\.mjs/, 'the hook must rebuild the plugin bundle')
   assert.match(
-    entry,
-    /build:roster[^&]*&&\s*git diff --exit-code src\/agents/,
-    'the hook must rebuild the roster and diff it: --check trims whitespace and misses drift',
+    script,
+    /pantheon-generated-backup/,
+    'the hook must back up unstaged generated edits before the rebuild normalizes them',
   )
   assert.match(
-    entry,
-    /build:plugin[^&]*&&\s*git diff --exit-code src\/plugin/,
-    'the hook must rebuild the plugin bundle and diff it',
-  )
-  assert.doesNotMatch(
-    entry,
-    /build-roster\.mjs --check/,
-    'a trimming --check is weaker than the CI rebuild+diff gate',
+    script,
+    /process\.exit\(failed \? 1 : 0\)/,
+    'the hook must evaluate every generator before exiting non-zero',
   )
 })

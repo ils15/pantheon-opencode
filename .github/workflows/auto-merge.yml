@@ -208,7 +208,7 @@ jobs:
           # reports on main's head. Cross-check against the live check runs
           # instead of trusting a hardcoded name (e.g. "CodeQL", which never
           # reports with the advanced matrix workflow).
-          reporting="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main/check-runs?per_page=100" \
+          reporting="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/commits/main/check-runs?per_page=100" \
             --jq '.check_runs[].name')"
           if [ -z "$reporting" ]; then
             echo "::error::no check runs reported on main's head — cannot audit protection"
@@ -221,8 +221,9 @@ jobs:
             | join("; ")
           ')"
           if [ -n "$phantom" ]; then
-            echo "::error::required contexts never reported on main: $phantom"
-            echo "::warning::remediate manually (external config, do not automate): remove the phantom context(s) with: gh api -X PATCH repos/${GITHUB_REPOSITORY}/branches/main/protection --input protection.json"
+            echo "::error::required context(s) never reported on main's head: $phantom"
+            echo "::warning::for each context above: inspect the workflow that should produce it (gh api repos/${GITHUB_REPOSITORY}/actions/workflows --jq '.workflows[].path'). If that workflow lacks a push trigger on main, add one (see codeql.yml). Do NOT remove a context that still protects pull requests."
+            echo "::warning::bootstrap window: until the first push-triggered run on main completes, a newly added context legitimately has no main-head check run — re-run this audit after that push run finishes."
             exit 1
           fi
 
@@ -234,6 +235,6 @@ jobs:
           ')"
           if [ -n "$missing" ]; then
             echo "::warning::main protection is missing documented checks: $missing"
-            echo "::warning::apply manually (external config, do not automate): add them with: gh api -X PUT repos/${GITHUB_REPOSITORY}/branches/main/protection --input protection.json (missing: $missing)"
+            echo "::warning::apply manually (external config, do not automate): add them with the PUT documented in docs/BRANCH-PROTECTION.md (missing: $missing)"
           fi
           printf '%s\n' "$protection" | jq -r '.required_status_checks.checks[].context'

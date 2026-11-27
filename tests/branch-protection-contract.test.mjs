@@ -79,7 +79,44 @@ test('every documented required check exists as a real workflow job', () => {
   }
 })
 
-test('docs register the CodeQL contexts that really report, not a phantom', () => {
+test('CodeQL has a push trigger on main so main-head checks can report', () => {
+  const codeql = workflows.get('codeql.yml')
+  assert.ok(codeql, 'codeql.yml must exist')
+  assert.match(
+    codeql,
+    /^ {2}push:\n {4}branches: \[ "main" \]$/m,
+    'without a push trigger, Analyze (…) never reports on main and the audit false-positives',
+  )
+  for (const language of ['actions', 'javascript-typescript', 'python']) {
+    assert.match(
+      codeql,
+      new RegExp(`^ {8}- language: ${language}$`, 'm'),
+      `the CodeQL matrix must keep the ${language} leg`,
+    )
+  }
+})
+
+test('no doc registers a bare CodeQL required context', () => {
+  const docsDir = fileURLToPath(new URL('../docs/', import.meta.url))
+  const docs = readdirSync(docsDir, { recursive: true }).filter((entry) => entry.endsWith('.md'))
+  assert.ok(docs.length > 0, 'the docs tree must not be empty')
+
+  for (const rel of docs) {
+    const text = readFileSync(`${docsDir}${rel}`, 'utf8')
+    assert.doesNotMatch(
+      text,
+      /"CodeQL"/,
+      `docs/${rel} must not register "CodeQL" as a required context; it never reports`,
+    )
+  }
+
+  const ptBranchProtection = read('docs/pt-BR/BRANCH-PROTECTION.md')
+  for (const name of CODEQL_CHECKS) {
+    assert.ok(ptBranchProtection.includes(`"${name}"`), `the pt-BR payload must register ${name}`)
+  }
+})
+
+test('the docs register the CodeQL contexts that really report, not a phantom', () => {
   assert.doesNotMatch(
     branchProtection,
     /\{"context": "CodeQL"\}/,
