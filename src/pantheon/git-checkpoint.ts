@@ -8,6 +8,7 @@
  */
 
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, rmSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -34,10 +35,14 @@ const SAFE_TREE_RE = /^[0-9a-f]{40}$/
 const PANTHEON_RUNTIME_PATHS = ['.pantheon'] as const
 
 /**
- * Anchors: `<refs/pantheon/step-baselines>/<stepKey>` points at a commit that
- * wraps the checkpoint tree, so Git GC cannot prune a live baseline. Without a
- * ref, baselines are dangling trees that normal expiry (2 weeks by default)
- * silently discards — which makes a later `rollback_step` impossible.
+ * Anchors: `<refs/pantheon/step-baselines>/<readable>-<hash>` points at a commit
+ * that wraps the checkpoint tree, so Git GC cannot prune a live baseline. The
+ * hash suffix makes the mapping injective: legal step keys that sanitize to the
+ * same readable prefix (`auth:1`, `auth_1`) get distinct refs instead of
+ * silently sharing one.
+ *
+ * Without a ref, baselines are dangling trees that normal expiry (2 weeks by
+ * default) silently discards — which makes a later `rollback_step` impossible.
  */
 const BASELINE_REF_PREFIX = 'refs/pantheon/step-baselines/'
 
@@ -57,8 +62,12 @@ function isPantheonRuntimePath(rel: string): boolean {
 }
 
 export function baselineRefName(stepKey: string): string {
-  const safeTag = stepKey.replace(/[^a-zA-Z0-9._-]/g, '_') || 'step'
-  return `${BASELINE_REF_PREFIX}${safeTag}`
+  // Injective and readable: the sanitized prefix stays legible, the hash suffix
+  // prevents legal keys that sanitize to the same string (`auth:1` vs `auth_1`)
+  // from sharing a ref and silently de-anchoring each other's baseline.
+  const readable = stepKey.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 96) || 'step'
+  const digest = createHash('sha256').update(stepKey).digest('hex').slice(0, 12)
+  return `${BASELINE_REF_PREFIX}${readable}-${digest}`
 }
 
 /** Drop `.pantheon/` entries from the isolated index before writing/checking out a tree. */
@@ -185,6 +194,10 @@ export interface BaselineAnchor {
  * it reachable and makes checkpoints enumerable (`git for-each-ref
  * refs/pantheon/step-baselines`). The commit is deterministic (fixed identity and
  * date), so re-anchoring the same tree is a no-op.
+ *
+ * Note: anchored refs are permanent — nothing prunes them. `git push --mirror`
+ * does transfer `refs/pantheon/*`, and `entry.baselineTree` remains
+ * authoritative, so an older ledger keeps working after a ref-name change.
  */
 export async function anchorCheckpointTree(
   cwd: string,

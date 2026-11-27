@@ -24,6 +24,7 @@ import test from 'node:test'
 import { pathToFileURL } from 'node:url'
 import { getSharedBus } from '../../src/pantheon/bus.ts'
 import {
+  baselineRefName,
   captureGitCheckpoint,
   checkpointTreeExists,
   listAnchoredBaselines,
@@ -1230,7 +1231,7 @@ test('L3 scrub rewrites legacy checkpoints without .pantheon and leaves them GC-
     assert.notEqual(scrubbed.rewritten[0]?.to, legacyTree)
     // Legacy entries are anchored by the scrub (their migration path).
     assert.equal(scrubbed.anchored.length, 1)
-    assert.equal(scrubbed.anchored[0]?.ref, 'refs/pantheon/step-baselines/l3-a')
+    assert.equal(scrubbed.anchored[0]?.ref, baselineRefName('l3-a'))
 
     const store = readStepLedger(dir)
     const rewrittenTree = String(store.steps['l3-a']?.baselineTree)
@@ -1284,11 +1285,15 @@ test('F1 an anchored baseline survives aggressive GC and can still be rolled bac
     assert.equal(init.ok, true)
     const entry = readStepLedger(dir).steps['anchor-a']
     assert.ok(entry?.baselineTree)
-    assert.equal(entry.baselineRef, 'refs/pantheon/step-baselines/anchor-a')
+    assert.equal(entry.baselineRef, baselineRefName('anchor-a'))
+    assert.match(
+      String(entry.baselineRef),
+      /^refs\/pantheon\/step-baselines\/anchor-a-[0-9a-f]{12}$/,
+    )
 
     const anchors = await listAnchoredBaselines(dir)
     assert.equal(anchors.length, 1)
-    assert.equal(anchors[0]?.ref, 'refs/pantheon/step-baselines/anchor-a')
+    assert.equal(anchors[0]?.ref, baselineRefName('anchor-a'))
     assert.equal(anchors[0]?.tree, entry.baselineTree)
 
     // The baseline is reachable, so even `--prune=now` cannot delete it.
@@ -1364,6 +1369,39 @@ test('F2 the runtime-state predicate matches the exact `.pantheon` name (file an
 })
 
 // ── D1 — the restore guard (second layer) ────────────────────────────────
+
+test('F5 ref names are injective: auth:1 and auth_1 keep separate baselines', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-dep-injective-'))
+  try {
+    initGitRepo(dir)
+    const tool = makeTool(dir)
+    const ctx = { directory: dir }
+
+    for (const stepKey of ['auth:1', 'auth_1']) {
+      const init = await call(tool, { action: 'init_step', stepKey, objective: stepKey }, ctx)
+      assert.equal(init.ok, true, `${stepKey}: ${String(init.error)}`)
+    }
+
+    const store = readStepLedger(dir)
+    const colonRef = store.steps['auth:1']?.baselineRef
+    const underscoreRef = store.steps['auth_1']?.baselineRef
+    assert.ok(colonRef)
+    assert.ok(underscoreRef)
+    assert.notEqual(colonRef, underscoreRef, 'legal keys must not share a ref')
+    for (const ref of [colonRef, underscoreRef]) {
+      assert.match(ref, /^refs\/pantheon\/step-baselines\/auth_[0-9]+-[0-9a-f]{12}$/)
+    }
+
+    const anchors = await listAnchoredBaselines(dir)
+    assert.equal(anchors.length, 2)
+    assert.deepEqual(anchors.map((entry) => entry.ref).sort(), [colonRef, underscoreRef].sort())
+    // Each ledger entry still owns its own tree (baselineTree is authoritative).
+    assert.ok(store.steps['auth:1']?.baselineTree)
+    assert.ok(store.steps['auth_1']?.baselineTree)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
 
 test('D1 the restore guard merges a clobbered ledger back without losing concurrent work', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pantheon-dep-guard-'))

@@ -91,6 +91,69 @@ test('F3 blocks a path named exactly .pantheon (file and symlink)', () => {
   }
 })
 
+test('F4 the guard blocks what .gitignore still ignores, including directory-enabler holes', () => {
+  const dir = makeRepo()
+  try {
+    // `!.pantheon/memory-bank/` is a directory enabler, and
+    // `!.pantheon/code-mode/` must not un-ignore a nested `.pantheon/`.
+    const blocked = [
+      '.pantheon/memory-bank/memory.db',
+      '.pantheon/memory-bank/MEMORY.md',
+      '.pantheon/code-mode/.pantheon/state.json',
+    ]
+    for (const rel of blocked) write(dir, rel, 'runtime\n')
+    for (const rel of blocked) stage(dir, rel, { force: true })
+
+    const result = runHook(dir, blocked)
+    assert.equal(result.code, 1, result.output)
+    for (const rel of blocked) {
+      assert.ok(result.output.includes(rel), `message must name ${rel}`)
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('F4 the guard allows what .gitignore un-ignores (code-mode payload, ADRs)', () => {
+  const dir = makeRepo()
+  try {
+    const allowedPaths = [
+      '.pantheon/code-mode/foo.ts',
+      '.pantheon/code-mode/compress-inline.py',
+      '.pantheon/memory-bank/adr/0003-decision.md',
+    ]
+    write(dir, '.pantheon/code-mode/foo.ts', 'export const x = 1\n')
+    write(dir, '.pantheon/code-mode/compress-inline.py', 'print(1)\n')
+    write(dir, '.pantheon/memory-bank/adr/0003-decision.md', '# ADR\n')
+    for (const rel of allowedPaths) stage(dir, rel)
+
+    const result = runHook(dir, allowedPaths)
+    assert.equal(result.code, 0, result.output)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('F6 a repository without commits fails closed with an actionable message', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-runtime-guard-unborn-'))
+  try {
+    copyFileSync(join(repoRoot, '.gitignore'), join(dir, '.gitignore'))
+    execFileSync('git', ['init', '-q'], { cwd: dir })
+    execFileSync('git', ['config', 'user.email', 'guard@test'], { cwd: dir })
+    execFileSync('git', ['config', 'user.name', 'Guard Test'], { cwd: dir })
+    write(dir, '.pantheon/ledger/step-ledger.json', '{}\n')
+    stage(dir, '.pantheon/ledger/step-ledger.json', { force: true })
+
+    const result = runHook(dir, [])
+    assert.equal(result.code, 1, result.output)
+    assert.match(result.output, /no commits yet/)
+    assert.match(result.output, /allow-empty/)
+    assert.match(result.output, /SKIP=pantheon-runtime-state/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('F3 allows the versioned exceptions derived from .gitignore un-ignore rules', () => {
   const dir = makeRepo()
   try {

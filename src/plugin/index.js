@@ -14260,6 +14260,7 @@ function createBoardTool(fallbackDir) {
 
 // src/pantheon/git-checkpoint.ts
 import { execFile as execFile3 } from "node:child_process";
+import { createHash as createHash6 } from "node:crypto";
 import { existsSync as existsSync13, mkdirSync as mkdirSync8, rmSync as rmSync2, unlinkSync as unlinkSync3 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
 import { join as join18, resolve as resolve14 } from "node:path";
@@ -14280,8 +14281,9 @@ function isPantheonRuntimePath(rel) {
   return rel === ".pantheon" || rel.startsWith(".pantheon/");
 }
 function baselineRefName(stepKey) {
-  const safeTag = stepKey.replace(/[^a-zA-Z0-9._-]/g, "_") || "step";
-  return `${BASELINE_REF_PREFIX}${safeTag}`;
+  const readable = stepKey.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 96) || "step";
+  const digest = createHash6("sha256").update(stepKey).digest("hex").slice(0, 12);
+  return `${BASELINE_REF_PREFIX}${readable}-${digest}`;
 }
 async function dropPantheonRuntimeState(root, tmpIndex) {
   await runGit(
@@ -15520,9 +15522,9 @@ ${d.patch || "(empty diff)"}`)
 }
 
 // src/pantheon/execution-receipt.ts
-import { createHash as createHash6 } from "node:crypto";
+import { createHash as createHash7 } from "node:crypto";
 function hashContent2(content) {
-  return createHash6("sha256").update(content).digest("hex");
+  return createHash7("sha256").update(content).digest("hex");
 }
 function computeReceiptSignature(taskID, agent, timestamp, files) {
   const sortedFiles = [...files].sort((a, b) => a.path.localeCompare(b.path));
@@ -15532,7 +15534,7 @@ function computeReceiptSignature(taskID, agent, timestamp, files) {
     String(timestamp),
     sortedFiles.map((f) => `${f.path}:${f.hash}`).join(";")
   ].join("|");
-  return createHash6("sha256").update(payload).digest("hex");
+  return createHash7("sha256").update(payload).digest("hex");
 }
 function createExecutionReceipt(input) {
   const timestamp = Date.now();
@@ -19237,7 +19239,7 @@ function createAstTools(fallbackDir) {
 }
 
 // src/pantheon/codemap-tools.ts
-import { createHash as createHash7 } from "node:crypto";
+import { createHash as createHash8 } from "node:crypto";
 import { existsSync as existsSync19, mkdirSync as mkdirSync12, readdirSync as readdirSync6, readFileSync as readFileSync17, realpathSync as realpathSync9, statSync as statSync8 } from "node:fs";
 import { extname as extname4, join as join25, relative as relative6, resolve as resolve20, sep as sep9 } from "node:path";
 import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
@@ -19572,7 +19574,7 @@ function createCodemapTools(fallbackDir) {
             if (!lang) continue;
             const relFile = relative6(canonicalRoot, filePath).replace(/\\/g, "/");
             const content = readFileSync17(filePath, "utf8");
-            const hash = createHash7("sha256").update(content).digest("hex");
+            const hash = createHash8("sha256").update(content).digest("hex");
             const existing = db.prepare("SELECT hash FROM code_files WHERE path = ?").get(relFile);
             if (!force && existing?.hash === hash) {
               skipped += 1;

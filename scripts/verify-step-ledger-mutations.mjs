@@ -29,6 +29,7 @@ const TSX = join(root, 'node_modules', 'tsx', 'dist', 'cli.mjs')
 const LEDGER = 'src/pantheon/step-ledger.ts'
 const DEPS = 'src/pantheon/step-dependencies.ts'
 const CHECKPOINT = 'src/pantheon/git-checkpoint.ts'
+const HOOK = 'scripts/hooks/check-pantheon-runtime-staged.mjs'
 
 /**
  * @type {Array<{
@@ -307,6 +308,31 @@ const MUTANTS = [
       },
     ],
   },
+  {
+    id: 'F4-check-ignore-allowlist-removed',
+    description: 'the guard stops asking .gitignore and blocks nothing but tracked paths',
+    expect: 'F4 the guard blocks what .gitignore still ignores',
+    slice: 'tests/pantheon/precommit-runtime-guard.test.mjs',
+    edits: [
+      {
+        file: HOOK,
+        from: '  if (isIgnored) blocked.push(path)',
+        to: '  if (false) blocked.push(path)',
+      },
+    ],
+  },
+  {
+    id: 'F5-key-encoding-removed',
+    description: 'ref names fall back to lossy sanitization (auth:1 collides with auth_1)',
+    expect: 'F5 ref names are injective',
+    edits: [
+      {
+        file: CHECKPOINT,
+        from: "  const readable = stepKey.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 96) || 'step'\n  const digest = createHash('sha256').update(stepKey).digest('hex').slice(0, 12)\n  return `${BASELINE_REF_PREFIX}${readable}-${digest}`",
+        to: "  return `${BASELINE_REF_PREFIX}${stepKey.replace(/[^a-zA-Z0-9._-]/g, '_')}`",
+      },
+    ],
+  },
 ]
 
 function parseArgs(argv) {
@@ -319,9 +345,9 @@ function parseArgs(argv) {
   return options
 }
 
-function runSlice() {
+function runSlice(slice = SLICE) {
   try {
-    return execFileSync(process.execPath, [TSX, SLICE], {
+    return execFileSync(process.execPath, [TSX, slice], {
       cwd: root,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -379,7 +405,7 @@ for (const mutant of selected) {
     copyFileSync(firstFile, backupPath)
     originals = applyEdits(mutant)
     for (let run = 1; run <= options.runs; run += 1) {
-      const output = runSlice()
+      const output = runSlice(mutant.slice)
       if (!/ℹ (tests|pass) \d/.test(output)) {
         failures += 1
         console.log(`FAIL  ${mutant.id} [run ${run}] — mutant crashed, expectation unproven`)

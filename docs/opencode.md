@@ -124,16 +124,22 @@ A step may declare prerequisites with `dependsOn`:
   unreachable for Git's normal expiry to reclaim.
 - **Every baseline is anchored, so GC cannot eat it.** `init_step` wraps the
   baseline tree in a parentless commit and points
-  `refs/pantheon/step-baselines/<stepKey>` at it (`baselineRef` on the entry), which
-  makes checkpoints reachable and — for the first time — enumerable
-  (`git for-each-ref refs/pantheon/step-baselines`). A plain tree is a dangling
-  object that Git's default two-week expiry silently deletes, which would make a
-  later rollback impossible. Do **not** run `git gc --prune=now` to clean up after a
-  scrub: it also deletes any baseline that has not been anchored yet. Normal `git gc`
-  is safe. Legacy entries (created before anchoring) get their ref on the next
-  `scrub_checkpoints`, which is their migration path; `rollback_step` reports
-  `baseline_missing` (with the tree SHA and the ref, when known) instead of
-  silently restoring nothing.
+  `refs/pantheon/step-baselines/<key>-<hash>` at it (`baselineRef` on the entry),
+  which makes checkpoints reachable and — for the first time — enumerable
+  (`git for-each-ref refs/pantheon/step-baselines`). The `<hash>` suffix keeps the
+  mapping injective for keys that sanitize alike (`auth:1` vs `auth_1`). A plain
+  tree is a dangling object that Git's default two-week expiry silently deletes,
+  which would make a later rollback impossible. Do **not** run
+  `git gc --prune=now` to clean up after a scrub: it also deletes any baseline that
+  has not been anchored yet. Normal `git gc` is safe. Legacy entries (created
+  before anchoring) get their ref on the next `scrub_checkpoints`, which is their
+  migration path; `rollback_step` reports `baseline_missing` (with the tree SHA and
+  the ref, when known) instead of silently restoring nothing. Anchored refs are
+  **permanent**: nothing prunes them, there is one per step key, and they are
+  retained forever (a future `prune` action could drop refs for removed steps —
+  not implemented). `git push --mirror` transfers `refs/pantheon/*` to the
+  destination, so a mirror clone/fetch carries the step keys with it; a normal
+  `git push`/`push --all` does not.
 - **Concurrency.** The ledger is a single JSON file, so every mutation goes through
   `updateStepLedger`: a lock file `.pantheon/ledger/.step-ledger.lock` holding a
   unique `<pid>:<uuid>` owner token, acquired with `open(..., 'wx')`. A stale lock
