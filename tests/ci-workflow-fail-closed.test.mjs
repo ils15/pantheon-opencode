@@ -458,9 +458,21 @@ test('no workflow installs the TUI plugin separately from the root lockfile', ()
 
   // Guard the other direction: the dist-freshness build is NOT an install and
   // must survive, or the "stale TUI bundle" check would silently disappear.
+  // The build itself now lives in `scripts/check-tui-dist.mjs` (one
+  // implementation shared by the npm script and CI), so pin both halves: the
+  // workflow must still run that step, and the step must still build.
   assert.match(
     workflow,
+    /node scripts\/check-tui-dist\.mjs/,
+    'the TUI dist-freshness step must remain; it is a build, not an install',
+  )
+  const tuiDistCheckScript = readFileSync(
+    fileURLToPath(new URL('../scripts/check-tui-dist.mjs', import.meta.url)),
+    'utf8',
+  )
+  assert.match(
+    tuiDistCheckScript,
     /npm run build --prefix src\/plugins\/tui/,
-    'the TUI dist-freshness build step must remain; it is a build, not an install',
+    'the TUI dist-freshness build must survive inside check-tui-dist.mjs; it is a build, not an install',
   )
 })

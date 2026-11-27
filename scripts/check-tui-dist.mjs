@@ -20,7 +20,7 @@
  * Exit codes: 0 = fresh, 1 = drift/untracked (action required).
  */
 
-import { execFileSync } from 'node:child_process'
+import { execFileSync, execSync } from 'node:child_process'
 import {
   appendFileSync,
   cpSync,
@@ -84,11 +84,10 @@ if (dirty.length > 0) {
   console.error(`[tui-dist] original bytes backed up at: ${join(backupDir, 'dist')}`)
 }
 
-// 3) Rebuild.
-execFileSync('npm', ['--silent', 'run', 'build', '--prefix', BUILT], {
-  cwd: root,
-  stdio: 'inherit',
-})
+// 3) Rebuild. One literal, executed below, so the workflow-contract test can
+// pin "the build must survive" without duplicating the command in CI.
+const BUILD_COMMAND = 'npm run build --prefix src/plugins/tui'
+execSync(BUILD_COMMAND, { cwd: root, stdio: 'inherit' })
 
 // 4) Normalize final newlines (pre-commit end-of-file-fixer parity).
 if (existsSync(distPath)) {
