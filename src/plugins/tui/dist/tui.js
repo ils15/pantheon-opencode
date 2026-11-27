@@ -705,15 +705,20 @@ Object.freeze([
 * Defaults to 'pt-BR' if system locale contains 'pt', if Intl locale is pt,
 * or if system timezone is Brazilian/Portuguese; otherwise 'en'.
 */
-function resolveLanguage(preference = "auto", env = process.env) {
+function resolveLanguage(preference = "auto", env = typeof process !== "undefined" ? process.env : void 0) {
 	if (preference === "pt-BR") return "pt-BR";
 	if (preference === "en") return "en";
-	if ((env.LC_ALL ?? env.LC_MESSAGES ?? env.LANG ?? env.LANGUAGE ?? "").toLowerCase().startsWith("pt")) return "pt-BR";
+	if (env) {
+		if ((env.LC_ALL ?? env.LC_MESSAGES ?? env.LANG ?? env.LANGUAGE ?? "").toLowerCase().startsWith("pt")) return "pt-BR";
+	}
+	try {
+		if ((typeof navigator !== "undefined" && typeof navigator.language === "string" ? navigator.language : "").toLowerCase().startsWith("pt")) return "pt-BR";
+	} catch {}
 	try {
 		if (Intl.DateTimeFormat().resolvedOptions().locale.toLowerCase().startsWith("pt")) return "pt-BR";
 	} catch {}
 	try {
-		const tz = (env.TZ ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? "").toLowerCase();
+		const tz = (env?.TZ ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? "").toLowerCase();
 		if (tz.includes("sao_paulo") || tz.includes("brazil") || tz.includes("fortaleza") || tz.includes("recife") || tz.includes("manaus") || tz.includes("belem") || tz.includes("cuiaba") || tz.includes("campo_grande") || tz.includes("porto_velho") || tz.includes("rio_branco") || tz.includes("boa_vista") || tz.includes("maceio") || tz.includes("bahia") || tz.includes("noronha") || tz.includes("araguaina") || tz.includes("santarem") || tz.includes("lisbon") || tz.includes("madeira") || tz.includes("azores")) return "pt-BR";
 	} catch {}
 	return "en";

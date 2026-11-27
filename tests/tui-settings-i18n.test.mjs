@@ -39,6 +39,23 @@ describe('TUI settings i18n resolution', () => {
     assert.equal(resolveLanguage(undefined, { TZ: 'America/Fortaleza' }), 'pt-BR')
   })
 
+  it('detects pt-BR from navigator.language when env has no LANG', () => {
+    const prevDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+    try {
+      Object.defineProperty(globalThis, 'navigator', {
+        configurable: true,
+        value: { language: 'pt-BR' },
+      })
+      assert.equal(resolveLanguage('auto', { LANG: 'C.UTF-8', TZ: 'UTC' }), 'pt-BR')
+    } finally {
+      if (prevDescriptor) {
+        Object.defineProperty(globalThis, 'navigator', prevDescriptor)
+      } else {
+        delete globalThis.navigator
+      }
+    }
+  })
+
   it('translates known entries using t helper', async () => {
     const { I18N } = await import('../src/plugins/tui/src/settings-i18n.ts')
     assert.equal(t(I18N.tabs.decision, 'pt-BR'), 'Decisão (Jev)')
