@@ -134,6 +134,32 @@ const CONTRACT_SLICES = [
     command: (file) => `node scripts/redaction-gate.mjs ${file}`,
     selection: 'shipped-script redaction gate (tarball payload)',
   },
+  // Source files whose suites are named after the feature, not the file.
+  {
+    pattern: /^src\/pantheon\/(?:step-ledger|step-dependencies)\.ts$/,
+    command: 'npx tsx tests/pantheon/step-ledger-dependencies.test.ts',
+    selection: 'step-ledger + dependency contracts',
+  },
+  {
+    pattern: /^src\/pantheon\/(?:step-runner|git-checkpoint)\.ts$/,
+    command: 'npx tsx tests/pantheon/step-runner-and-checkpoint.test.ts',
+    selection: 'step runner + git checkpoint',
+  },
+  {
+    pattern: /^src\/pantheon\/reproduction-gate\.ts$/,
+    command: 'npx tsx tests/pantheon/pillars-3-4-5.test.ts',
+    selection: 'reproduction gate (bugfix RED gate)',
+  },
+  {
+    pattern: /^src\/plugins\/tui\/(?:src\/)?[^/]+$/,
+    command: 'node --test tests/tui-cockpit.test.mjs',
+    selection: 'TUI cockpit selector suite',
+  },
+  {
+    pattern: /^(?:src\/plugin\/index\.js|src\/plugins\/tui\/dist\/.+)$/,
+    command: 'npm run check:generated',
+    selection: 'generated-artifact freshness (rebuild must be a no-op)',
+  },
 ]
 
 /** True when `filePath` has an explicit contract slice. */
