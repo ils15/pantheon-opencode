@@ -36,8 +36,21 @@
  */
 
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, rmSync, unlinkSync } from 'node:fs'
+import { createHash, randomUUID } from 'node:crypto'
+import {
+  closeSync,
+  existsSync,
+  linkSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  utimesSync,
+  writeSync,
+} from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { appendBoardMessage } from './board-messages.ts'
@@ -48,9 +61,7 @@ import {
   describeLedgerError,
   type EphemeralStepMetadata,
   readStepLedger,
-  StepLedgerLockError,
   updateStepLedger,
-  withExclusiveLedgerLock,
 } from './step-ledger.ts'
 import { resolveSharedPantheonRoot } from './tool-context.ts'
 import { resolvePantheonWorktreePath } from './worktree-orchestrator.ts'
@@ -72,6 +83,18 @@ const MERGE_TREE_MIN_GIT: readonly [number, number] = [2, 38]
  * also making the merge lock unreachable, so the two failures stay separable.
  */
 const MERGE_LOCK_NAME = '.ephemeral-merge.lock'
+/** How long a peer waits for the window before giving up (`merge_busy`). */
+const MERGE_LOCK_WAIT_MS = 1_500
+/** mtime refresh cadence while the window is held. */
+const MERGE_LOCK_HEARTBEAT_MS = 1_000
+/**
+ * Last-resort stale threshold: **far** above the worst-case window (checkpoint +
+ * squash + user pre-commit hooks). The ledger lock's 2 s break is wrong here —
+ * it would let a peer steal a live merge and then erase its content. Liveness
+ * (owner pid) is the primary signal; this only covers pid reuse / unreadable
+ * owners.
+ */
+const MERGE_LOCK_STALE_MS = 10 * 60 * 1000
 
 /**
  * `.pantheon/` is live runtime state, never work-tree state (same predicate as
@@ -120,6 +143,12 @@ export interface MergeEphemeralInput {
    */
   readonly onBeforeMerge?: () => Promise<void> | void
   /**
+   * Deterministic seam for the eviction window: runs immediately after the
+   * squash lands and before the post-window ownership re-check and the ledger
+   * write, so a test can prove that an evicted writer refuses to report success.
+   */
+  readonly onAfterMerge?: () => Promise<void> | void
+  /**
    * Deterministic seam for the lock-wait window: runs immediately after the
    * merge lock is acquired and before the state is re-verified, so a test can
    * prove that a writer who moved HEAD while we queued is detected. Never called
@@ -137,6 +166,8 @@ export interface MergeEphemeralResult {
   readonly hint?: string
   readonly branch?: string
   readonly baseHead?: string
+  /** The reviewed commit that was actually merged (audit trail). */
+  readonly branchSha?: string
   readonly head?: string
   readonly commits?: number
   readonly changes?: readonly string[]
@@ -176,7 +207,6 @@ export interface MergeEphemeralResult {
 }
 
 export interface MergeRecovery {
-  readonly aborted: boolean
   readonly resetApplied: boolean
   /** The worktree content is byte-identical to the pre-merge checkpoint. */
   readonly treeRestored: boolean
@@ -535,6 +565,8 @@ export interface MergeFingerprint {
   readonly stepKey: string
   readonly branch: string
   readonly baseHead: string
+  /** The exact commit that was reviewed; a force-push changes it (and the token). */
+  readonly branchSha: string
   readonly head: string
   readonly diffDigest: string
 }
@@ -551,7 +583,14 @@ export async function mergeStatusFingerprint(root: string): Promise<string> {
   return statusFingerprint(status.value)
 }
 
-/** `MERGE-<sha256(stepKey|branch|baseHead|headNow|diffDigest)[:12]>` (D06). */
+/**
+ * `MERGE-<sha256(stepKey|branch|baseHead|branchSha|headNow|diffDigest)[:12]>` (D06).
+ *
+ * The reviewed commit sha is part of the digest, not just the content diff: a
+ * force-push to a *different commit* invalidates the token even when the patch
+ * would look identical, and the merge itself is pinned to that sha so a ref that
+ * moves inside the window cannot change what lands.
+ */
 export function computeMergeToken(fingerprint: MergeFingerprint): string {
   const digest = createHash('sha256')
     .update(
@@ -559,6 +598,7 @@ export function computeMergeToken(fingerprint: MergeFingerprint): string {
         fingerprint.stepKey,
         fingerprint.branch,
         fingerprint.baseHead,
+        fingerprint.branchSha,
         fingerprint.head,
         fingerprint.diffDigest,
       ].join('|'),
@@ -680,16 +720,18 @@ async function removeMergeArtifacts(root: string): Promise<void> {
 export async function recoverFromFailedMerge(
   root: string,
   preMerge: { readonly treeHash?: string; readonly statusFingerprint: string },
-  options: { readonly ownedMergeState?: boolean } = {},
 ): Promise<MergeRecovery> {
   const notes: string[] = []
-  let aborted = false
   let resetApplied = false
 
+  // A `git merge --squash` never creates MERGE_HEAD (verified on git 2.43, and
+  // the reason the recovery path is written around `reset --merge`). So an
+  // in-progress merge found here belongs to someone else, and aborting or
+  // resetting it would destroy their work to clean up our failure: report it and
+  // touch nothing. There is no "owned MERGE_HEAD" case to support.
   const stateBefore = await inspectMergeState(root)
-  if (stateBefore.mergeHead && options.ownedMergeState !== true) {
+  if (stateBefore.mergeHead) {
     return {
-      aborted: false,
       resetApplied: false,
       treeRestored: false,
       compensated: false,
@@ -700,12 +742,6 @@ export async function recoverFromFailedMerge(
         'a merge this call did not start is in progress (MERGE_HEAD present); it was left untouched',
       ],
     }
-  }
-
-  if (stateBefore.mergeHead) {
-    const abort = await git(root, ['merge', '--abort'])
-    aborted = abort.ok
-    if (!abort.ok) notes.push(`git merge --abort failed: ${firstLine(abort.stderr)}`)
   }
 
   const reset = await git(root, ['reset', '--merge'])
@@ -758,7 +794,6 @@ export async function recoverFromFailedMerge(
   const mergeStatePresent = state.mergeHead || state.mergeMsg
 
   return {
-    aborted,
     resetApplied,
     treeRestored,
     compensated,
@@ -773,6 +808,178 @@ export async function recoverFromFailedMerge(
         }
       : {}),
     notes,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Merge mutex — a lock that is safe to hold for seconds
+// ---------------------------------------------------------------------------
+
+/**
+ * Why this is not the ledger lock.
+ *
+ * `acquireLedgerLock` breaks a lock older than 2 s. That is right for a
+ * ledger write (milliseconds) and wrong for a merge window, which contains a
+ * checkpoint, the squash, and — with `commit: true` — the user's pre-commit
+ * hooks. Reusing it let a peer steal a *live* window and land a second merge
+ * whose content the first writer's recovery then erased.
+ *
+ * This lock therefore: (1) breaks on **liveness** (the owner pid is gone) rather
+ * than on age, (2) tolerates `MERGE_LOCK_STALE_MS` (10 min) before an age-based
+ * break, (3) refreshes its mtime every second while held, and (4) is
+ * re-verified before the squash and again before the ledger write, so an evicted
+ * writer aborts (`lock_lost`) instead of mutating or reporting success.
+ */
+export type MergeLockErrorCode = 'merge_busy' | 'lock_lost'
+
+export class MergeLockError extends Error {
+  readonly code: MergeLockErrorCode
+  constructor(code: MergeLockErrorCode, message: string) {
+    super(message)
+    this.name = 'MergeLockError'
+    this.code = code
+  }
+}
+
+interface MergeLockHandle {
+  readonly path: string
+  readonly token: string
+  readonly stopHeartbeat: () => void
+}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function mergeLockToken(path: string): string | undefined {
+  try {
+    return readFileSync(path, 'utf8').trim() || undefined
+  } catch {
+    return undefined
+  }
+}
+
+function mergeLockPid(token: string | undefined): number | undefined {
+  const [pid] = (token ?? '').split(':')
+  const parsed = Number(pid)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined
+}
+
+/** True when the pid exists *and* we may signal it (EPERM means it is alive). */
+function pidIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (err: unknown) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+/** Break a lock only if the token we observed is still the file's token. */
+function breakStaleMergeLock(path: string, observed: string): void {
+  const quarantine = `${path}.stale.${process.pid}.${Date.now()}`
+  try {
+    renameSync(path, quarantine)
+  } catch {
+    return
+  }
+  if (mergeLockToken(quarantine) !== observed) {
+    // A live writer replaced it between our read and the rename: put it back.
+    try {
+      linkSync(quarantine, path)
+    } catch {
+      /* a newer lock already occupies the path */
+    }
+    try {
+      unlinkSync(quarantine)
+    } catch {
+      /* best effort */
+    }
+    return
+  }
+  try {
+    unlinkSync(quarantine)
+  } catch {
+    /* best effort */
+  }
+}
+
+async function acquireMergeLock(path: string): Promise<MergeLockHandle> {
+  const token = `${process.pid}:${randomUUID()}:${Date.now()}`
+  const deadline = Date.now() + MERGE_LOCK_WAIT_MS
+  for (;;) {
+    try {
+      const fd = openSync(path, 'wx')
+      try {
+        writeSync(fd, `${token}\n`)
+      } finally {
+        closeSync(fd)
+      }
+      const timer = setInterval(() => {
+        // Refresh only our own lock; a stolen path belongs to someone else now.
+        if (mergeLockToken(path) !== token) return
+        try {
+          const now = new Date()
+          utimesSync(path, now, now)
+        } catch {
+          /* the file vanished; the ownership checks will notice */
+        }
+      }, MERGE_LOCK_HEARTBEAT_MS)
+      timer.unref()
+      return {
+        path,
+        token,
+        stopHeartbeat: () => clearInterval(timer),
+      }
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+    }
+
+    const observed = mergeLockToken(path)
+    if (mergeLockPid(observed) === process.pid) {
+      throw new MergeLockError('merge_busy', `another apply in this process holds ${path}`)
+    }
+    const ownerPid = mergeLockPid(observed)
+    if (ownerPid !== undefined && !pidIsAlive(ownerPid)) {
+      breakStaleMergeLock(path, observed ?? '')
+      continue
+    }
+    let age: number | undefined
+    try {
+      age = Date.now() - statSync(path).mtimeMs
+    } catch {
+      continue // the lock vanished — retry immediately
+    }
+    if (observed !== undefined && age > MERGE_LOCK_STALE_MS) {
+      breakStaleMergeLock(path, observed)
+      continue
+    }
+    if (Date.now() >= deadline) {
+      throw new MergeLockError(
+        'merge_busy',
+        `held by pid ${ownerPid ?? 'unknown'} for ${Math.round(age)}ms (${path})`,
+      )
+    }
+    await sleepMs(25)
+  }
+}
+
+/** Re-verify ownership; a lost lock means another writer owns the checkout now. */
+function assertMergeLockOwned(handle: MergeLockHandle): void {
+  if (mergeLockToken(handle.path) === handle.token) return
+  throw new MergeLockError(
+    'lock_lost',
+    `the merge lock ${handle.path} is no longer owned by this writer (pid ${process.pid})`,
+  )
+}
+
+function releaseMergeLock(handle: MergeLockHandle): void {
+  handle.stopHeartbeat()
+  if (mergeLockToken(handle.path) !== handle.token) return
+  try {
+    unlinkSync(handle.path)
+  } catch {
+    /* already released */
   }
 }
 
@@ -807,14 +1014,22 @@ async function branchConflictsFor(
 ): Promise<MergeLeaseConflict[]> {
   const refs = await git(root, [
     'for-each-ref',
-    '--format=%(refname:short)',
+    // `%(refname)` is unambiguous; `%(refname:short)` becomes `heads/pantheon/eph/x`
+    // when a same-named tag exists, which silently downgraded every overlap to a
+    // warning and disabled this gate.
+    '--format=%(refname)',
     `refs/heads/${EPH_BRANCH_PREFIX}`,
   ])
-  if (!refs.ok) return []
+  if (!refs.ok) {
+    warnings.push(unavailableReason('git for-each-ref', refs))
+    return []
+  }
   const others = refs.stdout
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter((line) => line.length > 0 && line !== branch)
+    .filter((line) => line.startsWith(`refs/heads/${EPH_BRANCH_PREFIX}`))
+    .map((line) => line.slice('refs/heads/'.length))
+    .filter((line) => line !== branch)
   const conflicts: MergeLeaseConflict[] = []
   for (const other of others) {
     const otherKey = other.slice(EPH_BRANCH_PREFIX.length)
@@ -931,22 +1146,22 @@ export async function mergeEphemeralStep(
       hint: 'A hand-edited ledger entry is refused before any git call; restore the worker branch name recorded by spawn_ephemeral.',
     })
   }
-  if (branch === currentBranch) {
+  // Every git call below addresses the branch by its **full ref** and, for
+  // content, by a resolved **sha**: a short name resolves as `refs/<name>` →
+  // `refs/tags/<name>` → `refs/heads/<name>`, so a same-named tag (or a
+  // `refs/pantheon/eph/...` ref) can shadow the worker branch.
+  const branchRef = `refs/heads/${branch}`
+  // `currentBranch` is a full ref from `symbolic-ref`; comparing it with the
+  // short name could never match, which made this refusal unreachable.
+  if (branchRef === currentBranch) {
     return refuse(base, 'branch_is_head', {
       branch,
       head: headNow,
       message: 'The branch to merge is the checked-out branch.',
     })
   }
-
-  // A short name is ambiguous: git resolves `pantheon/eph/x` as
-  // `refs/<name>` → `refs/tags/<name>` → `refs/heads/<name>`, so a same-named
-  // tag (or a `refs/pantheon/eph/...` ref) can shadow the worker branch. Every
-  // git call below uses `branchRef`; this guard refuses when the short name does
-  // not resolve to the branch either, so the ambiguity is never silent.
-  const branchRef = `refs/heads/${branch}`
-  const branchCommit = await resolveCommit(root, branchRef)
-  if (!branchCommit) {
+  const branchSha = await resolveCommit(root, branchRef)
+  if (!branchSha) {
     return refuse(base, 'branch_missing', {
       branch,
       head: headNow,
@@ -984,7 +1199,7 @@ export async function mergeEphemeralStep(
     })
   }
 
-  const digest = await diffDigest(root, baseHead, branchRef)
+  const digest = await diffDigest(root, baseHead, branchSha)
   if (!digest.ok) {
     return refuse(base, 'diff_unavailable', {
       branch,
@@ -998,6 +1213,7 @@ export async function mergeEphemeralStep(
     stepKey,
     branch,
     baseHead,
+    branchSha,
     head: headNow,
     diffDigest: digest.value,
   })
@@ -1035,7 +1251,7 @@ export async function mergeEphemeralStep(
   const dirty = dirtyPaths(statusEntries)
   const staged = stagedPaths(statusEntries)
 
-  const mergeFilesRead = await changedFiles(root, baseHead, branchRef)
+  const mergeFilesRead = await changedFiles(root, baseHead, branchSha)
   if (!mergeFilesRead.ok) {
     return refuse(base, 'diff_unavailable', {
       branch,
@@ -1102,7 +1318,7 @@ export async function mergeEphemeralStep(
   if (mode === 'preview') {
     tokenStore().set(storeKey, {
       token: computedToken,
-      fingerprint: `${stepKey}|${branch}|${baseHead}|${headNow}|${digest.value}`,
+      fingerprint: `${stepKey}|${branch}|${baseHead}|${branchSha}|${headNow}|${digest.value}`,
       stepKey,
       branch,
       expiresAt: now + MERGE_TOKEN_TTL_MS,
@@ -1111,7 +1327,7 @@ export async function mergeEphemeralStep(
   }
 
   // ---- Clean preview (never the user's tree) -----------------------------
-  const preview = await previewMerge(root, branchRef, stepKey, input.forceLegacyPreview === true)
+  const preview = await previewMerge(root, branchSha, stepKey, input.forceLegacyPreview === true)
   if (!preview.ok) {
     return refuse(base, 'preview_failed', {
       branch,
@@ -1147,12 +1363,13 @@ export async function mergeEphemeralStep(
     const statusAfterRead = await readStatus(root)
     const statusAfter = statusAfterRead.ok ? statusFingerprint(statusAfterRead.value) : undefined
     const headAfter = await resolveCommit(root, 'HEAD')
-    const commitsRead = await commitCount(root, `${headNow}..${branchRef}`)
+    const commitsRead = await commitCount(root, `${headNow}..${branchSha}`)
     const result: MergeEphemeralResult = {
       ok: true,
       ...base,
       branch,
       baseHead,
+      branchSha,
       head: headNow,
       ...(commitsRead.ok ? { commits: commitsRead.value } : {}),
       changes: mergeFiles,
@@ -1277,6 +1494,7 @@ export async function mergeEphemeralStep(
     stepKey,
     branch,
     branchRef,
+    branchSha,
     baseHead,
     headNow,
     statusPrint,
@@ -1297,6 +1515,8 @@ interface MergeApplyContext {
   readonly stepKey: string
   readonly branch: string
   readonly branchRef: string
+  /** The reviewed commit; the squash is pinned to this sha, not to the ref. */
+  readonly branchSha: string
   readonly baseHead: string
   readonly headNow: string
   readonly statusPrint: string
@@ -1323,7 +1543,7 @@ async function applyMerge(ctx: MergeApplyContext): Promise<MergeEphemeralResult>
     sharedRoot,
     stepKey,
     branch,
-    branchRef,
+    branchSha,
     baseHead,
     headNow,
     statusPrint,
@@ -1334,9 +1554,31 @@ async function applyMerge(ctx: MergeApplyContext): Promise<MergeEphemeralResult>
   } = ctx
   const lockPath = join(sharedRoot, '.pantheon', MERGE_LOCK_NAME)
   mkdirSync(dirname(lockPath), { recursive: true })
-  let locked: { ok: true; value: MergeEphemeralResult } | { ok: false; error: unknown }
+
+  let lock: MergeLockHandle
   try {
-    const value = await withExclusiveLedgerLock(lockPath, async () => {
+    lock = await acquireMergeLock(lockPath)
+  } catch (err: unknown) {
+    const busy = err instanceof MergeLockError
+    return refuse(base, busy ? err.code : 'merge_failed', {
+      branch,
+      baseHead,
+      head: headNow,
+      changes: mergeFiles,
+      tokenValid: false,
+      message: busy
+        ? `another merge is in progress in this checkout: ${err.message}`
+        : `the merge lock could not be taken: ${err instanceof Error ? err.message : String(err)}`,
+      hint: busy
+        ? 'Nothing was merged and the other merge was left alone. Retry once it finishes; a crashed holder is detected by pid and its lock is reclaimed automatically.'
+        : 'Nothing was merged. Check the checkout and ledger, then retry.',
+      noOp: true,
+      treeUntouched: true,
+    })
+  }
+
+  try {
+    {
       // `preMerge` outlives a throw so an unexpected failure inside the window can
       // still be compensated against a real checkpoint.
       let preMerge: { ok: boolean; treeHash?: string } | undefined
@@ -1390,7 +1632,23 @@ async function applyMerge(ctx: MergeApplyContext): Promise<MergeEphemeralResult>
 
         if (input.onBeforeMerge) await input.onBeforeMerge()
 
-        const merge = await git(root, ['merge', '--squash', '--no-edit', branchRef])
+        // Ownership is re-verified immediately before the first mutation: an
+        // evicted writer must not write into a checkout another writer owns.
+        try {
+          assertMergeLockOwned(lock)
+        } catch (err: unknown) {
+          return refuse(base, 'lock_lost', {
+            branch,
+            baseHead,
+            head: headNow,
+            changes: mergeFiles,
+            tokenValid: false,
+            message: err instanceof Error ? err.message : String(err),
+            hint: 'Another writer took the merge lock; nothing was merged. Retry once it finishes.',
+          })
+        }
+
+        const merge = await git(root, ['merge', '--squash', '--no-edit', branchSha])
         if (!merge.ok) {
           const unmerged = await git(root, ['diff', '--name-only', '-z', '--diff-filter=U'])
           const recovery = await recoverFromFailedMerge(root, {
@@ -1425,7 +1683,11 @@ async function applyMerge(ctx: MergeApplyContext): Promise<MergeEphemeralResult>
           }
         }
 
-        return finishMerge(ctx, preMergeSnapshot)
+        if (input.onAfterMerge) await input.onAfterMerge()
+
+        // `await` is load-bearing: without it the `finally` would release the
+        // lock before the post-window ownership check inside finishMerge runs.
+        return await finishMerge(ctx, preMergeSnapshot, lock)
       } catch (err: unknown) {
         // An unexpected failure inside the mutation window: compensate with the
         // checkpoint if we have one, and never pretend nothing happened.
@@ -1455,35 +1717,16 @@ async function applyMerge(ctx: MergeApplyContext): Promise<MergeEphemeralResult>
             : 'The worktree state is unknown — inspect `git status` before retrying.',
         }
       }
-    })
-    locked = { ok: true, value }
-  } catch (err: unknown) {
-    locked = { ok: false, error: err }
+    }
+  } finally {
+    releaseMergeLock(lock)
   }
-  if (locked.ok) return locked.value
-
-  const detail = locked.error instanceof Error ? locked.error.message : String(locked.error)
-  const isLockError = locked.error instanceof StepLedgerLockError
-  return refuse(base, isLockError ? 'merge_busy' : 'merge_failed', {
-    branch,
-    baseHead,
-    head: headNow,
-    changes: mergeFiles,
-    tokenValid: false,
-    message: isLockError
-      ? `another merge is in progress in this checkout: ${detail}`
-      : `the merge lock could not be taken: ${detail}`,
-    hint: isLockError
-      ? 'Nothing was merged and the other merge was left alone. Retry once it finishes (the lock is released in its finally block), or remove a stale .ephemeral-merge.lock after confirming no merge is running.'
-      : 'Nothing was merged. Check the checkout and ledger, then retry.',
-    noOp: true,
-    treeUntouched: true,
-  })
 }
 
 async function finishMerge(
   ctx: MergeApplyContext,
   preMerge: { readonly ok: boolean; readonly treeHash?: string },
+  lock: MergeLockHandle,
 ): Promise<MergeEphemeralResult> {
   const {
     base,
@@ -1491,6 +1734,7 @@ async function finishMerge(
     sharedRoot,
     stepKey,
     branch,
+    branchSha,
     baseHead,
     headNow,
     statusPrint,
@@ -1598,7 +1842,41 @@ async function finishMerge(
   const finalState = await inspectMergeState(root)
 
   const mergedAt = new Date(now).toISOString()
-  const mergeTree = preview.mergeTree ?? (await resolveCommit(root, 'HEAD^{tree}'))
+  // Only a real preview tree is recorded: `mergeTree` is what the reviewer saw.
+  // (The old `?? resolveCommit('HEAD^{tree}')` fallback could never fire — it
+  // appended `^{commit}` to a tree expression — so it is gone rather than fixed.)
+  const mergeTree = preview.mergeTree
+
+  // The window is over. Re-verify ownership before writing anything: an evicted
+  // writer must not report success or touch the ledger, because another writer
+  // may already own this checkout.
+  try {
+    assertMergeLockOwned(lock)
+  } catch (err: unknown) {
+    return {
+      ...base,
+      ok: false,
+      error: 'lock_lost',
+      branch,
+      baseHead,
+      head: headNow,
+      changes: mergeFiles,
+      ...(mergeTree ? { mergeTree } : {}),
+      tokenValid: true,
+      committed,
+      ...(commitHash ? { commitHash } : {}),
+      unstaged: !committed,
+      branchKept: true,
+      mergedAt,
+      metadataRecorded: false,
+      noOp: false,
+      treeUntouched: false,
+      message: `the merge landed but the merge lock was taken by another writer mid-window: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      hint: 'Do NOT re-run apply. Inspect `git status` / `git log` in this checkout, and note that the ledger update for this step was skipped.',
+    }
+  }
 
   // The merge has landed. A ledger write failure must never be reported as a
   // failed merge: the caller would re-run the merge on an already-merged tree.
@@ -1612,6 +1890,7 @@ async function finishMerge(
         ...target.ephemeral,
         branch,
         baseHead,
+        mergedSha: branchSha,
         ...(mergeTree ? { mergeTree } : {}),
         mergedAt,
         role: target.ephemeral?.role ?? target.agent,
@@ -1670,6 +1949,7 @@ async function finishMerge(
     ok: true,
     branch,
     baseHead,
+    branchSha,
     head: headNow,
     changes: mergeFiles,
     clean: true,
@@ -1685,7 +1965,9 @@ async function finishMerge(
     ...(metadataError ? { metadataError } : {}),
     ...(metadataError
       ? {
-          hint: 'The merge landed in the working tree; only the ledger metadata is missing. Re-record it with pantheon_step_ledger(action:"merge_ephemeral", mode:"preview") + apply once the ledger lock clears — do NOT re-run the merge.',
+          // No metadata-only action exists, and re-running `apply` would merge
+          // again — so the procedure is explicitly manual, not a re-merge.
+          hint: `The merge landed in the working tree. Do NOT re-run apply (it would merge ${branch} again). To restore the ledger fields by hand, free the ledger lock (another process may hold .pantheon/ledger/.step-ledger.lock) and set steps["${stepKey}"].ephemeral.branch/baseHead/mergedSha/mergeTree/mergedAt in .pantheon/ledger/step-ledger.json; review the working tree with git status/diff first.`,
         }
       : {}),
     noOp: false,

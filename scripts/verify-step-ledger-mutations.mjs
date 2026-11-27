@@ -468,14 +468,14 @@ const MUTANTS = [
   },
   {
     id: 'B1-short-ref-merge',
-    description: 'the squash re-resolves the short name, so a mid-apply tag redirects it',
+    description: 'the squash re-resolves the ref instead of the reviewed sha (force-push wins)',
     slice: MERGE_SLICE,
-    expect: 'S3-B1b a tag planted mid-apply cannot redirect the merge (full-ref resolution)',
+    expect: 'S3-B1c a force-push inside the merge window still merges the reviewed sha',
     edits: [
       {
         file: MERGE,
-        from: "        const merge = await git(root, ['merge', '--squash', '--no-edit', branchRef])",
-        to: "        const merge = await git(root, ['merge', '--squash', '--no-edit', branch])",
+        from: "        const merge = await git(root, ['merge', '--squash', '--no-edit', branchSha])",
+        to: "        const merge = await git(root, ['merge', '--squash', '--no-edit', branchRef])",
       },
     ],
   },
@@ -494,14 +494,14 @@ const MUTANTS = [
   },
   {
     id: 'B2-foreign-abort-restored',
-    description: 'recovery aborts a MERGE_HEAD it does not own',
+    description: 'recovery proceeds on a MERGE_HEAD it does not own (resets the user merge)',
     slice: MERGE_SLICE,
     expect: 'S3-5e recovery leaves a merge it does not own completely untouched',
     edits: [
       {
         file: MERGE,
-        from: '  if (stateBefore.mergeHead && options.ownedMergeState !== true) {',
-        to: '  if (false && stateBefore.mergeHead && options.ownedMergeState !== true) {',
+        from: '  if (stateBefore.mergeHead) {',
+        to: '  if (false) {',
       },
     ],
   },
@@ -532,20 +532,80 @@ const MUTANTS = [
     ],
   },
   {
-    id: 'S2-merge-lock-removed',
-    description: 'apply runs its mutation window without the merge lock',
+    id: 'S2-merge-lock-stale-break',
+    description:
+      'the merge lock reverts to the ledger rule (2 s stale break, no liveness, no heartbeat)',
     slice: MERGE_SLICE,
-    expect: 'S3-S2 a second apply on a non-overlapping branch is refused while one is mid-merge',
+    expect: 'S3-L1 two processes cannot share the merge window, and neither erases the other',
     edits: [
       {
         file: MERGE,
-        from: '    const value = await withExclusiveLedgerLock(lockPath, async () => {',
-        to: '    const value = await (async (): Promise<MergeEphemeralResult> => {',
+        from: 'const MERGE_LOCK_STALE_MS = 10 * 60 * 1000',
+        to: 'const MERGE_LOCK_STALE_MS = 2_000',
       },
       {
         file: MERGE,
-        from: '      }\n    })\n    locked = { ok: true, value }',
-        to: '      }\n    })()\n    locked = { ok: true, value }',
+        from: '    if (ownerPid !== undefined && !pidIsAlive(ownerPid)) {',
+        to: '    if (false) {',
+      },
+      {
+        file: MERGE,
+        from: '      const timer = setInterval(() => {\n',
+        to: '      const timer = setInterval(() => {\n        return\n',
+      },
+    ],
+  },
+  {
+    id: 'S2-merge-lock-liveness-removed',
+    description: 'a dead lock owner is no longer detected, so its lock waits for the stale timeout',
+    slice: MERGE_SLICE,
+    expect: "S3-L3 a dead holder's lock is reclaimed immediately, not after the stale timeout",
+    edits: [
+      {
+        file: MERGE,
+        from: '    if (ownerPid !== undefined && !pidIsAlive(ownerPid)) {',
+        to: '    if (false) {',
+      },
+    ],
+  },
+  {
+    id: 'S3-lock-ownership-reverify-removed',
+    description:
+      'the post-window ownership check always passes, so an evicted writer reports success',
+    slice: MERGE_SLICE,
+    expect: 'S3-L2 an evicted writer aborts with lock_lost instead of reporting success',
+    edits: [
+      {
+        file: MERGE,
+        from: '  if (mergeLockToken(handle.path) === handle.token) return',
+        to: '  if (mergeLockToken(handle.path) === handle.token || true) return',
+      },
+    ],
+  },
+  {
+    id: 'B1-sha-not-in-token',
+    description:
+      'the token ignores the reviewed commit sha (a same-content force-push stays valid)',
+    slice: MERGE_SLICE,
+    expect: 'S3-B1d a same-content force-push before apply invalidates the token (sha binding)',
+    edits: [
+      {
+        file: MERGE,
+        from: '        fingerprint.branchSha,\n',
+        to: '',
+      },
+    ],
+  },
+  {
+    id: 'S1-refname-short-reverted',
+    description: 'the other-branch scan uses %(refname:short), so a shadowing tag disables it',
+    slice: MERGE_SLICE,
+    expect: 'S3-B1e a tag shadowing another live branch does not disable the overlap gate',
+    edits: [
+      {
+        file: MERGE,
+        from: "    '--format=%(refname)',",
+        to: "    '--format=%(refname:short)',",
       },
     ],
   },

@@ -13,11 +13,20 @@
  * byte-identical with no `MERGE_HEAD`/`MERGE_MSG`).
  */
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { type ChildProcess, execFileSync, spawn } from 'node:child_process'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 import { readBoardMessages } from '../../src/pantheon/board-messages.ts'
 import { getSharedBus, type StepMergeEventPayload } from '../../src/pantheon/bus.ts'
 import {
@@ -110,6 +119,9 @@ interface MergeFixture {
 const DEFAULT_BRANCH_FILES: Record<string, string> = {
   'src/a.ts': 'export const a = "branch"\n',
 }
+
+/** Above `/proc/sys/kernel/pid_max`: `kill(pid, 0)` can only return ESRCH. */
+const DEAD_PID = 2_147_483_647
 
 async function setupMergeFixture(
   options: {
@@ -543,7 +555,6 @@ test('S3-5b an injected mid-apply conflict is aborted and the tree is restored b
     assert.equal(res.treeRestored, true)
     assert.equal(res.noOp, true)
     assert.equal(res.recovery?.mergeStatePresent, false)
-    assert.equal(res.recovery?.aborted, false, 'a squash merge never creates MERGE_HEAD')
     assert.equal(res.recovery?.resetApplied, true)
     assert.equal(res.recovery?.compensated, true, 'the conflict markers had to be overwritten')
     assert.equal(res.recovery?.restoreFailed, undefined)
@@ -559,49 +570,6 @@ test('S3-5b an injected mid-apply conflict is aborted and the tree is restored b
     assert.equal(existsSync(join(fixture.repo, '.git', 'MERGE_HEAD')), false)
     assert.equal(existsSync(join(fixture.repo, '.git', 'MERGE_MSG')), false)
     assert.equal(statusBefore, '', 'the fixture started clean')
-  } finally {
-    cleanup(fixture)
-  }
-})
-
-test('S3-5c recovery aborts a pre-existing MERGE_HEAD it owns, clears MERGE_MSG, and restores the tree', async () => {
-  resetMergeTokens()
-  const fixture = await setupMergeFixture({
-    mainFiles: { 'src/a.ts': 'export const a = "main"\n' },
-  })
-  try {
-    const statusBefore = statusOf(fixture.repo)
-    const treeBefore = await treeOf(fixture.repo)
-    const fingerprintBefore = await mergeStatusFingerprint(fixture.repo)
-
-    // A real, conflicting, non-squash merge: MERGE_HEAD + unmerged index +
-    // conflict markers in the worktree. This is the half-merged tree the gate
-    // must never leave behind.
-    assert.equal(gitWorks(fixture.repo, ['merge', '--no-commit', '--no-ff', fixture.branch]), false)
-    assert.equal(existsSync(join(fixture.repo, '.git', 'MERGE_HEAD')), true)
-    assert.equal(existsSync(join(fixture.repo, '.git', 'MERGE_MSG')), true)
-    assert.match(statusOf(fixture.repo), /^UU /m)
-
-    const recovery = await recoverFromFailedMerge(
-      fixture.repo,
-      { treeHash: treeBefore, statusFingerprint: fingerprintBefore },
-      // The caller states it owns the in-progress merge; ownership is never
-      // inferred, because a foreign merge must never be aborted.
-      { ownedMergeState: true },
-    )
-
-    assert.equal(recovery.aborted, true, 'MERGE_HEAD must be aborted, not reset away')
-    assert.equal(recovery.resetApplied, true)
-    assert.equal(recovery.treeRestored, true)
-    assert.equal(recovery.compensated, false, 'git merge --abort already restored the content')
-    assert.equal(recovery.statusRestored, true)
-    assert.equal(recovery.mergeStatePresent, false)
-    assert.equal(recovery.restoreLimitation, undefined, 'nothing had to be restored')
-
-    assert.equal(statusOf(fixture.repo), statusBefore)
-    assert.equal(await treeOf(fixture.repo), treeBefore)
-    assert.equal(existsSync(join(fixture.repo, '.git', 'MERGE_HEAD')), false)
-    assert.equal(existsSync(join(fixture.repo, '.git', 'MERGE_MSG')), false)
   } finally {
     cleanup(fixture)
   }
@@ -627,7 +595,6 @@ test('S3-5e recovery leaves a merge it does not own completely untouched', async
     })
 
     assert.equal(recovery.foreignMergeDetected, true)
-    assert.equal(recovery.aborted, false)
     assert.equal(recovery.resetApplied, false)
     assert.equal(recovery.treeRestored, false)
     assert.equal(recovery.mergeStatePresent, true)
@@ -1123,9 +1090,152 @@ test('S3-B1b a tag planted mid-apply cannot redirect the merge (full-ref resolut
 })
 
 // ---------------------------------------------------------------------------
-// B2 — apply never destroys a merge it did not start
+// B1 (round 3) — the reviewed *commit* is what gets merged
 // ---------------------------------------------------------------------------
 
+test('S3-B1c a force-push inside the merge window still merges the reviewed sha', async () => {
+  resetMergeTokens()
+  const fixture = await setupMergeFixture({
+    branchFiles: { 'src/a.ts': 'export const a = "REVIEWED CONTENT"\n' },
+  })
+  try {
+    // The unreviewed commit already exists on its own branch: only the ref moves
+    // inside the window, which is exactly what a force-push does.
+    git(fixture.repo, ['checkout', '-q', '-b', 'shadow-src'])
+    writeFiles(fixture.repo, { 'src/a.ts': 'export const a = "NEVER REVIEWED CONTENT"\n' })
+    commitAll(fixture.repo, 'never reviewed')
+    git(fixture.repo, ['checkout', '-q', 'main'])
+    const reviewedSha = git(fixture.repo, ['rev-parse', `refs/heads/${fixture.branch}`])
+
+    const preview = await mergeEphemeralStep({
+      cwd: fixture.repo,
+      stepKey: fixture.stepKey,
+      mode: 'preview',
+    })
+    assert.equal(preview.readyToApply, true)
+    assert.equal(preview.branchSha, reviewedSha)
+
+    const res = await mergeEphemeralStep({
+      cwd: fixture.repo,
+      stepKey: fixture.stepKey,
+      mode: 'apply',
+      confirmToken: preview.token,
+      onBeforeMerge: () => {
+        git(fixture.repo, ['update-ref', `refs/heads/${fixture.branch}`, 'shadow-src'])
+      },
+    })
+
+    assert.equal(res.ok, true, `expected a merge, got ${res.error}: ${res.message}`)
+    assert.equal(
+      readFileSync(join(fixture.repo, 'src/a.ts'), 'utf8'),
+      'export const a = "REVIEWED CONTENT"\n',
+      'the squash must be pinned to the reviewed sha, never to the ref',
+    )
+    assert.equal(res.branchSha, reviewedSha)
+    assert.equal(
+      ledgerEntry(fixture.repo, fixture.stepKey).ephemeral?.mergedSha,
+      reviewedSha,
+      'the ledger records exactly which commit landed',
+    )
+    // The ref did move; what landed did not.
+    assert.equal(
+      git(fixture.repo, ['rev-parse', `refs/heads/${fixture.branch}`]),
+      git(fixture.repo, ['rev-parse', 'shadow-src']),
+    )
+  } finally {
+    cleanup(fixture)
+  }
+})
+
+test('S3-B1d a same-content force-push before apply invalidates the token (sha binding)', async () => {
+  resetMergeTokens()
+  const fixture = await setupMergeFixture({
+    branchFiles: { 'src/a.ts': 'export const a = "same content"\n' },
+  })
+  try {
+    // Same tree, different commit: the *diff* is identical, so only a sha-bound
+    // token can catch this.
+    git(fixture.repo, ['checkout', '-q', '-b', 'rewritten', fixture.baseHead])
+    writeFiles(fixture.repo, { 'src/a.ts': 'export const a = "same content"\n' })
+    commitAll(fixture.repo, 'rewritten commit, identical content')
+    git(fixture.repo, ['checkout', '-q', 'main'])
+
+    const preview = await mergeEphemeralStep({
+      cwd: fixture.repo,
+      stepKey: fixture.stepKey,
+      mode: 'preview',
+    })
+    assert.equal(preview.readyToApply, true)
+    git(fixture.repo, ['update-ref', `refs/heads/${fixture.branch}`, 'rewritten'])
+
+    const res = await mergeEphemeralStep({
+      cwd: fixture.repo,
+      stepKey: fixture.stepKey,
+      mode: 'apply',
+      confirmToken: preview.token,
+    })
+    assert.equal(res.ok, false)
+    assert.equal(res.error, 'confirm_token_required')
+    assert.match(String(res.message), /stale/)
+    assert.equal(statusOf(fixture.repo), '')
+  } finally {
+    cleanup(fixture)
+  }
+})
+
+test('S3-B1e a tag shadowing another live branch does not disable the overlap gate', async () => {
+  resetMergeTokens()
+  const fixture = await setupMergeFixture()
+  try {
+    const other = 'pantheon/eph/other-step'
+    git(fixture.repo, ['checkout', '-q', '-b', other])
+    writeFiles(fixture.repo, { 'src/a.ts': 'export const a = "other worker"\n' })
+    commitAll(fixture.repo, 'other worker edits the same file')
+    git(fixture.repo, ['checkout', '-q', 'main'])
+    // A same-named tag made `%(refname:short)` emit `heads/...`, which the old
+    // gate turned into a warning and then ignored entirely.
+    git(fixture.repo, ['tag', other])
+
+    const preview = await mergeEphemeralStep({
+      cwd: fixture.repo,
+      stepKey: fixture.stepKey,
+      mode: 'preview',
+    })
+    assert.equal(preview.readyToApply, false)
+    assert.ok(
+      preview.leaseConflicts?.some(
+        (conflict) => conflict.source === 'branch' && conflict.holder === other,
+      ),
+      `expected a branch overlap despite the tag, got ${JSON.stringify(preview.leaseConflicts)}`,
+    )
+    assert.equal(preview.warnings, undefined, 'nothing was downgraded to a warning')
+  } finally {
+    cleanup(fixture)
+  }
+})
+
+test('S3-O2 merging the checked-out branch is refused', async () => {
+  resetMergeTokens()
+  const fixture = await setupMergeFixture({ stepKey: 'on-branch-1' })
+  try {
+    git(fixture.repo, ['checkout', '-q', 'pantheon/eph/on-branch-1'])
+    const res = await mergeEphemeralStep({
+      cwd: fixture.repo,
+      stepKey: fixture.stepKey,
+      mode: 'preview',
+    })
+    assert.equal(res.ok, false)
+    assert.equal(res.error, 'branch_is_head')
+    assert.equal(statusOf(fixture.repo), '')
+  } finally {
+    git(fixture.repo, ['checkout', '-q', 'main'])
+    cleanup(fixture)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// B2 — apply never destroys a merge it did not start
+// ---------------------------------------------------------------------------
 /**
  * Creates a branch whose change is already present on `main`, so merging it with
  * `--no-commit --no-ff` yields HEAD's tree: MERGE_HEAD is present while
@@ -1236,7 +1346,8 @@ test('S3-B3 a ledger write failure after the squash still reports the merge as l
     assert.equal(applied.metadataRecorded, false)
     assert.ok(applied.metadataError, 'the metadata failure must be named')
     assert.ok(applied.mergedAt, 'the merge timestamp is still reported')
-    assert.match(String(applied.hint), /only the ledger metadata is missing/)
+    assert.match(String(applied.hint), /Do NOT re-run apply/)
+    assert.match(String(applied.hint), /step-ledger\.json/)
     assert.doesNotMatch(String(applied.hint), /nothing was committed/)
     assert.equal(applied.unstaged, true)
     assert.equal(
@@ -1292,9 +1403,274 @@ test('S3-S1 an unreadable git status refuses instead of reporting a clean tree',
 })
 
 // ---------------------------------------------------------------------------
-// S2 — parallel applies are mutually excluded, and the queued one re-verifies
+// S3-L — the mutex across real processes (blocker a)
 // ---------------------------------------------------------------------------
 
+interface CrossProcessReport {
+  readonly ok: boolean
+  readonly error: string | null
+  readonly metadataRecorded: boolean | null
+  readonly changes: readonly string[] | null
+  readonly startedAt: number
+  readonly lockAt: number | null
+  readonly doneAt: number
+}
+
+const CHILD_FIXTURE = fileURLToPath(new URL('./fixtures/merge-apply-child.mts', import.meta.url))
+const TSX_CLI = fileURLToPath(new URL('../../node_modules/tsx/dist/cli.mjs', import.meta.url))
+
+function spawnMergeChild(args: {
+  readonly repo: string
+  readonly stepKey: string
+  readonly holdMs: number
+  readonly barrier: string
+  readonly report: string
+  readonly commit?: boolean
+}): ChildProcess {
+  return spawn(
+    process.execPath,
+    [
+      TSX_CLI,
+      CHILD_FIXTURE,
+      '--cwd',
+      args.repo,
+      '--step',
+      args.stepKey,
+      '--hold',
+      String(args.holdMs),
+      '--barrier',
+      args.barrier,
+      '--report',
+      args.report,
+      ...(args.commit === true ? ['--commit'] : []),
+    ],
+    // No stdout pipe: the parent tracks the children by their report files (an
+    // 'exit' listener alone would not keep the event loop alive). stderr stays
+    // attached so a crashing child is visible in CI.
+    { stdio: ['ignore', 'ignore', 'inherit'] },
+  )
+}
+
+async function waitForFile(path: string, timeoutMs = 60_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (existsSync(path)) return
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  throw new Error(`timed out waiting for ${path}`)
+}
+
+function readReport(path: string): CrossProcessReport {
+  return JSON.parse(readFileSync(path, 'utf8')) as CrossProcessReport
+}
+
+async function seedTwoStepRepo(parent: string): Promise<string> {
+  const repo = initRepo(parent)
+  const steps = [
+    { stepKey: 'xproc-a', file: 'src/a.ts', content: 'export const a = "from a"\n' },
+    { stepKey: 'xproc-b', file: 'src/b.ts', content: 'export const b = "from b"\n' },
+  ] as const
+  const tool = createStepLedgerTool(repo)
+  for (const step of steps) {
+    const created = await tool.execute(
+      { action: 'init_step', stepKey: step.stepKey, objective: 'xproc', agent: 'hermes' },
+      { directory: repo },
+    )
+    assert.equal(JSON.parse(String(created.output)).ok, true)
+  }
+  for (const step of steps) {
+    const branch = `pantheon/eph/${step.stepKey}`
+    git(repo, ['checkout', '-q', '-b', branch])
+    writeFiles(repo, { [step.file]: step.content })
+    commitAll(repo, `worker ${step.stepKey}`)
+    git(repo, ['checkout', '-q', 'main'])
+    updateStepLedger(repo, (store) => {
+      const entry = store.steps[step.stepKey]
+      assert.ok(entry)
+      entry.ephemeral = {
+        ...entry.ephemeral,
+        branch,
+        baseHead: git(repo, ['rev-parse', 'HEAD']),
+      }
+    })
+  }
+  return repo
+}
+
+test('S3-L1 two processes cannot share the merge window, and neither erases the other', async () => {
+  resetMergeTokens()
+  const parent = mkdtempSync(join(tmpdir(), 'pantheon-merge-xproc-'))
+  try {
+    const repo = await seedTwoStepRepo(parent)
+    const barrierA = join(parent, 'barrier-a')
+    const barrierB = join(parent, 'barrier-b')
+    const reportA = join(parent, 'a.json')
+    const reportB = join(parent, 'b.json')
+    const lockPath = join(repo, '.pantheon', '.ephemeral-merge.lock')
+
+    // A holds the window for longer than the ledger lock's 2 s stale break: the
+    // exact duration that used to let a peer steal it.
+    const childA = spawnMergeChild({
+      repo,
+      stepKey: 'xproc-a',
+      holdMs: 5000,
+      barrier: barrierA,
+      report: reportA,
+    })
+    childA.unref()
+    await waitForFile(`${reportA}.preview`)
+    writeFileSync(barrierA, 'go')
+    await waitForFile(lockPath, 20_000)
+    const lockedAt = statSync(lockPath).mtimeMs
+
+    // B arrives *after* the lock is old enough for a 2 s stale rule to break it.
+    const childB = spawnMergeChild({
+      repo,
+      stepKey: 'xproc-b',
+      holdMs: 0,
+      barrier: barrierB,
+      report: reportB,
+    })
+    childB.unref()
+    await waitForFile(`${reportB}.preview`)
+    const age = Date.now() - lockedAt
+    if (age < 2_400) await new Promise((resolve) => setTimeout(resolve, 2_400 - age))
+    writeFileSync(barrierB, 'go')
+    await waitForFile(reportA)
+    await waitForFile(reportB)
+
+    const a = readReport(reportA)
+    const b = readReport(reportB)
+    const outcomes = [a, b]
+    const winners = outcomes.filter((outcome) => outcome.ok === true)
+    const losers = outcomes.filter((outcome) => outcome.ok !== true)
+
+    assert.equal(winners.length, 1, `exactly one process may merge: ${JSON.stringify(outcomes)}`)
+    assert.equal(losers.length, 1)
+    const loser = losers[0] as CrossProcessReport
+    assert.ok(
+      ['merge_busy', 'worktree_changed', 'head_changed', 'lock_lost'].includes(loser.error ?? ''),
+      `loser must refuse without merging, got ${String(loser.error)}`,
+    )
+
+    // If both ever held the lock, their windows must not overlap.
+    if (a.lockAt !== null && b.lockAt !== null) {
+      assert.ok(
+        Math.min(a.doneAt, b.doneAt) <= Math.max(a.lockAt, b.lockAt),
+        `lock windows overlapped: A ${JSON.stringify(a)} B ${JSON.stringify(b)}`,
+      )
+    }
+
+    // Content: the winner's file landed, the loser's file never moved, and the
+    // winner's merge is still there at the end (nobody's recovery erased it).
+    const winnerIsA = winners[0] === a
+    const winnerFile = winnerIsA ? 'src/a.ts' : 'src/b.ts'
+    const winnerContent = winnerIsA ? 'export const a = "from a"\n' : 'export const b = "from b"\n'
+    const loserFile = winnerIsA ? 'src/b.ts' : 'src/a.ts'
+    const loserContent = winnerIsA ? 'export const b = 2\n' : 'export const a = 1\n'
+    assert.equal(readFileSync(join(repo, winnerFile), 'utf8'), winnerContent)
+    assert.equal(readFileSync(join(repo, loserFile), 'utf8'), loserContent)
+    assert.doesNotMatch(statusOf(repo), /^(UU|AA|DD) /m)
+    assert.equal(existsSync(join(repo, '.git', 'MERGE_HEAD')), false)
+  } finally {
+    rmSync(parent, { recursive: true, force: true })
+  }
+})
+
+test('S3-L2 an evicted writer aborts with lock_lost instead of reporting success', async () => {
+  resetMergeTokens()
+  const fixture = await setupMergeFixture({ stepKey: 'lock-loss-1' })
+  const lockPath = join(fixture.repo, '.pantheon', '.ephemeral-merge.lock')
+  const contentPath = join(fixture.repo, 'src/a.ts')
+  try {
+    // (1) Evicted before the squash: refused with nothing merged.
+    const firstPreview = await mergeEphemeralStep({
+      cwd: fixture.repo,
+      stepKey: fixture.stepKey,
+      mode: 'preview',
+    })
+    const beforeSquash = await mergeEphemeralStep({
+      cwd: fixture.repo,
+      stepKey: fixture.stepKey,
+      mode: 'apply',
+      confirmToken: firstPreview.token,
+      onBeforeMerge: () => rmSync(lockPath, { force: true }),
+    })
+    assert.equal(beforeSquash.error, 'lock_lost')
+    assert.equal(beforeSquash.noOp, true, 'nothing was merged')
+    assert.equal(readFileSync(contentPath, 'utf8'), 'export const a = 1\n')
+    assert.equal(ledgerEntry(fixture.repo, fixture.stepKey).ephemeral?.mergedAt, undefined)
+
+    // (2) Evicted after the squash: the merge landed, so success must not be
+    // reported and the ledger must not be touched.
+    const secondPreview = await mergeEphemeralStep({
+      cwd: fixture.repo,
+      stepKey: fixture.stepKey,
+      mode: 'preview',
+    })
+    const afterSquash = await mergeEphemeralStep({
+      cwd: fixture.repo,
+      stepKey: fixture.stepKey,
+      mode: 'apply',
+      confirmToken: secondPreview.token,
+      onAfterMerge: () => rmSync(lockPath, { force: true }),
+    })
+
+    assert.equal(afterSquash.ok, false)
+    assert.equal(afterSquash.error, 'lock_lost')
+    assert.equal(afterSquash.metadataRecorded, false)
+    assert.equal(afterSquash.noOp, false, 'the squash landed')
+    assert.equal(afterSquash.treeUntouched, false)
+    assert.match(String(afterSquash.hint), /Do NOT re-run apply/)
+    assert.equal(readFileSync(contentPath, 'utf8'), 'export const a = "branch"\n')
+    assert.equal(
+      ledgerEntry(fixture.repo, fixture.stepKey).ephemeral?.mergedAt,
+      undefined,
+      'an evicted writer must not touch the ledger',
+    )
+  } finally {
+    cleanup(fixture)
+  }
+})
+
+test("S3-L3 a dead holder's lock is reclaimed immediately, not after the stale timeout", async () => {
+  resetMergeTokens()
+  const fixture = await setupMergeFixture({ stepKey: 'dead-owner-1' })
+  const lockPath = join(fixture.repo, '.pantheon', '.ephemeral-merge.lock')
+  try {
+    const preview = await mergeEphemeralStep({
+      cwd: fixture.repo,
+      stepKey: fixture.stepKey,
+      mode: 'preview',
+    })
+    // A pid above /proc/sys/kernel/pid_max can never be alive; the lock's mtime is
+    // now, so only liveness can reclaim it (age cannot).
+    mkdirSync(dirname(lockPath), { recursive: true })
+    writeFileSync(lockPath, `${DEAD_PID}:00000000-0000-0000-0000-000000000000:${Date.now()}\n`)
+
+    const startedAt = Date.now()
+    const res = await mergeEphemeralStep({
+      cwd: fixture.repo,
+      stepKey: fixture.stepKey,
+      mode: 'apply',
+      confirmToken: preview.token,
+    })
+    const elapsed = Date.now() - startedAt
+
+    assert.equal(res.ok, true, `expected the dead lock to be reclaimed, got ${res.error}`)
+    assert.ok(
+      elapsed < 1_500,
+      `reclaim must not wait for the wait budget/stale timeout (${elapsed}ms)`,
+    )
+    assert.equal(existsSync(lockPath), false, 'release removes its own lock')
+  } finally {
+    cleanup(fixture)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// S2 — parallel applies are mutually excluded, and the queued one re-verifies
+// ---------------------------------------------------------------------------
 test('S3-S2 a second apply on a non-overlapping branch is refused while one is mid-merge', async () => {
   resetMergeTokens()
   const parent = mkdtempSync(join(tmpdir(), 'pantheon-merge-s2-'))

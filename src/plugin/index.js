@@ -6,7 +6,7 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
 });
 
 // src/plugin.ts
-import { appendFileSync as appendFileSync3, existsSync as existsSync28, mkdirSync as mkdirSync16, readdirSync as readdirSync9, readFileSync as readFileSync22 } from "node:fs";
+import { appendFileSync as appendFileSync3, existsSync as existsSync28, mkdirSync as mkdirSync16, readdirSync as readdirSync9, readFileSync as readFileSync23 } from "node:fs";
 import { realpath as realpathAsync } from "node:fs/promises";
 import path5 from "node:path";
 import { fileURLToPath as fileURLToPath6 } from "node:url";
@@ -12887,28 +12887,41 @@ ${layers.history.map((h) => h.trim()).join("\n\n")}`
 }
 
 // src/pantheon/step-ledger.ts
-import { randomUUID as randomUUID4 } from "node:crypto";
+import { randomUUID as randomUUID5 } from "node:crypto";
 import {
-  closeSync as closeSync4,
+  closeSync as closeSync5,
   existsSync as existsSync19,
-  linkSync,
+  linkSync as linkSync2,
   mkdirSync as mkdirSync12,
-  openSync as openSync4,
+  openSync as openSync5,
   readdirSync as readdirSync4,
-  readFileSync as readFileSync15,
+  readFileSync as readFileSync16,
   realpathSync as realpathSync9,
-  renameSync as renameSync4,
-  statSync as statSync6,
+  renameSync as renameSync5,
+  statSync as statSync7,
   unlinkSync as unlinkSync5,
   writeFileSync as writeFileSync8,
-  writeSync
+  writeSync as writeSync2
 } from "node:fs";
 import { basename as basename7, dirname as dirname15, join as join24, resolve as resolve19, sep as sep8 } from "node:path";
 
 // src/pantheon/ephemeral-merge.ts
 import { execFile as execFile5 } from "node:child_process";
-import { createHash as createHash7 } from "node:crypto";
-import { existsSync as existsSync15, mkdirSync as mkdirSync10, rmSync as rmSync3, unlinkSync as unlinkSync4 } from "node:fs";
+import { createHash as createHash7, randomUUID as randomUUID3 } from "node:crypto";
+import {
+  closeSync as closeSync4,
+  existsSync as existsSync15,
+  linkSync,
+  mkdirSync as mkdirSync10,
+  openSync as openSync4,
+  readFileSync as readFileSync13,
+  renameSync as renameSync4,
+  rmSync as rmSync3,
+  statSync as statSync6,
+  unlinkSync as unlinkSync4,
+  utimesSync,
+  writeSync
+} from "node:fs";
 import { dirname as dirname14, isAbsolute as isAbsolute6, join as join20, resolve as resolve16 } from "node:path";
 import { promisify as promisify5 } from "node:util";
 
@@ -14684,6 +14697,9 @@ var SAFE_EPH_BRANCH_RE = /^[A-Za-z0-9._/-]+$/;
 var TOKEN_STORE_KEY = "__pantheonMergeTokens";
 var MERGE_TREE_MIN_GIT = [2, 38];
 var MERGE_LOCK_NAME = ".ephemeral-merge.lock";
+var MERGE_LOCK_WAIT_MS = 1500;
+var MERGE_LOCK_HEARTBEAT_MS = 1e3;
+var MERGE_LOCK_STALE_MS = 10 * 60 * 1e3;
 function isPantheonRuntimePath2(rel) {
   return rel === ".pantheon" || rel.startsWith(".pantheon/");
 }
@@ -14903,6 +14919,7 @@ function computeMergeToken(fingerprint) {
       fingerprint.stepKey,
       fingerprint.branch,
       fingerprint.baseHead,
+      fingerprint.branchSha,
       fingerprint.head,
       fingerprint.diffDigest
     ].join("|")
@@ -14977,14 +14994,12 @@ async function removeMergeArtifacts(root) {
     }
   }
 }
-async function recoverFromFailedMerge(root, preMerge, options = {}) {
+async function recoverFromFailedMerge(root, preMerge) {
   const notes = [];
-  let aborted = false;
   let resetApplied = false;
   const stateBefore = await inspectMergeState(root);
-  if (stateBefore.mergeHead && options.ownedMergeState !== true) {
+  if (stateBefore.mergeHead) {
     return {
-      aborted: false,
       resetApplied: false,
       treeRestored: false,
       compensated: false,
@@ -14995,11 +15010,6 @@ async function recoverFromFailedMerge(root, preMerge, options = {}) {
         "a merge this call did not start is in progress (MERGE_HEAD present); it was left untouched"
       ]
     };
-  }
-  if (stateBefore.mergeHead) {
-    const abort = await git(root, ["merge", "--abort"]);
-    aborted = abort.ok;
-    if (!abort.ok) notes.push(`git merge --abort failed: ${firstLine(abort.stderr)}`);
   }
   const reset = await git(root, ["reset", "--merge"]);
   resetApplied = reset.ok;
@@ -15039,7 +15049,6 @@ async function recoverFromFailedMerge(root, preMerge, options = {}) {
   const state = await inspectMergeState(root);
   const mergeStatePresent = state.mergeHead || state.mergeMsg;
   return {
-    aborted,
     resetApplied,
     treeRestored,
     compensated,
@@ -15052,6 +15061,132 @@ async function recoverFromFailedMerge(root, preMerge, options = {}) {
     } : {},
     notes
   };
+}
+var MergeLockError = class extends Error {
+  code;
+  constructor(code, message) {
+    super(message);
+    this.name = "MergeLockError";
+    this.code = code;
+  }
+};
+function sleepMs(ms) {
+  return new Promise((resolve26) => setTimeout(resolve26, ms));
+}
+function mergeLockToken(path6) {
+  try {
+    return readFileSync13(path6, "utf8").trim() || void 0;
+  } catch {
+    return void 0;
+  }
+}
+function mergeLockPid(token) {
+  const [pid] = (token ?? "").split(":");
+  const parsed = Number(pid);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : void 0;
+}
+function pidIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+function breakStaleMergeLock(path6, observed) {
+  const quarantine = `${path6}.stale.${process.pid}.${Date.now()}`;
+  try {
+    renameSync4(path6, quarantine);
+  } catch {
+    return;
+  }
+  if (mergeLockToken(quarantine) !== observed) {
+    try {
+      linkSync(quarantine, path6);
+    } catch {
+    }
+    try {
+      unlinkSync4(quarantine);
+    } catch {
+    }
+    return;
+  }
+  try {
+    unlinkSync4(quarantine);
+  } catch {
+  }
+}
+async function acquireMergeLock(path6) {
+  const token = `${process.pid}:${randomUUID3()}:${Date.now()}`;
+  const deadline = Date.now() + MERGE_LOCK_WAIT_MS;
+  for (; ; ) {
+    try {
+      const fd = openSync4(path6, "wx");
+      try {
+        writeSync(fd, `${token}
+`);
+      } finally {
+        closeSync4(fd);
+      }
+      const timer = setInterval(() => {
+        if (mergeLockToken(path6) !== token) return;
+        try {
+          const now = /* @__PURE__ */ new Date();
+          utimesSync(path6, now, now);
+        } catch {
+        }
+      }, MERGE_LOCK_HEARTBEAT_MS);
+      timer.unref();
+      return {
+        path: path6,
+        token,
+        stopHeartbeat: () => clearInterval(timer)
+      };
+    } catch (err) {
+      if (err.code !== "EEXIST") throw err;
+    }
+    const observed = mergeLockToken(path6);
+    if (mergeLockPid(observed) === process.pid) {
+      throw new MergeLockError("merge_busy", `another apply in this process holds ${path6}`);
+    }
+    const ownerPid = mergeLockPid(observed);
+    if (ownerPid !== void 0 && !pidIsAlive(ownerPid)) {
+      breakStaleMergeLock(path6, observed ?? "");
+      continue;
+    }
+    let age;
+    try {
+      age = Date.now() - statSync6(path6).mtimeMs;
+    } catch {
+      continue;
+    }
+    if (observed !== void 0 && age > MERGE_LOCK_STALE_MS) {
+      breakStaleMergeLock(path6, observed);
+      continue;
+    }
+    if (Date.now() >= deadline) {
+      throw new MergeLockError(
+        "merge_busy",
+        `held by pid ${ownerPid ?? "unknown"} for ${Math.round(age)}ms (${path6})`
+      );
+    }
+    await sleepMs(25);
+  }
+}
+function assertMergeLockOwned(handle) {
+  if (mergeLockToken(handle.path) === handle.token) return;
+  throw new MergeLockError(
+    "lock_lost",
+    `the merge lock ${handle.path} is no longer owned by this writer (pid ${process.pid})`
+  );
+}
+function releaseMergeLock(handle) {
+  handle.stopHeartbeat();
+  if (mergeLockToken(handle.path) !== handle.token) return;
+  try {
+    unlinkSync4(handle.path);
+  } catch {
+  }
 }
 function leaseConflictsFor(files, leases, callerSessionID) {
   const conflicts = [];
@@ -15067,11 +15202,17 @@ function leaseConflictsFor(files, leases, callerSessionID) {
 async function branchConflictsFor(root, files, branch, stepKey, mergedSteps, warnings) {
   const refs = await git(root, [
     "for-each-ref",
-    "--format=%(refname:short)",
+    // `%(refname)` is unambiguous; `%(refname:short)` becomes `heads/pantheon/eph/x`
+    // when a same-named tag exists, which silently downgraded every overlap to a
+    // warning and disabled this gate.
+    "--format=%(refname)",
     `refs/heads/${EPH_BRANCH_PREFIX}`
   ]);
-  if (!refs.ok) return [];
-  const others = refs.stdout.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0 && line !== branch);
+  if (!refs.ok) {
+    warnings.push(unavailableReason("git for-each-ref", refs));
+    return [];
+  }
+  const others = refs.stdout.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.startsWith(`refs/heads/${EPH_BRANCH_PREFIX}`)).map((line) => line.slice("refs/heads/".length)).filter((line) => line !== branch);
   const conflicts = [];
   for (const other of others) {
     const otherKey = other.slice(EPH_BRANCH_PREFIX.length);
@@ -15155,16 +15296,16 @@ async function mergeEphemeralStep(input) {
       hint: "A hand-edited ledger entry is refused before any git call; restore the worker branch name recorded by spawn_ephemeral."
     });
   }
-  if (branch === currentBranch) {
+  const branchRef = `refs/heads/${branch}`;
+  if (branchRef === currentBranch) {
     return refuse(base, "branch_is_head", {
       branch,
       head: headNow,
       message: "The branch to merge is the checked-out branch."
     });
   }
-  const branchRef = `refs/heads/${branch}`;
-  const branchCommit = await resolveCommit(root, branchRef);
-  if (!branchCommit) {
+  const branchSha = await resolveCommit(root, branchRef);
+  if (!branchSha) {
     return refuse(base, "branch_missing", {
       branch,
       head: headNow,
@@ -15197,7 +15338,7 @@ async function mergeEphemeralStep(input) {
       hint: "ephemeral.baseHead is not a commit in this repository (history rewritten or wrong checkout)."
     });
   }
-  const digest = await diffDigest(root, baseHead, branchRef);
+  const digest = await diffDigest(root, baseHead, branchSha);
   if (!digest.ok) {
     return refuse(base, "diff_unavailable", {
       branch,
@@ -15211,6 +15352,7 @@ async function mergeEphemeralStep(input) {
     stepKey,
     branch,
     baseHead,
+    branchSha,
     head: headNow,
     diffDigest: digest.value
   });
@@ -15244,7 +15386,7 @@ async function mergeEphemeralStep(input) {
   const statusPrint = statusFingerprint(statusEntries);
   const dirty = dirtyPaths(statusEntries);
   const staged = stagedPaths(statusEntries);
-  const mergeFilesRead = await changedFiles(root, baseHead, branchRef);
+  const mergeFilesRead = await changedFiles(root, baseHead, branchSha);
   if (!mergeFilesRead.ok) {
     return refuse(base, "diff_unavailable", {
       branch,
@@ -15295,14 +15437,14 @@ async function mergeEphemeralStep(input) {
   if (mode === "preview") {
     tokenStore().set(storeKey, {
       token: computedToken,
-      fingerprint: `${stepKey}|${branch}|${baseHead}|${headNow}|${digest.value}`,
+      fingerprint: `${stepKey}|${branch}|${baseHead}|${branchSha}|${headNow}|${digest.value}`,
       stepKey,
       branch,
       expiresAt: now + MERGE_TOKEN_TTL_MS,
       consumed: false
     });
   }
-  const preview = await previewMerge(root, branchRef, stepKey, input.forceLegacyPreview === true);
+  const preview = await previewMerge(root, branchSha, stepKey, input.forceLegacyPreview === true);
   if (!preview.ok) {
     return refuse(base, "preview_failed", {
       branch,
@@ -15333,12 +15475,13 @@ async function mergeEphemeralStep(input) {
     const statusAfterRead = await readStatus(root);
     const statusAfter = statusAfterRead.ok ? statusFingerprint(statusAfterRead.value) : void 0;
     const headAfter = await resolveCommit(root, "HEAD");
-    const commitsRead = await commitCount(root, `${headNow}..${branchRef}`);
+    const commitsRead = await commitCount(root, `${headNow}..${branchSha}`);
     const result = {
       ok: true,
       ...base,
       branch,
       baseHead,
+      branchSha,
       head: headNow,
       ...commitsRead.ok ? { commits: commitsRead.value } : {},
       changes: mergeFiles,
@@ -15455,6 +15598,7 @@ async function mergeEphemeralStep(input) {
     stepKey,
     branch,
     branchRef,
+    branchSha,
     baseHead,
     headNow,
     statusPrint,
@@ -15474,7 +15618,7 @@ async function applyMerge(ctx) {
     sharedRoot,
     stepKey,
     branch,
-    branchRef,
+    branchSha,
     baseHead,
     headNow,
     statusPrint,
@@ -15485,9 +15629,25 @@ async function applyMerge(ctx) {
   } = ctx;
   const lockPath = join20(sharedRoot, ".pantheon", MERGE_LOCK_NAME);
   mkdirSync10(dirname14(lockPath), { recursive: true });
-  let locked;
+  let lock;
   try {
-    const value = await withExclusiveLedgerLock(lockPath, async () => {
+    lock = await acquireMergeLock(lockPath);
+  } catch (err) {
+    const busy = err instanceof MergeLockError;
+    return refuse(base, busy ? err.code : "merge_failed", {
+      branch,
+      baseHead,
+      head: headNow,
+      changes: mergeFiles,
+      tokenValid: false,
+      message: busy ? `another merge is in progress in this checkout: ${err.message}` : `the merge lock could not be taken: ${err instanceof Error ? err.message : String(err)}`,
+      hint: busy ? "Nothing was merged and the other merge was left alone. Retry once it finishes; a crashed holder is detected by pid and its lock is reclaimed automatically." : "Nothing was merged. Check the checkout and ledger, then retry.",
+      noOp: true,
+      treeUntouched: true
+    });
+  }
+  try {
+    {
       let preMerge;
       try {
         if (input.onAfterLock) await input.onAfterLock();
@@ -15529,7 +15689,20 @@ async function applyMerge(ctx) {
           });
         }
         if (input.onBeforeMerge) await input.onBeforeMerge();
-        const merge = await git(root, ["merge", "--squash", "--no-edit", branchRef]);
+        try {
+          assertMergeLockOwned(lock);
+        } catch (err) {
+          return refuse(base, "lock_lost", {
+            branch,
+            baseHead,
+            head: headNow,
+            changes: mergeFiles,
+            tokenValid: false,
+            message: err instanceof Error ? err.message : String(err),
+            hint: "Another writer took the merge lock; nothing was merged. Retry once it finishes."
+          });
+        }
+        const merge = await git(root, ["merge", "--squash", "--no-edit", branchSha]);
         if (!merge.ok) {
           const unmerged = await git(root, ["diff", "--name-only", "-z", "--diff-filter=U"]);
           const recovery = await recoverFromFailedMerge(root, {
@@ -15559,7 +15732,8 @@ async function applyMerge(ctx) {
             hint: recovery.foreignMergeDetected ? "A merge started by someone else appeared mid-apply; it was left untouched. This call changed nothing further." : recovery.treeRestored ? "The worktree is back in its exact pre-merge state and no merge is in progress." : "The worktree could NOT be fully restored \u2014 recover it from recovery.restoreFailed.checkpoint."
           };
         }
-        return finishMerge(ctx, preMergeSnapshot);
+        if (input.onAfterMerge) await input.onAfterMerge();
+        return await finishMerge(ctx, preMergeSnapshot, lock);
       } catch (err) {
         const recovery = preMerge?.treeHash ? await recoverFromFailedMerge(root, {
           treeHash: preMerge.treeHash,
@@ -15583,33 +15757,19 @@ async function applyMerge(ctx) {
           hint: recovery?.treeRestored ? "The worktree was restored to its pre-merge state." : "The worktree state is unknown \u2014 inspect `git status` before retrying."
         };
       }
-    });
-    locked = { ok: true, value };
-  } catch (err) {
-    locked = { ok: false, error: err };
+    }
+  } finally {
+    releaseMergeLock(lock);
   }
-  if (locked.ok) return locked.value;
-  const detail = locked.error instanceof Error ? locked.error.message : String(locked.error);
-  const isLockError = locked.error instanceof StepLedgerLockError;
-  return refuse(base, isLockError ? "merge_busy" : "merge_failed", {
-    branch,
-    baseHead,
-    head: headNow,
-    changes: mergeFiles,
-    tokenValid: false,
-    message: isLockError ? `another merge is in progress in this checkout: ${detail}` : `the merge lock could not be taken: ${detail}`,
-    hint: isLockError ? "Nothing was merged and the other merge was left alone. Retry once it finishes (the lock is released in its finally block), or remove a stale .ephemeral-merge.lock after confirming no merge is running." : "Nothing was merged. Check the checkout and ledger, then retry.",
-    noOp: true,
-    treeUntouched: true
-  });
 }
-async function finishMerge(ctx, preMerge) {
+async function finishMerge(ctx, preMerge, lock) {
   const {
     base,
     root,
     sharedRoot,
     stepKey,
     branch,
+    branchSha,
     baseHead,
     headNow,
     statusPrint,
@@ -15699,7 +15859,32 @@ async function finishMerge(ctx, preMerge) {
   await removeMergeArtifacts(root);
   const finalState = await inspectMergeState(root);
   const mergedAt = new Date(now).toISOString();
-  const mergeTree = preview.mergeTree ?? await resolveCommit(root, "HEAD^{tree}");
+  const mergeTree = preview.mergeTree;
+  try {
+    assertMergeLockOwned(lock);
+  } catch (err) {
+    return {
+      ...base,
+      ok: false,
+      error: "lock_lost",
+      branch,
+      baseHead,
+      head: headNow,
+      changes: mergeFiles,
+      ...mergeTree ? { mergeTree } : {},
+      tokenValid: true,
+      committed,
+      ...commitHash ? { commitHash } : {},
+      unstaged: !committed,
+      branchKept: true,
+      mergedAt,
+      metadataRecorded: false,
+      noOp: false,
+      treeUntouched: false,
+      message: `the merge landed but the merge lock was taken by another writer mid-window: ${err instanceof Error ? err.message : String(err)}`,
+      hint: "Do NOT re-run apply. Inspect `git status` / `git log` in this checkout, and note that the ledger update for this step was skipped."
+    };
+  }
   let recorded = { recorded: false };
   let metadataError;
   try {
@@ -15710,6 +15895,7 @@ async function finishMerge(ctx, preMerge) {
         ...target.ephemeral,
         branch,
         baseHead,
+        mergedSha: branchSha,
         ...mergeTree ? { mergeTree } : {},
         mergedAt,
         role: target.ephemeral?.role ?? target.agent
@@ -15754,6 +15940,7 @@ async function finishMerge(ctx, preMerge) {
     ok: true,
     branch,
     baseHead,
+    branchSha,
     head: headNow,
     changes: mergeFiles,
     clean: true,
@@ -15768,7 +15955,9 @@ async function finishMerge(ctx, preMerge) {
     metadataRecorded: recorded.recorded,
     ...metadataError ? { metadataError } : {},
     ...metadataError ? {
-      hint: 'The merge landed in the working tree; only the ledger metadata is missing. Re-record it with pantheon_step_ledger(action:"merge_ephemeral", mode:"preview") + apply once the ledger lock clears \u2014 do NOT re-run the merge.'
+      // No metadata-only action exists, and re-running `apply` would merge
+      // again — so the procedure is explicitly manual, not a re-merge.
+      hint: `The merge landed in the working tree. Do NOT re-run apply (it would merge ${branch} again). To restore the ledger fields by hand, free the ledger lock (another process may hold .pantheon/ledger/.step-ledger.lock) and set steps["${stepKey}"].ephemeral.branch/baseHead/mergedSha/mergeTree/mergedAt in .pantheon/ledger/step-ledger.json; review the working tree with git status/diff first.`
     } : {},
     noOp: false,
     treeUntouched: false,
@@ -17173,14 +17362,14 @@ function cascadeBlock(nodes, rootStepKey, reason) {
 }
 
 // src/pantheon/strategy-store.ts
-import { randomUUID as randomUUID3 } from "node:crypto";
+import { randomUUID as randomUUID4 } from "node:crypto";
 
 // src/pantheon/native-memory-tools.ts
 import {
   existsSync as existsSync18,
   mkdirSync as mkdirSync11,
   readdirSync as readdirSync3,
-  readFileSync as readFileSync14,
+  readFileSync as readFileSync15,
   realpathSync as realpathSync8,
   writeFileSync as writeFileSync7
 } from "node:fs";
@@ -17188,7 +17377,7 @@ import { join as join23, resolve as resolve18, sep as sep7 } from "node:path";
 import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
 
 // src/pantheon/memory-federation.ts
-import { existsSync as existsSync17, readFileSync as readFileSync13, realpathSync as realpathSync7 } from "node:fs";
+import { existsSync as existsSync17, readFileSync as readFileSync14, realpathSync as realpathSync7 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
 import { basename as basename6, join as join22, resolve as resolve17 } from "node:path";
 import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
@@ -17215,7 +17404,7 @@ function resolveFederatedRepoDirs(primaryWorkspaceDir, options = {}) {
   const manifestFile = options.manifestPath ?? join22(homedir6(), ".pantheon", "federation.json");
   if (existsSync17(manifestFile)) {
     try {
-      const parsed = JSON.parse(readFileSync13(manifestFile, "utf8"));
+      const parsed = JSON.parse(readFileSync14(manifestFile, "utf8"));
       if (Array.isArray(parsed.repos)) {
         for (const item of parsed.repos) {
           if (typeof item === "string" && item.trim()) candidates.push(item.trim());
@@ -17816,13 +18005,13 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
               if (existsSync18(join23(globalNsDir, `${sessionId}.json`))) {
                 const globalFile = resolveConfinedPath(globalNsDir, `${sessionId}.json`);
                 if (existsSync18(globalFile)) {
-                  return jsonResult3(JSON.parse(readFileSync14(globalFile, "utf8")));
+                  return jsonResult3(JSON.parse(readFileSync15(globalFile, "utf8")));
                 }
               }
             }
             return jsonResult3({ ok: false, error: "not_found", session_id: sessionId });
           }
-          return jsonResult3(JSON.parse(readFileSync14(filePath, "utf8")));
+          return jsonResult3(JSON.parse(readFileSync15(filePath, "utf8")));
         } catch (err) {
           return jsonResult3({
             ok: false,
@@ -17904,12 +18093,12 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
             }
             const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
             if (!existsSync18(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
-            return jsonResult3(JSON.parse(readFileSync14(filePath, "utf8")));
+            return jsonResult3(JSON.parse(readFileSync15(filePath, "utf8")));
           }
           const files = readdirSync3(goalsDir).filter((f) => f.endsWith(".json")).sort();
           const latest = files.at(-1);
           if (!latest) return jsonResult3({ ok: false, error: "no_active_goals" });
-          return jsonResult3(JSON.parse(readFileSync14(resolveConfinedPath(goalsDir, latest), "utf8")));
+          return jsonResult3(JSON.parse(readFileSync15(resolveConfinedPath(goalsDir, latest), "utf8")));
         } catch (err) {
           return jsonResult3({
             ok: false,
@@ -17943,7 +18132,7 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
           const goalsDir = join23(cwd, ".pantheon", "goals");
           const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
           if (!existsSync18(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
-          const existing = JSON.parse(readFileSync14(filePath, "utf8"));
+          const existing = JSON.parse(readFileSync15(filePath, "utf8"));
           const updated = {
             ...existing,
             status: typeof input.status === "string" ? input.status : existing.status,
@@ -17984,7 +18173,7 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
           const goalsDir = join23(cwd, ".pantheon", "goals");
           const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
           if (!existsSync18(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
-          const existing = JSON.parse(readFileSync14(filePath, "utf8"));
+          const existing = JSON.parse(readFileSync15(filePath, "utf8"));
           const updated = {
             ...existing,
             status: "completed",
@@ -18869,7 +19058,7 @@ function attachThemisVerdictSafe(workspaceDir, input) {
   }
 }
 function newRunId() {
-  return `run-${randomUUID3()}`;
+  return `run-${randomUUID4()}`;
 }
 
 // src/pantheon/themis-reflex.ts
@@ -19005,7 +19194,7 @@ function readLedgerFileAtPath(filePath) {
   if (!existsSync19(filePath)) return { version: 1, steps: {} };
   let raw;
   try {
-    raw = readFileSync15(filePath, "utf8");
+    raw = readFileSync16(filePath, "utf8");
   } catch (err) {
     throw new Error(
       `step-ledger cannot be read at ${filePath}: ${err instanceof Error ? err.message : String(err)}`
@@ -19017,7 +19206,7 @@ function readLedgerFileAtPath(filePath) {
   } catch (err) {
     const quarantine = `${filePath}.corrupt.${Date.now()}`;
     try {
-      renameSync4(filePath, quarantine);
+      renameSync5(filePath, quarantine);
     } catch {
     }
     throw new Error(
@@ -19028,7 +19217,7 @@ function readLedgerFileAtPath(filePath) {
   if (!candidate || typeof candidate.steps !== "object" || candidate.steps === null) {
     const quarantine = `${filePath}.corrupt.${Date.now()}`;
     try {
-      renameSync4(filePath, quarantine);
+      renameSync5(filePath, quarantine);
     } catch {
     }
     throw new Error(
@@ -19045,14 +19234,14 @@ var LOCK_WAIT_BUDGET_MS = 4e3;
 var LOCK_RETRY_MS = 25;
 var TMP_SWEEP_AGE_MS = 6e4;
 var sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
-function sleepMs(ms) {
+function sleepMs2(ms) {
   Atomics.wait(sleepBuffer, 0, 0, ms);
 }
 function resolveLockPath(ledgerPath) {
   return join24(dirname15(ledgerPath), ".step-ledger.lock");
 }
 function createLockToken() {
-  return `${process.pid}:${randomUUID4()}`;
+  return `${process.pid}:${randomUUID5()}`;
 }
 function lockOwnerPid(token) {
   const [pid] = token.trim().split(":");
@@ -19061,7 +19250,7 @@ function lockOwnerPid(token) {
 }
 function readLockToken(lockPath) {
   try {
-    return readFileSync15(lockPath, "utf8").trim();
+    return readFileSync16(lockPath, "utf8").trim();
   } catch {
     return void 0;
   }
@@ -19080,7 +19269,7 @@ function sweepOrphanTempFiles(filePath) {
     if (!entry.startsWith(prefix)) continue;
     const candidate = join24(dir, entry);
     try {
-      if (now - statSync6(candidate).mtimeMs > TMP_SWEEP_AGE_MS) unlinkSync5(candidate);
+      if (now - statSync7(candidate).mtimeMs > TMP_SWEEP_AGE_MS) unlinkSync5(candidate);
     } catch {
     }
   }
@@ -19088,14 +19277,14 @@ function sweepOrphanTempFiles(filePath) {
 function breakStaleLock(lockPath, observedToken) {
   const quarantine = `${lockPath}.stale.${process.pid}.${Date.now()}`;
   try {
-    renameSync4(lockPath, quarantine);
+    renameSync5(lockPath, quarantine);
   } catch {
     return;
   }
   const token = readLockToken(quarantine);
   if (token !== observedToken) {
     try {
-      linkSync(quarantine, lockPath);
+      linkSync2(quarantine, lockPath);
     } catch {
     }
     try {
@@ -19114,12 +19303,12 @@ function acquireLedgerLock(lockPath) {
   const deadline = Date.now() + LOCK_WAIT_BUDGET_MS;
   for (; ; ) {
     try {
-      const fd = openSync4(lockPath, "wx");
+      const fd = openSync5(lockPath, "wx");
       try {
-        writeSync(fd, `${token}
+        writeSync2(fd, `${token}
 `);
       } finally {
-        closeSync4(fd);
+        closeSync5(fd);
       }
       return token;
     } catch (err) {
@@ -19135,7 +19324,7 @@ function acquireLedgerLock(lockPath) {
     }
     let age = Number.POSITIVE_INFINITY;
     try {
-      age = Date.now() - statSync6(lockPath).mtimeMs;
+      age = Date.now() - statSync7(lockPath).mtimeMs;
     } catch {
       continue;
     }
@@ -19149,7 +19338,7 @@ function acquireLedgerLock(lockPath) {
         `step-ledger lock timeout after ${LOCK_WAIT_BUDGET_MS}ms waiting on ${lockPath} (held by pid ${observedToken ?? "unknown"}). If that writer crashed, remove the file: rm -f ${lockPath}`
       );
     }
-    sleepMs(LOCK_RETRY_MS);
+    sleepMs2(LOCK_RETRY_MS);
   }
 }
 function releaseLedgerLock(lockPath, token) {
@@ -19174,20 +19363,12 @@ function assertLockStillOwned(lockPath, token) {
     `step-ledger lock ${lockPath} is no longer owned by this writer (token mismatch): another writer took over mid-mutation. Aborting before commit; re-run the action.`
   );
 }
-async function withExclusiveLedgerLock(lockPath, fn) {
-  const token = acquireLedgerLock(lockPath);
-  try {
-    return await fn();
-  } finally {
-    releaseLedgerLock(lockPath, token);
-  }
-}
 function writeLedgerFileAtomic(filePath, store2) {
   const tmpPath = `${filePath}.tmp.${process.pid}`;
   try {
     writeFileSync8(tmpPath, `${JSON.stringify(store2, null, 2)}
 `, "utf8");
-    renameSync4(tmpPath, filePath);
+    renameSync5(tmpPath, filePath);
   } catch (err) {
     try {
       if (existsSync19(tmpPath)) unlinkSync5(tmpPath);
@@ -19412,7 +19593,7 @@ function describeLedgerError(err) {
 }
 async function preserveLedgerBytes(cwd, fn) {
   const filePath = resolveLedgerPath(cwd);
-  const beforeText = existsSync19(filePath) ? readFileSync15(filePath, "utf8") : void 0;
+  const beforeText = existsSync19(filePath) ? readFileSync16(filePath, "utf8") : void 0;
   let snapshot;
   if (beforeText !== void 0) {
     try {
@@ -19426,7 +19607,7 @@ async function preserveLedgerBytes(cwd, fn) {
   }
   const result = await fn();
   if (!snapshot) return result;
-  const afterText = existsSync19(filePath) ? readFileSync15(filePath, "utf8") : void 0;
+  const afterText = existsSync19(filePath) ? readFileSync16(filePath, "utf8") : void 0;
   if (afterText === beforeText) return result;
   restoreLedgerSnapshotUnderLock(cwd, snapshot);
   return result;
@@ -20366,7 +20547,7 @@ function evaluateReproductionGate(params) {
 }
 
 // src/pantheon/shell-hooks.ts
-import { randomUUID as randomUUID5 } from "node:crypto";
+import { randomUUID as randomUUID6 } from "node:crypto";
 
 // src/plugins/hook-runner.ts
 import { spawn as spawn2 } from "node:child_process";
@@ -20618,7 +20799,7 @@ function createV2ShellHooks(options = {}) {
         return;
       }
       const start = {
-        delegationId: randomUUID5(),
+        delegationId: randomUUID6(),
         agent: delegationAgent(tool2, event.input),
         startedAt: now()
       };
@@ -20656,7 +20837,7 @@ function createV2ShellHooks(options = {}) {
           // the record was evicted). The STOP still needs a key field to be a
           // well-formed audit line, so it gets a fresh one — an orphan STOP,
           // never an unkeyed one.
-          delegation_id: randomUUID5()
+          delegation_id: randomUUID6()
         } : {
           // The BEFORE-time agent wins: the AFTER-time args may carry the
           // merged background result, which has no subagent_type.
@@ -21525,7 +21706,7 @@ import {
   existsSync as existsSync21,
   mkdirSync as mkdirSync13,
   readdirSync as readdirSync5,
-  readFileSync as readFileSync17,
+  readFileSync as readFileSync18,
   realpathSync as realpathSync10,
   rmSync as rmSync4,
   writeFileSync as writeFileSync9
@@ -21533,7 +21714,7 @@ import {
 import { join as join26, resolve as resolve21, sep as sep9 } from "node:path";
 
 // scripts/stack-detector.mjs
-import { existsSync as existsSync20, readFileSync as readFileSync16 } from "node:fs";
+import { existsSync as existsSync20, readFileSync as readFileSync17 } from "node:fs";
 import { join as join25, resolve as resolve20 } from "node:path";
 function detectRepositoryStacks(workspaceDir) {
   const root = resolve20(workspaceDir);
@@ -21543,7 +21724,7 @@ function detectRepositoryStacks(workspaceDir) {
   const pkgPath = join25(root, "package.json");
   if (existsSync20(pkgPath)) {
     try {
-      const pkg = JSON.parse(readFileSync16(pkgPath, "utf8"));
+      const pkg = JSON.parse(readFileSync17(pkgPath, "utf8"));
       const deps = { ...pkg.dependencies, ...pkg.devDependencies };
       const frameworks = [];
       for (const fw of [
@@ -21598,8 +21779,8 @@ function detectRepositoryStacks(workspaceDir) {
   const reqPath = join25(root, "requirements.txt");
   if (existsSync20(pyProjPath) || existsSync20(reqPath)) {
     const rawPy = [
-      existsSync20(pyProjPath) ? readFileSync16(pyProjPath, "utf8") : "",
-      existsSync20(reqPath) ? readFileSync16(reqPath, "utf8") : ""
+      existsSync20(pyProjPath) ? readFileSync17(pyProjPath, "utf8") : "",
+      existsSync20(reqPath) ? readFileSync17(reqPath, "utf8") : ""
     ].join("\n").toLowerCase();
     const frameworks = [];
     for (const fw of ["fastapi", "django", "flask", "sqlalchemy", "pydantic", "pytest"]) {
@@ -21627,7 +21808,7 @@ function detectRepositoryStacks(workspaceDir) {
   }
   const goModPath = join25(root, "go.mod");
   if (existsSync20(goModPath)) {
-    const rawGo = readFileSync16(goModPath, "utf8").toLowerCase();
+    const rawGo = readFileSync17(goModPath, "utf8").toLowerCase();
     const frameworks = ["gin", "echo", "fiber", "chi"].filter((fw) => rawGo.includes(fw));
     stacks.push({
       id: "go",
@@ -21648,7 +21829,7 @@ function detectRepositoryStacks(workspaceDir) {
   }
   const cargoPath = join25(root, "Cargo.toml");
   if (existsSync20(cargoPath)) {
-    const rawCargo = readFileSync16(cargoPath, "utf8").toLowerCase();
+    const rawCargo = readFileSync17(cargoPath, "utf8").toLowerCase();
     const frameworks = ["tokio", "axum", "actix-web", "serde", "sqlx"].filter(
       (fw) => rawCargo.includes(fw)
     );
@@ -21821,7 +22002,7 @@ function createAgentForgeTool(fallbackDir) {
           const files = readdirSync5(agentsDir).filter((f) => f.endsWith(".md") && f.toLowerCase() !== "readme.md").sort();
           const agents = files.map((file) => {
             const id = file.replace(/\.md$/, "");
-            const raw = readFileSync17(join26(agentsDir, file), "utf8");
+            const raw = readFileSync18(join26(agentsDir, file), "utf8");
             const descMatch = raw.match(/^description:\s*(.+)$/m);
             return {
               name: id,
@@ -21847,7 +22028,7 @@ function createAgentForgeTool(fallbackDir) {
             ok: true,
             name,
             path: `.opencode/agents/${name}.md`,
-            content: readFileSync17(filePath, "utf8")
+            content: readFileSync18(filePath, "utf8")
           });
         }
         if (action === "remove") {
@@ -21909,7 +22090,7 @@ function createAgentForgeTool(fallbackDir) {
 }
 
 // src/pantheon/ast-tools.ts
-import { readdirSync as readdirSync6, readFileSync as readFileSync18, statSync as statSync7, writeFileSync as writeFileSync10 } from "node:fs";
+import { readdirSync as readdirSync6, readFileSync as readFileSync19, statSync as statSync8, writeFileSync as writeFileSync10 } from "node:fs";
 import { extname as extname3, join as join27, relative as relative5, resolve as resolve22 } from "node:path";
 var SKIP_DIRS = /* @__PURE__ */ new Set([".git", "node_modules", ".pantheon", ".venv", "dist", "build"]);
 var SUPPORTED_EXTS = /* @__PURE__ */ new Set([
@@ -22122,7 +22303,7 @@ function matchTokensAt(code, codeTokens, startIdx, patTokens) {
 }
 function collectFiles(targetPath) {
   const out = [];
-  const st = statSync7(targetPath);
+  const st = statSync8(targetPath);
   if (st.isFile()) return [targetPath];
   const walk = (dir) => {
     for (const entry of readdirSync6(dir, { withFileTypes: true })) {
@@ -22138,7 +22319,7 @@ function collectFiles(targetPath) {
   return out;
 }
 function findAstMatchesInFile(absFile, relFile, pattern) {
-  const source = readFileSync18(absFile, "utf8");
+  const source = readFileSync19(absFile, "utf8");
   const patTokens = tokenizeCode(pattern, true);
   if (patTokens.length === 0) return [];
   const codeTokens = tokenizeCode(source, false);
@@ -22295,7 +22476,7 @@ function createAstTools(fallbackDir) {
           const rel = relative5(resolve22(cwd), f).replace(/\\/g, "/") || f;
           const spans = findAstMatchesInFile(f, rel, pattern);
           if (spans.length === 0) continue;
-          const original = readFileSync18(f, "utf8");
+          const original = readFileSync19(f, "utf8");
           let updated = "";
           let cursor = 0;
           for (const span of spans) {
@@ -22332,7 +22513,7 @@ function createAstTools(fallbackDir) {
 
 // src/pantheon/codemap-tools.ts
 import { createHash as createHash9 } from "node:crypto";
-import { existsSync as existsSync22, mkdirSync as mkdirSync14, readdirSync as readdirSync7, readFileSync as readFileSync19, realpathSync as realpathSync11, statSync as statSync8 } from "node:fs";
+import { existsSync as existsSync22, mkdirSync as mkdirSync14, readdirSync as readdirSync7, readFileSync as readFileSync20, realpathSync as realpathSync11, statSync as statSync9 } from "node:fs";
 import { extname as extname4, join as join28, relative as relative6, resolve as resolve23, sep as sep10 } from "node:path";
 import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
 var IGNORED_DIRS = /* @__PURE__ */ new Set([
@@ -22653,7 +22834,7 @@ function createCodemapTools(fallbackDir) {
           }
           const force = input.force === true;
           const db = getCodemapDb(canonicalRoot);
-          const st = statSync8(targetPath);
+          const st = statSync9(targetPath);
           const files = st.isFile() ? [targetPath] : collectSourceFiles(targetPath);
           let indexed = 0;
           let skipped = 0;
@@ -22665,7 +22846,7 @@ function createCodemapTools(fallbackDir) {
             const lang = SUPPORTED_EXT_LANG[ext];
             if (!lang) continue;
             const relFile = relative6(canonicalRoot, filePath).replace(/\\/g, "/");
-            const content = readFileSync19(filePath, "utf8");
+            const content = readFileSync20(filePath, "utf8");
             const hash = createHash9("sha256").update(content).digest("hex");
             const existing = db.prepare("SELECT hash FROM code_files WHERE path = ?").get(relFile);
             if (!force && existing?.hash === hash) {
@@ -22828,7 +23009,7 @@ function createCodemapTools(fallbackDir) {
 
 // src/pantheon/cost-command.ts
 import { execFile as execFile7 } from "node:child_process";
-import { accessSync as accessSync2, constants as constants4, existsSync as existsSync24, statSync as statSync9 } from "node:fs";
+import { accessSync as accessSync2, constants as constants4, existsSync as existsSync24, statSync as statSync10 } from "node:fs";
 import { delimiter, dirname as dirname17, join as join31 } from "node:path";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
 import { z } from "zod";
@@ -22838,7 +23019,7 @@ import { homedir as homedir8 } from "node:os";
 import { join as join30 } from "node:path";
 
 // src/plugins/tui/src/model-pricing.ts
-import { existsSync as existsSync23, mkdirSync as mkdirSync15, readFileSync as readFileSync20, renameSync as renameSync5, writeFileSync as writeFileSync11 } from "node:fs";
+import { existsSync as existsSync23, mkdirSync as mkdirSync15, readFileSync as readFileSync21, renameSync as renameSync6, writeFileSync as writeFileSync11 } from "node:fs";
 import { homedir as homedir7 } from "node:os";
 import { dirname as dirname16, join as join29 } from "node:path";
 var MODELS_DEV_URL = "https://models.dev/api.json";
@@ -22985,7 +23166,7 @@ function parseCachedCatalog(raw) {
 function readPricingCache(cachePath) {
   try {
     if (!existsSync23(cachePath)) return void 0;
-    return parseCachedCatalog(JSON.parse(readFileSync20(cachePath, "utf8")));
+    return parseCachedCatalog(JSON.parse(readFileSync21(cachePath, "utf8")));
   } catch {
     return void 0;
   }
@@ -22996,7 +23177,7 @@ function writePricingCache(cachePath, catalog) {
     mkdirSync15(dirname16(cachePath), { recursive: true });
     writeFileSync11(temp, `${JSON.stringify(catalog)}
 `, "utf8");
-    renameSync5(temp, cachePath);
+    renameSync6(temp, cachePath);
     return true;
   } catch {
     return false;
@@ -23832,7 +24013,7 @@ var NODE_SQLITE_MIN_VERSION = "22.5";
 function defaultIsExecutable(path6) {
   try {
     accessSync2(path6, constants4.X_OK);
-    return statSync9(path6).isFile();
+    return statSync10(path6).isFile();
   } catch {
     return false;
   }
@@ -26202,7 +26383,7 @@ function createReviewVerdictTool(sessionDomain) {
 }
 
 // src/pantheon/skill-search-tool.ts
-import { existsSync as existsSync26, readdirSync as readdirSync8, readFileSync as readFileSync21 } from "node:fs";
+import { existsSync as existsSync26, readdirSync as readdirSync8, readFileSync as readFileSync22 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
 import { join as join35 } from "node:path";
 
@@ -26470,7 +26651,7 @@ function scanInstalledSkills(cwd = process.cwd()) {
         const skillMd = join35(baseDir, skillName, "SKILL.md");
         if (existsSync26(skillMd)) {
           try {
-            const raw = readFileSync21(skillMd, "utf8");
+            const raw = readFileSync22(skillMd, "utf8");
             const { name, description } = extractSkillMetadata(raw, skillName);
             const id = (name || skillName).trim();
             map.set(id.toLowerCase(), {
@@ -27377,7 +27558,7 @@ function loadRuntimeOverrides(workspaceDir) {
   try {
     const read = (filePath) => {
       try {
-        return readFileSync22(filePath, "utf8");
+        return readFileSync23(filePath, "utf8");
       } catch {
         return void 0;
       }
@@ -27441,7 +27622,7 @@ function readCanonicalRoster() {
     ];
     for (const p of candidates) {
       if (existsSync28(p)) {
-        const raw = readFileSync22(p, "utf8");
+        const raw = readFileSync23(p, "utf8");
         const data = JSON.parse(raw);
         if (data && typeof data.agents === "object") return data.agents;
       }
@@ -27628,7 +27809,7 @@ function readCanonicalCommandTemplate(commandName, fallbackDescription) {
     if (dir) {
       const mdPath = path5.join(dir, `${commandName}.md`);
       if (existsSync28(mdPath)) {
-        const raw = readFileSync22(mdPath, "utf8");
+        const raw = readFileSync23(mdPath, "utf8");
         const body = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
         if (body) return body;
       }
@@ -27770,7 +27951,7 @@ function transformSkills(draft) {
         if (!existsSync28(skillMdPath)) continue;
         try {
           if (typeof editor.get === "function" && editor.get(skillId)) continue;
-          const content = readFileSync22(skillMdPath, "utf8");
+          const content = readFileSync23(skillMdPath, "utf8");
           const { name, description } = parseSkillFrontmatter(content, skillId);
           editor.add({
             id: skillId,

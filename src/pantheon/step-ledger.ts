@@ -78,6 +78,7 @@ export interface EphemeralStepMetadata {
   branch?: string
   baseHead?: string
   verdict?: string
+  mergedSha?: string
   mergeTree?: string
   mergedAt?: string
   /** Set by `merge_ephemeral(mode:"discard")`; the only action that deletes the branch. */
@@ -405,27 +406,6 @@ function assertLockStillOwned(lockPath: string, token: string): void {
     'lock_lost',
     `step-ledger lock ${lockPath} is no longer owned by this writer (token mismatch): another writer took over mid-mutation. Aborting before commit; re-run the action.`,
   )
-}
-
-/**
- * Run `fn` while holding an exclusive lock at `lockPath`, using the ledger's
- * own lock primitive (atomic `open(..., 'wx')`, unique owner token, stale
- * break via quarantine, bounded wait).
- *
- * `ephemeral-merge.ts` uses it on its own path so two applies can never
- * interleave their mutation windows — `updateStepLedger`'s lock only protects
- * the ledger file, not the worktree.
- */
-export async function withExclusiveLedgerLock<T>(
-  lockPath: string,
-  fn: () => Promise<T>,
-): Promise<T> {
-  const token = acquireLedgerLock(lockPath)
-  try {
-    return await fn()
-  } finally {
-    releaseLedgerLock(lockPath, token)
-  }
 }
 
 /**

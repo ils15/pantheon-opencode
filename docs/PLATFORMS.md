@@ -85,7 +85,7 @@ Worker branches live in git, not in `.pantheon/`: `spawn_ephemeral` preserves a
 worker's edits on `pantheon/eph/<stepKey>` and records `ephemeral.branch` /
 `ephemeral.baseHead` on the ledger entry, and
 `pantheon_step_ledger(action="merge_ephemeral")` lands it behind a single-use
-token (`mergedAt`/`mergeTree` afterwards) — see
+token (`mergedSha`/`mergedAt`/`mergeTree` afterwards) — see
 [Ephemeral branch merge](opencode.md#ephemeral-branch-merge).
 
 With the recommended `opencode plugin add pantheon-opencode` install, agents,

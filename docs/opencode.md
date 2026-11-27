@@ -165,16 +165,17 @@ is the only supported way to land that branch:
 ```
 
 - **Two steps, one token.** `mode:"preview"` returns
-  `MERGE-<sha256(stepKey|branch|baseHead|headNow|diffDigest)[:12]>`, valid for 10
-  minutes. `mode:"apply"`/`"discard"` require it as `confirmToken`. It is bound to
-  the exact branch content *and* HEAD, so any new commit on either side makes it
-  unusable (`confirm_token_required`, with `already_used` / `expired` / `stale` /
-  `missing` in the message). It is a **two-phase confirmation, not an
-  authorization**: it proves a preview of this exact content happened, nothing
-  more. Single-use means an *attempted mutation* burns it (including one that then
-  fails); pure pre-flight refusals happen before the burn, so they leave it usable.
-  Tokens live **in process memory only** — a restarted host cannot replay or
-  recover one, and must `preview` again.
+  `MERGE-<sha256(stepKey|branch|baseHead|branchSha|headNow|diffDigest)[:12]>`,
+  valid for 10 minutes. `mode:"apply"`/`"discard"` require it as `confirmToken`.
+  It is bound to the exact branch **commit** (`branchSha`), its content and HEAD,
+  so a force-push — even one that rewrites the commit without changing the patch —
+  or any new commit on either side makes it unusable (`confirm_token_required`,
+  with `already_used` / `expired` / `stale` / `missing` in the message). It is a
+  **two-phase confirmation, not an authorization**: it proves a preview of this
+  exact commit happened, nothing more. Single-use means an *attempted mutation*
+  burns it (including one that then fails); pure pre-flight refusals happen before
+  the burn, so they leave it usable. Tokens live **in process memory only** — a
+  restarted host cannot replay or recover one, and must `preview` again.
 - **Preview never touches your checkout.** The trial merge runs through
   `git merge-tree --write-tree --name-only` (git ≥ 2.38); older git merges inside
   a disposable worktree at
@@ -201,17 +202,20 @@ is the only supported way to land that branch:
   `ephemeral.baseHead`: the Themis verdict no longer covers that tree),
   `lease_conflict` (`{file, holder, source: 'dirty' | 'lease' | 'branch'}`),
   `nothing_to_merge`, `merge_conflict`, `merge_busy` (another merge holds the
-  mutation lock), `head_changed` / `worktree_changed` (a writer moved the
+  mutation lock), `lock_lost` (this writer was evicted mid-window),
+  `head_changed` / `worktree_changed` (a writer moved the
   checkout while this apply queued for the lock).
   `unsupported_option` is returned for `cascade: true`: `merge_ephemeral` is not a
   rollback, and silently accepting a flag that changes nothing would be a lie.
-- **The branch is addressed by full ref.** `ephemeral.branch` is a plain
-  `pantheon/eph/*` name, but every differential call (`diff`, `rev-list`,
-  `merge-tree`, `git merge --squash`) uses `refs/heads/<branch>`, and
-  `baseHead` is resolved once to a sha. A same-named tag or `refs/pantheon/...`
-  ref can no longer be merged in place of the reviewed branch: the ambiguity is
-  refused up front (`ambiguous_branch`) *and* cannot take effect if it appears
-  mid-apply.
+- **The branch is addressed by full ref *and* by the reviewed sha.**
+  `ephemeral.branch` is a plain `pantheon/eph/*` name, but every differential call
+  (`diff`, `rev-list`, `merge-tree`) uses `refs/heads/<branch>`, and
+  `git merge --squash` is pinned to the **sha that was resolved and reviewed**
+  (`branchSha`), not to the ref. `baseHead` is resolved once to a sha too. A
+  same-named tag or `refs/pantheon/...` ref cannot be merged in place of the
+  reviewed branch (refused up front as `ambiguous_branch`), and a force-push
+  inside the merge window cannot change what lands. The landed commit is recorded
+  as `ephemeral.mergedSha` for audit.
 - **Overlap sources.** `dirty` is a local edit to a file the branch rewrites;
   `branch` is a second live `pantheon/eph/*` branch (no `ephemeral.mergedAt`)
   whose own diff overlaps; `lease` is another session's active
@@ -228,18 +232,30 @@ is the only supported way to land that branch:
   untouched tree.
 - **Apply leaves changes unstaged** (`commit: true` opts into a commit that honours
   your hooks). After the squash: a pre-merge checkpoint is captured, the squash is
-  unstaged with `git reset`, `ephemeral.mergedAt`/`mergeTree` are written back,
+  unstaged with `git reset`, `ephemeral.mergedAt`/`mergeTree`/`mergedSha` are
+  written back,
   `step:merge` is emitted, and a `[done]` board slot announces the merge. The
   branch is **kept**; only `mode:"discard"` deletes it (and records
   `ephemeral.discardedAt`). If the ledger write fails *after* the squash, the
   result is still `ok: true` with `metadataRecorded: false` + `metadataError`: the
-  merge landed, only the bookkeeping is missing (re-record, never re-merge).
-- **One mutation window per checkout.** The squash, the recovery and the ledger
-  write run under `.pantheon/.ephemeral-merge.lock` (the ledger's own lock
-  primitive, on its own path). A second apply — same process or another — gets
-  `merge_busy` and touches nothing; a writer that moved HEAD while an apply
-  queued is detected inside the lock (`head_changed` / `worktree_changed`) before
-  anything is mutated.
+  merge landed, only the bookkeeping is missing. There is no metadata-only action,
+  so the hint spells out the manual repair (`steps[...].ephemeral.*` in
+  `.pantheon/ledger/step-ledger.json`) and says explicitly **not** to re-run
+  `apply`, which would merge again.
+- **One mutation window per checkout, and it is safe to hold for seconds.** The
+  checkpoint, the squash (including your `commit: true` pre-commit hooks), the
+  recovery and the ledger write run under `.pantheon/.ephemeral-merge.lock`. It is
+  **not** the ledger lock: that one breaks a lock older than 2 s, which for a
+  multi-second merge would let a peer steal a live window and then erase its
+  content. Instead the merge lock (1) breaks on **liveness** — a dead owner pid is
+  reclaimed immediately, (2) tolerates 10 minutes before any age-based break,
+  (3) refreshes its mtime every second while held, and (4) re-verifies ownership
+  before the squash and again before the ledger write. So: a second apply waits up
+  to 1.5 s and then gets `merge_busy` (or `worktree_changed`/`head_changed` if it
+  acquires after the first finished), touching nothing either way; a writer whose
+  lock was taken mid-window aborts with `lock_lost` and does **not** write the
+  ledger, instead of reporting a success it does not own. Cross-process behaviour
+  is covered by a two-process test, not just an in-process seam.
 - **Never a half-merged tree.** Every failure after the first mutation runs the
   same recovery: `git reset --merge` to drop unmerged index entries and conflict
   markers, then a restore of the pre-merge checkpoint when the tree still differs.
