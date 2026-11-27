@@ -56,9 +56,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PR_MERGE_TOKEN || secrets.GITHUB_TOKEN }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
         run: |
           set -euo pipefail
-          pr_number='${{ github.event.workflow_run.pull_requests[0].number }}'
+          pr_number="${RUN_PR_NUMBER:-}"
           if [ -z "$pr_number" ]; then
             # workflow_run omits pull_requests for fork PRs and for some
             # retried runs; resolve it from the tested SHA instead of guessing.
@@ -134,8 +135,19 @@ jobs:
           # name and demand SUCCESS, so `test-suite` and `plugin-ts-coverage` can
           # never be a labelled skip. CodeQL is omitted here because its check
           # name is per-language (`Analyze (<language>)`) and protection is the
-          # authority for it; the protection-audit job asserts that family.
+          # authority for it; the protection-audit job cross-checks those exact
+          # names against the check runs that really report on main.
           checks="$(gh pr checks "$PR_NUMBER" --json name,state --jq '.' || true)"
+          # `gh pr checks` exits non-zero when any check is failing or pending,
+          # so its JSON is captured with `|| true`. That also means an API
+          # error yields empty or garbage output — and `jq` on empty input
+          # emits nothing and exits 0, leaving `missing` empty. Refuse anything
+          # that is not a non-empty array before computing `missing`, or a
+          # zero-check read would merge unverified.
+          if ! printf '%s' "$checks" | jq -e 'type == "array" and length > 0' >/dev/null; then
+            echo "::error::no usable check data from gh pr checks — refusing to merge"
+            exit 1
+          fi
           missing="$(printf '%s' "$checks" | jq -r --arg required "$REQUIRED_CHECKS" '
             ($required | split(" ")) as $required
             | [ .[] | select(.state == "SUCCESS") | .name ] as $passing
@@ -152,12 +164,15 @@ jobs:
           PR_MERGE_TOKEN: ${{ secrets.PR_MERGE_TOKEN }}
           GH_TOKEN: ${{ secrets.PR_MERGE_TOKEN || secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
+          # Bound to the same SHA asserted before the checks read: a push that
+          # lands between the read and the merge must make the merge fail.
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
           if [ -z "${PR_MERGE_TOKEN:-}" ]; then
             echo "::warning::PR_MERGE_TOKEN is not set. Merging with GITHUB_TOKEN does not trigger push workflows, so main will have no CI evidence for the merge SHA. See docs/RELEASING.md."
           fi
-          gh pr merge "$PR_NUMBER" --squash --delete-branch
+          gh pr merge "$PR_NUMBER" --squash --delete-branch --match-head-commit "$HEAD_SHA"
 
   protection-audit:
     # Non-blocking by construction: only the scheduled/manual audit runs here.
@@ -165,13 +180,18 @@ jobs:
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    # Read-only: this job never mutates the external protection config.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
-      - name: Assert main branch protection matches the documented gate
+      - name: Assert main branch protection matches the checks that really report
         env:
           GH_TOKEN: ${{ secrets.PR_MERGE_TOKEN }}
           # Keep in sync with docs/BRANCH-PROTECTION.md. A required context that
-          # does not exist can never report, which silently weakens the gate.
-          REQUIRED_CONTEXTS: 'validate test-suite plugin-ts-coverage commitlint security-scan'
+          # does not exist can never report, which silently weakens (or locks)
+          # the gate. CodeQL's advanced workflow reports per matrix language.
+          REQUIRED_CONTEXTS: 'validate|test-suite|plugin-ts-coverage|commitlint|security-scan|Analyze (actions)|Analyze (javascript-typescript)'
         run: |
           set -euo pipefail
           if [ -z "${GH_TOKEN:-}" ]; then
@@ -183,21 +203,37 @@ jobs:
             echo "::error::main protection must require up-to-date status checks (strict: true)"
             exit 1
           fi
-          missing="$(printf '%s' "$protection" | jq -r --arg required "$REQUIRED_CONTEXTS" '
-            ($required | split(" ")) as $required
-            | [ .required_status_checks.checks[].context ] as $actual
-            | [ $required[] as $name | select(($actual | index($name)) == null) | $name ]
-            | join(" ")
-          ')"
-          if [ -n "$missing" ]; then
-            echo "::error::main protection is missing required checks: $missing"
+
+          # Required contexts are only real if a check with that exact name
+          # reports on main's head. Cross-check against the live check runs
+          # instead of trusting a hardcoded name (e.g. "CodeQL", which never
+          # reports with the advanced matrix workflow).
+          reporting="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main/check-runs?per_page=100" \
+            --jq '.check_runs[].name')"
+          if [ -z "$reporting" ]; then
+            echo "::error::no check runs reported on main's head — cannot audit protection"
             exit 1
           fi
-          # CodeQL reports one check per language ("Analyze (python)"); accept the
-          # legacy "CodeQL" context for default-setup repositories.
-          if ! printf '%s' "$protection" | jq -e \
-            '[.required_status_checks.checks[].context] | any(. == "CodeQL" or startswith("Analyze ("))' >/dev/null; then
-            echo "::error::main protection must require a CodeQL check (CodeQL or Analyze (<language>))"
+          phantom="$(printf '%s' "$protection" | jq -r --arg names "$reporting" '
+            ($names | split("\n") | map(select(length > 0))) as $reporting
+            | [ .required_status_checks.checks[].context
+                | select(. as $context | ($reporting | index($context)) == null) ]
+            | join("; ")
+          ')"
+          if [ -n "$phantom" ]; then
+            echo "::error::required contexts never reported on main: $phantom"
+            echo "::warning::remediate manually (external config, do not automate): remove the phantom context(s) with: gh api -X PATCH repos/${GITHUB_REPOSITORY}/branches/main/protection --input protection.json"
             exit 1
+          fi
+
+          missing="$(printf '%s' "$protection" | jq -r --arg required "$REQUIRED_CONTEXTS" '
+            ($required | split("|")) as $required
+            | [ .required_status_checks.checks[].context ] as $actual
+            | [ $required[] as $name | select(($actual | index($name)) == null) | $name ]
+            | join("; ")
+          ')"
+          if [ -n "$missing" ]; then
+            echo "::warning::main protection is missing documented checks: $missing"
+            echo "::warning::apply manually (external config, do not automate): add them with: gh api -X PUT repos/${GITHUB_REPOSITORY}/branches/main/protection --input protection.json (missing: $missing)"
           fi
           printf '%s\n' "$protection" | jq -r '.required_status_checks.checks[].context'

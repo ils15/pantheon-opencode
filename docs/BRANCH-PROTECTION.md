@@ -36,13 +36,19 @@ job id when a job has no `name:` override):
 - `plugin-ts-coverage`
 - `commitlint`
 - `security-scan`
-- `CodeQL`
+- `Analyze (actions)`
+- `Analyze (javascript-typescript)`
 
-> **CodeQL's check name depends on the setup.** The advanced workflow in
-> `codeql.yml` reports one check per language — `Analyze (actions)`,
-> `Analyze (javascript-typescript)`, `Analyze (python)` — while GitHub's
-> default setup reports a single `CodeQL` check. Require whichever your
-> repository reports; the scheduled `protection-audit` job accepts either.
+> **CodeQL reports one check per matrix language.** The advanced workflow in
+> `codeql.yml` produces `Analyze (actions)`, `Analyze (javascript-typescript)`
+> and `Analyze (python)`; a bare `CodeQL` context never reports on this
+> repository, so requiring it would lock `main` permanently. Discover the real
+> names — and confirm they pass on `main` — before registering them:
+>
+> ```bash
+> gh api repos/ils15/pantheon-opencode/commits/main/check-runs \
+>   --jq '.check_runs[].name'
+> ```
 
 > **`version-check` is not a check.** That job was folded into `validate`.
 > There is no `PR Checks` workflow in this repository; do not add
@@ -88,7 +94,8 @@ gh api repos/:owner/:repo/branches/main/protection \
       {"context": "plugin-ts-coverage"},
       {"context": "commitlint"},
       {"context": "security-scan"},
-      {"context": "CodeQL"}
+      {"context": "Analyze (actions)"},
+      {"context": "Analyze (javascript-typescript)"}
     ]
   }' \
   --field enforce_admins=true \
@@ -111,10 +118,11 @@ gh api repos/:owner/:repo/branches/main/protection \
 If a required check never passes, every push to `main` is locked out, including
 the release pipeline. Confirm all of the following before the `PUT`:
 
-- [ ] **(a)** All six checks exist as workflow jobs: `validate`, `test-suite`,
-      and `plugin-ts-coverage` in `ci.yml`; `commitlint` in
-      `commit-lint.yml`; `security-scan` in `security-scan.yml`; and CodeQL
-      analysis in `codeql.yml`.
+- [ ] **(a)** All required checks exist: `validate`, `test-suite`, and
+      `plugin-ts-coverage` in `ci.yml`; `commitlint` in `commit-lint.yml`;
+      `security-scan` in `security-scan.yml`; and the `Analyze (…)` matrix
+      legs in `codeql.yml` (confirm the exact names with the `check-runs`
+      command above). A required context that never reports locks `main`.
 - [ ] **(b)** They all pass on current `main` (or a PR), including the push run
       on `main`. If any fails, fix the workflow first — never enable protection
       on a failing check.
@@ -158,7 +166,8 @@ Expected output:
   "plugin-ts-coverage",
   "commitlint",
   "security-scan",
-  "CodeQL"
+  "Analyze (actions)",
+  "Analyze (javascript-typescript)"
 ]
 ```
 

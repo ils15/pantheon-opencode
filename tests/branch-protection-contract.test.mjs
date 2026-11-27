@@ -38,8 +38,13 @@ const DOCUMENTED_CHECKS = [
   'plugin-ts-coverage',
   'commitlint',
   'security-scan',
-  'CodeQL',
 ]
+
+/**
+ * CodeQL's advanced workflow reports one check per matrix language. These are
+ * the contexts the docs must register — `CodeQL` never reports on this repo.
+ */
+const CODEQL_CHECKS = ['Analyze (actions)', 'Analyze (javascript-typescript)']
 
 function jobIdsIn(text) {
   return new Set([...text.matchAll(/^ {2}([a-z][a-z0-9-]*):$/gm)].map((match) => match[1]))
@@ -48,7 +53,6 @@ function jobIdsIn(text) {
 test('every documented required check exists as a real workflow job', () => {
   const allJobIds = new Set([...workflows.values()].flatMap((text) => [...jobIdsIn(text)]))
   for (const name of DOCUMENTED_CHECKS) {
-    if (name === 'CodeQL') continue
     assert.ok(
       allJobIds.has(name),
       `documented required check "${name}" has no job id in .github/workflows — ` +
@@ -64,6 +68,38 @@ test('every documented required check exists as a real workflow job', () => {
     codeql,
     /^ {2}analyze:\n(?:.*\n)*? {4}name: Analyze \(\$\{\{ matrix\.language \}\}\)$/m,
     'CodeQL must keep the matrix-named Analyze job documented in BRANCH-PROTECTION.md',
+  )
+  for (const name of CODEQL_CHECKS) {
+    const language = name.slice('Analyze ('.length, -1)
+    assert.match(
+      codeql,
+      new RegExp(`^ {8}- language: ${language}$`, 'm'),
+      `ci must define the ${language} CodeQL matrix leg that reports "${name}"`,
+    )
+  }
+})
+
+test('docs register the CodeQL contexts that really report, not a phantom', () => {
+  assert.doesNotMatch(
+    branchProtection,
+    /\{"context": "CodeQL"\}/,
+    'the actionable PUT payload must not require CodeQL, which never reports on this repo',
+  )
+  for (const name of CODEQL_CHECKS) {
+    assert.ok(
+      branchProtection.includes(`{"context": "${name}"}`),
+      `BRANCH-PROTECTION.md must require ${name} in the PUT payload`,
+    )
+  }
+  assert.match(
+    branchProtection,
+    /check-runs[\s\S]{0,120}--jq '\.check_runs\[\]\.name'/,
+    'BRANCH-PROTECTION.md must show how to discover the real check-run names',
+  )
+  assert.match(
+    branchProtection,
+    /"Analyze \(actions\)"/,
+    'the verification expected-output must list Analyze (actions)',
   )
 })
 
@@ -109,8 +145,8 @@ test('the scheduled protection audit reads the documented check set', () => {
 
   const requiredMatch = autoMerge.match(/REQUIRED_CONTEXTS: '([^']+)'/)
   assert.ok(requiredMatch, 'protection-audit must declare REQUIRED_CONTEXTS')
-  const audited = requiredMatch[1].split(/\s+/).filter(Boolean)
-  for (const name of DOCUMENTED_CHECKS.filter((name) => name !== 'CodeQL')) {
+  const audited = requiredMatch[1].split('|').filter(Boolean)
+  for (const name of [...DOCUMENTED_CHECKS, ...CODEQL_CHECKS]) {
     assert.ok(
       audited.includes(name),
       `protection-audit must require "${name}" — the documented merge gate`,
@@ -124,7 +160,7 @@ test('the scheduled protection audit reads the documented check set', () => {
   )
   assert.match(
     autoMerge,
-    /CodeQL[\s\S]{0,120}Analyze/,
-    'protection-audit must accept CodeQL checks reported as "Analyze (<language>)"',
+    /commits\/main\/check-runs/,
+    'protection-audit must cross-check required contexts against real check names',
   )
 })

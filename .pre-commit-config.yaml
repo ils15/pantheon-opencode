@@ -39,15 +39,22 @@ repos:
       - id: forbid-new-submodules
 
   # --- Local: generated artifacts must match their sources before commit ---
-  # src/agents/*.md are generated from roster.json. `prepack` catches drift at
-  # release time; this hook catches it at the commit that introduced it. CI
-  # additionally rebuilds and `git diff`s the result (a plain --check trims
-  # whitespace and misses formatter rewrites).
+  # Rebuild + diff (the same semantics as CI), not `build-roster --check`:
+  # that check trims both sides, so formatter-level rewrites (trailing newline,
+  # quoting) pass locally and fail CI.
+  #
+  # Tradeoff: rebuilding normalizes the working tree to canonical output. A
+  # generated file is never hand-edited, so unstaged drift there is expected to
+  # be discarded; the hook fails if the *staged* content differs from the build.
   - repo: local
     hooks:
       - id: generated-artifacts
-        name: generated-artifacts — agent roster matches roster.json
-        entry: node scripts/build-roster.mjs --check
+        name: generated-artifacts — rebuild and diff src/agents + src/plugin
+        entry: >-
+          bash -c 'npm run build:roster &&
+          git diff --exit-code src/agents &&
+          npm run build:plugin &&
+          git diff --exit-code src/plugin'
         language: system
         pass_filenames: false
 

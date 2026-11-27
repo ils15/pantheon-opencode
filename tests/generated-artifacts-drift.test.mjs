@@ -54,8 +54,23 @@ test('package.json exposes one generated-artifacts gate that covers every genera
   )
   assert.match(
     script,
+    /npm run check:plugin/,
+    'check:generated must verify the committed plugin bundle',
+  )
+  assert.match(
+    script,
     /node scripts\/build-agents-md\.mjs --check/,
     'check:generated must verify AGENTS.md / AGENTS.global.md',
+  )
+})
+
+test('check:plugin rebuilds to a temp file and byte-compares the committed bundle', () => {
+  const script = packageJson.scripts['check:plugin']
+  assert.ok(script, 'package.json must define check:plugin')
+  assert.match(
+    script,
+    /node scripts\/build-plugin\.mjs --check/,
+    'check:plugin must use the generator in check mode, not diff a mutated worktree',
   )
 })
 
@@ -111,7 +126,7 @@ test('CI rebuilds the plugin bundle and fails on any diff', () => {
   assert.doesNotMatch(step, /continue-on-error:\s*true/, 'a stale bundle must fail the job')
 })
 
-test('pre-commit runs the roster check before a drifted commit can be created', () => {
+test('pre-commit rebuilds generated artifacts and diffs them, not a trimming --check', () => {
   const localHooks = (preCommit.repos ?? []).flatMap((repo) =>
     repo.repo === 'local' ? (repo.hooks ?? []) : [],
   )
@@ -123,9 +138,20 @@ test('pre-commit runs the roster check before a drifted commit can be created', 
     false,
     'the hook must check the whole generated set, not only staged filenames',
   )
+  const entry = String(hook.entry)
   assert.match(
-    String(hook.entry),
-    /build-roster\.mjs\s+--check/,
-    'the hook entry must run build-roster.mjs --check',
+    entry,
+    /build:roster[^&]*&&\s*git diff --exit-code src\/agents/,
+    'the hook must rebuild the roster and diff it: --check trims whitespace and misses drift',
+  )
+  assert.match(
+    entry,
+    /build:plugin[^&]*&&\s*git diff --exit-code src\/plugin/,
+    'the hook must rebuild the plugin bundle and diff it',
+  )
+  assert.doesNotMatch(
+    entry,
+    /build-roster\.mjs --check/,
+    'a trimming --check is weaker than the CI rebuild+diff gate',
   )
 })
