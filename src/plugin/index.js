@@ -17008,6 +17008,10 @@ function recordStrategyRun(workspaceDir, input) {
   const policy = resolveStrategyPolicy(env);
   const createdAt = normalizeTimestamp(input.createdAt, "createdAt") ?? (/* @__PURE__ */ new Date()).toISOString();
   const verdict = normalizeVerdict(input.themisVerdict);
+  const rawVerdict = typeof input.themisVerdict === "string" ? input.themisVerdict.trim() : "";
+  if (rawVerdict && !verdict) {
+    throw new Error("themisVerdict must be APPROVE, APPROVE_WITH_NOTES or BLOCK");
+  }
   const stepKey = typeof input.stepKey === "string" && input.stepKey.trim() ? input.stepKey.trim() : null;
   const attempt = typeof input.attempt === "number" && Number.isFinite(input.attempt) ? Math.trunc(input.attempt) : null;
   const runId = typeof input.runId === "string" && input.runId.trim() ? input.runId.trim() : stepKey ? `${stepKey}:${attempt ?? nextAttemptForStep(db, stepKey)}` : newRunId();
@@ -18774,13 +18778,14 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             const readyBefore = new Set(
               readyStepKeys(Object.values(ledger.steps))
             );
+            const wasDone = entry.state === "done";
             entry.state = "done";
             entry.updatedAt = nowIso;
             delete entry.blockedBy;
             delete entry.cascadeReason;
             const readyAfter = readyStepKeys(Object.values(ledger.steps));
             const unlocked = readyAfter.filter((dep) => dep !== key && !readyBefore.has(dep));
-            return { kind: "done", step: entry, unlocked };
+            return { kind: "done", step: entry, unlocked, wasDone };
           });
           if (outcome.kind === "missing") {
             return jsonResult4({ ok: false, error: `Step "${key}" is not initialized` });
@@ -18812,7 +18817,7 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
               timestamp: Date.now()
             });
           }
-          const strategy = recordStepStrategyOutcome(
+          const strategy = outcome.wasDone ? { ok: true, recorded: false, reason: "already_done" } : recordStepStrategyOutcome(
             resolveMemoryStoreCwd(context, fallbackDir),
             latest,
             outcome.step,

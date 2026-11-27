@@ -585,6 +585,10 @@ export function recordStrategyRun(
   const policy = resolveStrategyPolicy(env)
   const createdAt = normalizeTimestamp(input.createdAt, 'createdAt') ?? new Date().toISOString()
   const verdict = normalizeVerdict(input.themisVerdict)
+  const rawVerdict = typeof input.themisVerdict === 'string' ? input.themisVerdict.trim() : ''
+  if (rawVerdict && !verdict) {
+    throw new Error('themisVerdict must be APPROVE, APPROVE_WITH_NOTES or BLOCK')
+  }
   const stepKey =
     typeof input.stepKey === 'string' && input.stepKey.trim() ? input.stepKey.trim() : null
   const attempt =
@@ -768,9 +772,7 @@ export function pruneStrategyRuns(
       // `created_at` is always canonical ISO-8601 UTC (normalized on write), so a
       // lexicographic comparison is order-equivalent to the julian day and lets
       // idx_strategy_runs_created answer the age window instead of scanning.
-      const byAge = db
-        .prepare('DELETE FROM strategy_runs WHERE created_at < ?')
-        .run(cutoff)
+      const byAge = db.prepare('DELETE FROM strategy_runs WHERE created_at < ?').run(cutoff)
       const remainingAfterAge = Number(
         (db.prepare('SELECT count(*) AS n FROM strategy_runs').get() as { n?: number })?.n ?? 0,
       )

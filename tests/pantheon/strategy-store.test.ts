@@ -579,6 +579,14 @@ test('S4-7 a Themis BLOCK forces success=0 and increments objections exactly onc
     recordStrategyRunSafe(dir, { strategyId: '  ', agent: 'hermes', success: true }).ok,
     false,
   )
+  const badVerdict = recordStrategyRunSafe(dir, {
+    strategyId: 'fast-merge',
+    agent: 'hermes',
+    success: true,
+    themisVerdict: 'MAYBE',
+  })
+  assert.equal(badVerdict.ok, false, 'an unparseable verdict is reported, never silently dropped')
+  assert.match(String(badVerdict.error), /themisVerdict/)
 })
 
 // ── Recorder safety: a broken recorder never fails a step ─────────────────
@@ -638,6 +646,17 @@ test('complete_step records a success run; the verification failure branch recor
   const okHit = queryStrategies(dir, { strategyId: deriveStrategyKey('hermes', 'feature') })
   assert.equal(okHit.results[0]?.attempts, 1)
   assert.equal(okHit.results[0]?.successes, 1)
+
+  // A repeat completion is not a new outcome: the sample must not inflate.
+  const repeat = await call(tool, { action: 'complete_step', stepKey: 's4-ok' }, ctx)
+  assert.equal(repeat.ok, true)
+  assert.equal((repeat.strategy as Json).recorded, false)
+  assert.equal((repeat.strategy as Json).reason, 'already_done')
+  assert.equal(
+    queryStrategies(dir, { strategyId: deriveStrategyKey('hermes', 'feature') }).results[0]
+      ?.attempts,
+    1,
+  )
 
   // Rollback-eligible verification failures park the step in `blocked`.
   await call(

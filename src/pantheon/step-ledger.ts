@@ -1806,13 +1806,16 @@ export function createStepLedgerTool(
             const readyBefore = new Set(
               readyStepKeys(Object.values(ledger.steps) as DependencyNode[]),
             )
+            // A repeat `complete_step` is not a new outcome: recording it again
+            // would inflate the strategy sample with a duplicate success.
+            const wasDone = entry.state === 'done'
             entry.state = 'done'
             entry.updatedAt = nowIso
             delete entry.blockedBy
             delete entry.cascadeReason
             const readyAfter = readyStepKeys(Object.values(ledger.steps) as DependencyNode[])
             const unlocked = readyAfter.filter((dep) => dep !== key && !readyBefore.has(dep))
-            return { kind: 'done' as const, step: entry, unlocked }
+            return { kind: 'done' as const, step: entry, unlocked, wasDone }
           })
           if (outcome.kind === 'missing') {
             return jsonResult({ ok: false, error: `Step "${key}" is not initialized` })
@@ -1857,12 +1860,14 @@ export function createStepLedgerTool(
               timestamp: Date.now(),
             })
           }
-          const strategy = recordStepStrategyOutcome(
-            resolveMemoryStoreCwd(context, fallbackDir),
-            latest,
-            outcome.step,
-            { success: true, now },
-          )
+          const strategy: StrategyRecordResult = outcome.wasDone
+            ? { ok: true, recorded: false, reason: 'already_done' }
+            : recordStepStrategyOutcome(
+                resolveMemoryStoreCwd(context, fallbackDir),
+                latest,
+                outcome.step,
+                { success: true, now },
+              )
           return jsonResult({
             ok: true,
             status: 'done',
