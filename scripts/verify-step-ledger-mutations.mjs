@@ -271,6 +271,42 @@ const MUTANTS = [
       },
     ],
   },
+  {
+    id: 'F1-anchor-removed',
+    description: 'init_step stops anchoring the baseline, so GC can prune it',
+    expect: 'F1 an anchored baseline survives',
+    edits: [
+      {
+        file: LEDGER,
+        from: '          const anchor =\n            ckpt.ok && ckpt.treeHash\n              ? await anchorCheckpointTree(cwd, ckpt.treeHash, key)\n              : undefined',
+        to: '          const anchor = undefined',
+      },
+    ],
+  },
+  {
+    id: 'F1-missing-baseline-check-removed',
+    description: 'rollback no longer detects a pruned baseline',
+    expect: 'F1 a pruned baseline fails loudly',
+    edits: [
+      {
+        file: LEDGER,
+        from: '          if (!(await checkpointTreeExists(cwd, step.baselineTree))) {',
+        to: '          if (false) {',
+      },
+    ],
+  },
+  {
+    id: 'F2-exact-name-predicate-reverted',
+    description: 'the runtime-state predicate only matches `.pantheon/` children',
+    expect: 'F2 the runtime-state predicate matches the exact',
+    edits: [
+      {
+        file: CHECKPOINT,
+        from: "  return rel === '.pantheon' || rel.startsWith('.pantheon/')",
+        to: "  return rel.startsWith('.pantheon/')",
+      },
+    ],
+  },
 ]
 
 function parseArgs(argv) {

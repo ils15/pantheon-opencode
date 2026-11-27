@@ -57,6 +57,17 @@ repos:
         language: system
         pass_filenames: false
 
+      # `.pantheon/` runtime state has been ignored since v1.0, but a force-add
+      # (ecebfbb, 2026-08-05) put a release-audit snapshot into history anyway.
+      # History is not rewritten; instead this closes the boundary. The allowlist
+      # is derived from the `.gitignore` un-ignore rules (ADRs + code-mode
+      # payload), and files already tracked in HEAD are grandfathered.
+      - id: pantheon-runtime-state
+        name: pantheon-runtime-state — reject staged .pantheon/ runtime state
+        entry: node scripts/hooks/check-pantheon-runtime-staged.mjs
+        language: system
+        pass_filenames: true
+
   # --- Local: custom Bifrost/API credential scan (header + value patterns) ---
   # scripts/secret-scan.mjs scans the full versionable set (index + untracked)
   # and never prints secret values, only file + label.

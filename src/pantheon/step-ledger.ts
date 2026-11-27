@@ -39,7 +39,9 @@ import {
 } from './ephemeral-worker.ts'
 import { createExecutionReceipt } from './execution-receipt.ts'
 import {
+  anchorCheckpointTree,
   captureGitCheckpoint,
+  checkpointTreeExists,
   restoreGitCheckpoint,
   stripPantheonFromTree,
 } from './git-checkpoint.ts'
@@ -83,6 +85,8 @@ export interface StepLedgerEntry {
   state: StepState
   taskType?: StepTaskType
   baselineTree?: string
+  /** Ref anchoring `baselineTree` (`refs/pantheon/step-baselines/<stepKey>`); keeps it GC-safe. */
+  baselineRef?: string
   rolledBackAt?: string
   reproductionCommand?: string
   reproductionExitCode?: number
@@ -572,7 +576,9 @@ export interface CheckpointScrubOutcome {
   readonly rewritten: Array<{ stepKey: string; from: string; to: string }>
   /** Checkpoints that were already clean. */
   readonly clean: number
-  /** Trees no longer referenced by the ledger; reclaim with `git gc --prune=now`. */
+  /** Entries whose baseline was anchored under a ref (migrates legacy entries). */
+  readonly anchored: Array<{ stepKey: string; ref: string; tree: string }>
+  /** Trees no longer referenced by any ref or the ledger; normal Git GC reclaims them. */
   readonly orphanedTrees: string[]
   /** Checkpoints that STILL contain `.pantheon/` (must be empty after a scrub). */
   readonly remaining: Array<{ stepKey: string; treeHash: string; reason: string }>
@@ -582,12 +588,12 @@ export interface CheckpointScrubOutcome {
  * Retroactive scrub (L3): remove `.pantheon/` from every checkpoint the ledger
  * still references.
  *
- * Checkpoints are dangling Git tree objects with no commit and no ref, so the
- * only index of "checkpoints" is the ledger's `baselineTree`. Each such tree is
- * rewritten without `.pantheon/` and the new SHA is persisted; the old tree and
- * its blobs become unreachable and are reclaimed by `git gc`. Idempotent, and
- * reversible only in the sense that the rewritten work-tree content is
- * identical minus runtime state (the old SHAs are reported for auditing).
+ * Checkpoints are anchored under `refs/pantheon/step-baselines/<stepKey>`, so
+ * the tree is reachable and Git GC cannot prune it. Legacy entries (created
+ * before anchoring) are anchored here as a side effect, which is also their
+ * migration path. The old tree becomes unreachable and normal `git gc` reclaims
+ * it — no aggressive prune is needed or advised, because that would also delete
+ * any baseline that has not been anchored yet.
  *
  * Checkpoints whose ledger entry was already deleted are unreachable from the
  * ledger (nothing can restore them) and are likewise left to Git GC.
@@ -604,7 +610,9 @@ export async function scrubCheckpointHistory(
   )
 
   const rewritten: Array<{ stepKey: string; from: string; to: string }> = []
+  const anchored: Array<{ stepKey: string; ref: string; tree: string }> = []
   const remaining: Array<{ stepKey: string; treeHash: string; reason: string }> = []
+  const updates = new Map<string, { baselineTree: string; baselineRef?: string }>()
   let clean = 0
 
   for (const entry of targets) {
@@ -617,21 +625,36 @@ export async function scrubCheckpointHistory(
       })
       continue
     }
-    if (!stripped.changed) {
-      clean += 1
+    const tree = stripped.treeHash
+    const anchor = await anchorCheckpointTree(cwd, tree, entry.stepKey)
+    if (!anchor.ok || !anchor.ref) {
+      remaining.push({
+        stepKey: entry.stepKey,
+        treeHash: tree,
+        reason: anchor.reason ?? 'anchor_failed',
+      })
       continue
     }
-    rewritten.push({ stepKey: entry.stepKey, from: entry.baselineTree, to: stripped.treeHash })
+    const needsUpdate = anchor.ref !== entry.baselineRef || tree !== entry.baselineTree
+    if (needsUpdate) {
+      updates.set(entry.stepKey, { baselineTree: tree, baselineRef: anchor.ref })
+      if (!entry.baselineRef) anchored.push({ stepKey: entry.stepKey, ref: anchor.ref, tree })
+    }
+    if (stripped.changed) {
+      rewritten.push({ stepKey: entry.stepKey, from: entry.baselineTree, to: tree })
+    } else {
+      clean += 1
+    }
   }
 
-  if (!dryRun && rewritten.length > 0) {
-    const updates = new Map(rewritten.map((item) => [item.stepKey, item.to]))
+  if (!dryRun && updates.size > 0) {
     const nowIso = new Date().toISOString()
     updateStepLedger(cwd, (ledger) => {
-      for (const [stepKey, treeHash] of updates) {
+      for (const [stepKey, next] of updates) {
         const entry = ledger.steps[stepKey]
         if (!entry) continue
-        entry.baselineTree = treeHash
+        entry.baselineTree = next.baselineTree
+        if (next.baselineRef) entry.baselineRef = next.baselineRef
         entry.updatedAt = nowIso
       }
     })
@@ -643,6 +666,7 @@ export async function scrubCheckpointHistory(
     scanned: targets.length,
     rewritten,
     clean,
+    anchored,
     orphanedTrees: rewritten.map((item) => item.from),
     remaining,
   }
@@ -1068,6 +1092,12 @@ export function createStepLedgerTool(
           if (!precheck.ok) return jsonResult(dependencyFailurePayload(key, precheck))
 
           const ckpt = await captureGitCheckpoint(cwd, key)
+          // Anchor the baseline under a ref so Git GC cannot prune it; the
+          // checkpoint stays restorable for as long as the step exists.
+          const anchor =
+            ckpt.ok && ckpt.treeHash
+              ? await anchorCheckpointTree(cwd, ckpt.treeHash, key)
+              : undefined
           const outcome = updateStepLedger(cwd, (ledger) => {
             const validation = validateDependencies(
               key,
@@ -1088,6 +1118,7 @@ export function createStepLedgerTool(
               state,
               ...(taskType ? { taskType } : {}),
               ...(ckpt.ok && ckpt.treeHash ? { baselineTree: ckpt.treeHash } : {}),
+              ...(anchor?.ok && anchor.ref ? { baselineRef: anchor.ref } : {}),
               ...(deps.length > 0 ? { dependsOn: deps } : {}),
               ...(ownedFiles.length > 0 ? { ownedFiles } : {}),
               ...(forbiddenFiles.length > 0 ? { forbiddenFiles } : {}),
@@ -1364,6 +1395,22 @@ export function createStepLedgerTool(
               error: 'dependents_done',
               dependents: decision.dependents,
               treeUntouched: true,
+              step,
+            })
+          }
+
+          // A pruned baseline (GC, manual object cleanup) must fail loudly and
+          // leave everything untouched — never "succeed" by restoring nothing.
+          // Checked after the refusal decision: a refusal must win without
+          // touching the object database, and this stays before any mutation.
+          if (!(await checkpointTreeExists(cwd, step.baselineTree))) {
+            return jsonResult({
+              ok: false,
+              error: 'baseline_missing',
+              baselineTree: step.baselineTree,
+              ...(step.baselineRef ? { baselineRef: step.baselineRef } : {}),
+              treeUntouched: true,
+              hint: 'The checkpoint tree no longer exists (pruned by Git or by a manual object cleanup). Re-initialize the step to capture a fresh baseline, or restore the recorded tree from a backup.',
               step,
             })
           }

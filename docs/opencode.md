@@ -112,8 +112,7 @@ A step may declare prerequisites with `dependsOn`:
   entry must be preserved, repair the offending `dependsOn` edge in
   `.pantheon/ledger/step-ledger.json` instead.
 - **Checkpoints never carry runtime state.** `captureGitCheckpoint` writes a
-  temporary-index tree (no commit, no ref — a dangling tree object referenced only
-  by the ledger's `baselineTree`) and drops `.pantheon/` before `write-tree`;
+  temporary-index tree and drops `.pantheon/` before `write-tree`;
   `restoreGitCheckpoint` drops it from the index before `checkout-index`, so even a
   checkpoint written by an older version cannot roll back the ledger, board,
   memory DB, or deepwork state. Nothing legitimately needs `.pantheon/` inside a
@@ -121,8 +120,20 @@ A step may declare prerequisites with `dependsOn`:
   append-only runtime records. Checkpoints from before this exclusion can be
   repaired in place with `pantheon_step_ledger(action="scrub_checkpoints")`
   (`dryRun: true` reports first): each referenced tree is rewritten without
-  `.pantheon/`, the ledger's `baselineTree` is updated, and the old tree plus its
-  blobs are left unreachable for `git gc` to reclaim.
+  `.pantheon/`, the ledger's `baselineTree` is updated, and the old tree becomes
+  unreachable for Git's normal expiry to reclaim.
+- **Every baseline is anchored, so GC cannot eat it.** `init_step` wraps the
+  baseline tree in a parentless commit and points
+  `refs/pantheon/step-baselines/<stepKey>` at it (`baselineRef` on the entry), which
+  makes checkpoints reachable and — for the first time — enumerable
+  (`git for-each-ref refs/pantheon/step-baselines`). A plain tree is a dangling
+  object that Git's default two-week expiry silently deletes, which would make a
+  later rollback impossible. Do **not** run `git gc --prune=now` to clean up after a
+  scrub: it also deletes any baseline that has not been anchored yet. Normal `git gc`
+  is safe. Legacy entries (created before anchoring) get their ref on the next
+  `scrub_checkpoints`, which is their migration path; `rollback_step` reports
+  `baseline_missing` (with the tree SHA and the ref, when known) instead of
+  silently restoring nothing.
 - **Concurrency.** The ledger is a single JSON file, so every mutation goes through
   `updateStepLedger`: a lock file `.pantheon/ledger/.step-ledger.lock` holding a
   unique `<pid>:<uuid>` owner token, acquired with `open(..., 'wx')`. A stale lock

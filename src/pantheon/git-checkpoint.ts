@@ -33,6 +33,34 @@ const SAFE_TREE_RE = /^[0-9a-f]{40}$/
  */
 const PANTHEON_RUNTIME_PATHS = ['.pantheon'] as const
 
+/**
+ * Anchors: `<refs/pantheon/step-baselines>/<stepKey>` points at a commit that
+ * wraps the checkpoint tree, so Git GC cannot prune a live baseline. Without a
+ * ref, baselines are dangling trees that normal expiry (2 weeks by default)
+ * silently discards — which makes a later `rollback_step` impossible.
+ */
+const BASELINE_REF_PREFIX = 'refs/pantheon/step-baselines/'
+
+/** Deterministic identity so anchoring is reproducible and needs no user config. */
+const ANCHOR_IDENTITY = {
+  GIT_AUTHOR_NAME: 'Pantheon Checkpoint',
+  GIT_AUTHOR_EMAIL: 'checkpoint@pantheon.local',
+  GIT_COMMITTER_NAME: 'Pantheon Checkpoint',
+  GIT_COMMITTER_EMAIL: 'checkpoint@pantheon.local',
+  GIT_AUTHOR_DATE: '2000-01-01T00:00:00Z',
+  GIT_COMMITTER_DATE: '2000-01-01T00:00:00Z',
+} as const
+
+/** True for `.pantheon` itself and anything under it (exact name included). */
+function isPantheonRuntimePath(rel: string): boolean {
+  return rel === '.pantheon' || rel.startsWith('.pantheon/')
+}
+
+export function baselineRefName(stepKey: string): string {
+  const safeTag = stepKey.replace(/[^a-zA-Z0-9._-]/g, '_') || 'step'
+  return `${BASELINE_REF_PREFIX}${safeTag}`
+}
+
 /** Drop `.pantheon/` entries from the isolated index before writing/checking out a tree. */
 async function dropPantheonRuntimeState(root: string, tmpIndex: string): Promise<void> {
   await runGit(
@@ -130,6 +158,88 @@ async function treeContainsPantheon(root: string, treeHash: string): Promise<boo
   return listing.length > 0
 }
 
+/** True when the tree object still exists in the object database. */
+export async function checkpointTreeExists(cwd: string, treeHash: string): Promise<boolean> {
+  if (!SAFE_TREE_RE.test(treeHash)) return false
+  try {
+    await runGit(resolve(cwd), ['cat-file', '-e', `${treeHash}^{tree}`])
+    return true
+  } catch {
+    return false
+  }
+}
+
+export interface BaselineAnchor {
+  readonly ok: boolean
+  readonly ref?: string
+  readonly commit?: string
+  readonly reason?: string
+}
+
+/**
+ * Anchor a checkpoint tree under `refs/pantheon/step-baselines/<stepKey>`.
+ *
+ * A bare tree is a dangling object: nothing references it, so `git gc` (normal
+ * expiry, two weeks by default) deletes it and the baseline silently disappears.
+ * Wrapping the tree in a parentless commit referenced by a dedicated ref keeps
+ * it reachable and makes checkpoints enumerable (`git for-each-ref
+ * refs/pantheon/step-baselines`). The commit is deterministic (fixed identity and
+ * date), so re-anchoring the same tree is a no-op.
+ */
+export async function anchorCheckpointTree(
+  cwd: string,
+  treeHash: string,
+  stepKey: string,
+): Promise<BaselineAnchor> {
+  const root = resolve(cwd)
+  if (!SAFE_TREE_RE.test(treeHash)) return { ok: false, reason: 'invalid_tree_hash' }
+  if (!(await isGitWorkspace(root))) return { ok: false, reason: 'not_a_git_repository' }
+  const ref = baselineRefName(stepKey)
+  try {
+    const commit = await runGit(
+      root,
+      ['commit-tree', treeHash, '-m', `pantheon baseline: ${stepKey}`],
+      {
+        ...ANCHOR_IDENTITY,
+      },
+    )
+    if (!SAFE_TREE_RE.test(commit)) return { ok: false, reason: 'invalid_commit_hash' }
+    await runGit(root, ['update-ref', ref, commit])
+    return { ok: true, ref, commit }
+  } catch (err: unknown) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+export interface AnchoredBaseline {
+  readonly ref: string
+  readonly commit: string
+  readonly tree: string
+}
+
+/** Enumerate every anchored checkpoint (the only enumerable index of baselines). */
+export async function listAnchoredBaselines(cwd: string): Promise<AnchoredBaseline[]> {
+  const root = resolve(cwd)
+  if (!(await isGitWorkspace(root))) return []
+  try {
+    const out = await runGit(root, [
+      'for-each-ref',
+      '--format=%(refname) %(objectname)',
+      BASELINE_REF_PREFIX,
+    ])
+    const anchors: AnchoredBaseline[] = []
+    for (const line of out.split(/\r?\n/).filter(Boolean)) {
+      const [ref, commit] = line.split(' ')
+      if (!ref || !commit) continue
+      const tree = await runGit(root, ['rev-parse', `${commit}^{tree}`])
+      anchors.push({ ref, commit, tree })
+    }
+    return anchors
+  } catch {
+    return []
+  }
+}
+
 export interface TreeStripResult {
   readonly ok: boolean
   readonly treeHash?: string
@@ -199,7 +309,7 @@ export async function restoreGitCheckpoint(
 
     const currentOthers = await runGit(root, ['ls-files', '--others', '--exclude-standard'])
     for (const rel of currentOthers.split(/\r?\n/).filter(Boolean)) {
-      if (rel.startsWith('.pantheon/')) continue
+      if (isPantheonRuntimePath(rel)) continue
       if (!baselineFiles.has(rel)) {
         const target = join(root, rel)
         try {

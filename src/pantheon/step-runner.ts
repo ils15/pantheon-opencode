@@ -7,7 +7,7 @@
  * context forking (`session.fork` with bounded `create+prompt` fallback).
  */
 
-import { captureGitCheckpoint } from './git-checkpoint.ts'
+import { anchorCheckpointTree, captureGitCheckpoint } from './git-checkpoint.ts'
 import {
   readStepLedger,
   type StepState,
@@ -382,6 +382,8 @@ export async function runAtomicStepSubSession(
   // Ensure ledger entry + Git checkpoint baseline exist cleanly before sub-session starts
   if (!readStepLedger(ledgerRoot).steps[stepKey]) {
     const ckpt = await captureGitCheckpoint(cwd, stepKey)
+    const anchor =
+      ckpt.ok && ckpt.treeHash ? await anchorCheckpointTree(cwd, ckpt.treeHash, stepKey) : undefined
     updateStepLedger(ledgerRoot, (store) => {
       // Re-check under the lock: a concurrent writer may have created it already.
       if (store.steps[stepKey]) return
@@ -392,6 +394,7 @@ export async function runAtomicStepSubSession(
         state: 'in_progress',
         ...(input.taskType ? { taskType: input.taskType } : {}),
         ...(ckpt.ok && ckpt.treeHash ? { baselineTree: ckpt.treeHash } : {}),
+        ...(anchor?.ok && anchor.ref ? { baselineRef: anchor.ref } : {}),
         mutatedFiles: [],
         lastMutationAt: null,
         lastVerifiedAt: null,

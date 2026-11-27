@@ -14267,6 +14267,22 @@ import { promisify as promisify3 } from "node:util";
 var execFileAsync3 = promisify3(execFile3);
 var SAFE_TREE_RE = /^[0-9a-f]{40}$/;
 var PANTHEON_RUNTIME_PATHS = [".pantheon"];
+var BASELINE_REF_PREFIX = "refs/pantheon/step-baselines/";
+var ANCHOR_IDENTITY = {
+  GIT_AUTHOR_NAME: "Pantheon Checkpoint",
+  GIT_AUTHOR_EMAIL: "checkpoint@pantheon.local",
+  GIT_COMMITTER_NAME: "Pantheon Checkpoint",
+  GIT_COMMITTER_EMAIL: "checkpoint@pantheon.local",
+  GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z",
+  GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z"
+};
+function isPantheonRuntimePath(rel) {
+  return rel === ".pantheon" || rel.startsWith(".pantheon/");
+}
+function baselineRefName(stepKey) {
+  const safeTag = stepKey.replace(/[^a-zA-Z0-9._-]/g, "_") || "step";
+  return `${BASELINE_REF_PREFIX}${safeTag}`;
+}
 async function dropPantheonRuntimeState(root, tmpIndex) {
   await runGit(
     root,
@@ -14337,6 +14353,35 @@ async function treeContainsPantheon(root, treeHash) {
   ]);
   return listing.length > 0;
 }
+async function checkpointTreeExists(cwd, treeHash) {
+  if (!SAFE_TREE_RE.test(treeHash)) return false;
+  try {
+    await runGit(resolve14(cwd), ["cat-file", "-e", `${treeHash}^{tree}`]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function anchorCheckpointTree(cwd, treeHash, stepKey) {
+  const root = resolve14(cwd);
+  if (!SAFE_TREE_RE.test(treeHash)) return { ok: false, reason: "invalid_tree_hash" };
+  if (!await isGitWorkspace(root)) return { ok: false, reason: "not_a_git_repository" };
+  const ref = baselineRefName(stepKey);
+  try {
+    const commit = await runGit(
+      root,
+      ["commit-tree", treeHash, "-m", `pantheon baseline: ${stepKey}`],
+      {
+        ...ANCHOR_IDENTITY
+      }
+    );
+    if (!SAFE_TREE_RE.test(commit)) return { ok: false, reason: "invalid_commit_hash" };
+    await runGit(root, ["update-ref", ref, commit]);
+    return { ok: true, ref, commit };
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+  }
+}
 async function stripPantheonFromTree(cwd, treeHash) {
   const root = resolve14(cwd);
   if (!SAFE_TREE_RE.test(treeHash)) return { ok: false, reason: "invalid_tree_hash" };
@@ -14374,7 +14419,7 @@ async function restoreGitCheckpoint(cwd, treeHash) {
     const baselineFiles = new Set(treeListing.split(/\r?\n/).filter(Boolean));
     const currentOthers = await runGit(root, ["ls-files", "--others", "--exclude-standard"]);
     for (const rel of currentOthers.split(/\r?\n/).filter(Boolean)) {
-      if (rel.startsWith(".pantheon/")) continue;
+      if (isPantheonRuntimePath(rel)) continue;
       if (!baselineFiles.has(rel)) {
         const target = join18(root, rel);
         try {
@@ -14552,6 +14597,7 @@ async function runAtomicStepSubSession(input) {
   }
   if (!readStepLedger(ledgerRoot).steps[stepKey]) {
     const ckpt = await captureGitCheckpoint(cwd, stepKey);
+    const anchor = ckpt.ok && ckpt.treeHash ? await anchorCheckpointTree(cwd, ckpt.treeHash, stepKey) : void 0;
     updateStepLedger(ledgerRoot, (store2) => {
       if (store2.steps[stepKey]) return;
       store2.steps[stepKey] = {
@@ -14561,6 +14607,7 @@ async function runAtomicStepSubSession(input) {
         state: "in_progress",
         ...input.taskType ? { taskType: input.taskType } : {},
         ...ckpt.ok && ckpt.treeHash ? { baselineTree: ckpt.treeHash } : {},
+        ...anchor?.ok && anchor.ref ? { baselineRef: anchor.ref } : {},
         mutatedFiles: [],
         lastMutationAt: null,
         lastVerifiedAt: null,
@@ -16238,7 +16285,9 @@ async function scrubCheckpointHistory(cwd, options = {}) {
     (entry) => typeof entry.baselineTree === "string" && entry.baselineTree.length > 0
   );
   const rewritten = [];
+  const anchored = [];
   const remaining = [];
+  const updates = /* @__PURE__ */ new Map();
   let clean = 0;
   for (const entry of targets) {
     const stripped = await stripPantheonFromTree(cwd, entry.baselineTree);
@@ -16250,20 +16299,35 @@ async function scrubCheckpointHistory(cwd, options = {}) {
       });
       continue;
     }
-    if (!stripped.changed) {
-      clean += 1;
+    const tree = stripped.treeHash;
+    const anchor = await anchorCheckpointTree(cwd, tree, entry.stepKey);
+    if (!anchor.ok || !anchor.ref) {
+      remaining.push({
+        stepKey: entry.stepKey,
+        treeHash: tree,
+        reason: anchor.reason ?? "anchor_failed"
+      });
       continue;
     }
-    rewritten.push({ stepKey: entry.stepKey, from: entry.baselineTree, to: stripped.treeHash });
+    const needsUpdate = anchor.ref !== entry.baselineRef || tree !== entry.baselineTree;
+    if (needsUpdate) {
+      updates.set(entry.stepKey, { baselineTree: tree, baselineRef: anchor.ref });
+      if (!entry.baselineRef) anchored.push({ stepKey: entry.stepKey, ref: anchor.ref, tree });
+    }
+    if (stripped.changed) {
+      rewritten.push({ stepKey: entry.stepKey, from: entry.baselineTree, to: tree });
+    } else {
+      clean += 1;
+    }
   }
-  if (!dryRun && rewritten.length > 0) {
-    const updates = new Map(rewritten.map((item) => [item.stepKey, item.to]));
+  if (!dryRun && updates.size > 0) {
     const nowIso = (/* @__PURE__ */ new Date()).toISOString();
     updateStepLedger(cwd, (ledger) => {
-      for (const [stepKey, treeHash] of updates) {
+      for (const [stepKey, next] of updates) {
         const entry = ledger.steps[stepKey];
         if (!entry) continue;
-        entry.baselineTree = treeHash;
+        entry.baselineTree = next.baselineTree;
+        if (next.baselineRef) entry.baselineRef = next.baselineRef;
         entry.updatedAt = nowIso;
       }
     });
@@ -16274,6 +16338,7 @@ async function scrubCheckpointHistory(cwd, options = {}) {
     scanned: targets.length,
     rewritten,
     clean,
+    anchored,
     orphanedTrees: rewritten.map((item) => item.from),
     remaining
   };
@@ -16594,6 +16659,7 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
           );
           if (!precheck.ok) return jsonResult3(dependencyFailurePayload(key, precheck));
           const ckpt = await captureGitCheckpoint(cwd, key);
+          const anchor = ckpt.ok && ckpt.treeHash ? await anchorCheckpointTree(cwd, ckpt.treeHash, key) : void 0;
           const outcome = updateStepLedger(cwd, (ledger) => {
             const validation = validateDependencies(
               key,
@@ -16613,6 +16679,7 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
               state,
               ...taskType ? { taskType } : {},
               ...ckpt.ok && ckpt.treeHash ? { baselineTree: ckpt.treeHash } : {},
+              ...anchor?.ok && anchor.ref ? { baselineRef: anchor.ref } : {},
               ...deps.length > 0 ? { dependsOn: deps } : {},
               ...ownedFiles.length > 0 ? { ownedFiles } : {},
               ...forbiddenFiles.length > 0 ? { forbiddenFiles } : {},
@@ -16797,6 +16864,17 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
               error: "dependents_done",
               dependents: decision2.dependents,
               treeUntouched: true,
+              step
+            });
+          }
+          if (!await checkpointTreeExists(cwd, step.baselineTree)) {
+            return jsonResult3({
+              ok: false,
+              error: "baseline_missing",
+              baselineTree: step.baselineTree,
+              ...step.baselineRef ? { baselineRef: step.baselineRef } : {},
+              treeUntouched: true,
+              hint: "The checkpoint tree no longer exists (pruned by Git or by a manual object cleanup). Re-initialize the step to capture a fresh baseline, or restore the recorded tree from a backup.",
               step
             });
           }

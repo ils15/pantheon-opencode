@@ -8,10 +8,12 @@ import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
 import {
   existsSync,
+  lstatSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs'
@@ -21,7 +23,12 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { pathToFileURL } from 'node:url'
 import { getSharedBus } from '../../src/pantheon/bus.ts'
-import { captureGitCheckpoint, restoreGitCheckpoint } from '../../src/pantheon/git-checkpoint.ts'
+import {
+  captureGitCheckpoint,
+  checkpointTreeExists,
+  listAnchoredBaselines,
+  restoreGitCheckpoint,
+} from '../../src/pantheon/git-checkpoint.ts'
 import { evaluateReproductionGate } from '../../src/pantheon/reproduction-gate.ts'
 import {
   buildDependencyGraph,
@@ -1221,6 +1228,9 @@ test('L3 scrub rewrites legacy checkpoints without .pantheon and leaves them GC-
     assert.deepEqual(scrubbed.remaining, [])
     assert.equal(scrubbed.rewritten.length, 1)
     assert.notEqual(scrubbed.rewritten[0]?.to, legacyTree)
+    // Legacy entries are anchored by the scrub (their migration path).
+    assert.equal(scrubbed.anchored.length, 1)
+    assert.equal(scrubbed.anchored[0]?.ref, 'refs/pantheon/step-baselines/l3-a')
 
     const store = readStepLedger(dir)
     const rewrittenTree = String(store.steps['l3-a']?.baselineTree)
@@ -1257,6 +1267,99 @@ test('L3 scrub rewrites legacy checkpoints without .pantheon and leaves them GC-
     )
   } finally {
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// ── F1/F2 — baselines survive GC, pruned baselines fail loudly, and the
+//    runtime-state predicate matches the exact `.pantheon` name ────────────
+
+test('F1 an anchored baseline survives aggressive GC and can still be rolled back', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-dep-anchor-'))
+  try {
+    initGitRepo(dir)
+    const tool = makeTool(dir)
+    const ctx = { directory: dir }
+
+    const init = await call(tool, { action: 'init_step', stepKey: 'anchor-a', objective: 'a' }, ctx)
+    assert.equal(init.ok, true)
+    const entry = readStepLedger(dir).steps['anchor-a']
+    assert.ok(entry?.baselineTree)
+    assert.equal(entry.baselineRef, 'refs/pantheon/step-baselines/anchor-a')
+
+    const anchors = await listAnchoredBaselines(dir)
+    assert.equal(anchors.length, 1)
+    assert.equal(anchors[0]?.ref, 'refs/pantheon/step-baselines/anchor-a')
+    assert.equal(anchors[0]?.tree, entry.baselineTree)
+
+    // The baseline is reachable, so even `--prune=now` cannot delete it.
+    execFileSync('git', ['gc', '--prune=now', '--quiet'], { cwd: dir })
+    assert.equal(await checkpointTreeExists(dir, entry.baselineTree), true)
+
+    const rb = await call(tool, { action: 'rollback_step', stepKey: 'anchor-a' }, ctx)
+    assert.equal(rb.ok, true, `rollback after gc: ${String(rb.error)}`)
+    assert.equal(readStepLedger(dir).steps['anchor-a']?.state, 'rolled_back')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('F1 a pruned baseline fails loudly and leaves the step untouched', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-dep-missing-baseline-'))
+  try {
+    initGitRepo(dir)
+    const tool = makeTool(dir)
+    const ctx = { directory: dir }
+    seed(dir, [
+      stepEntry('miss-a', {
+        state: 'in_progress',
+        baselineTree: 'a'.repeat(40),
+        baselineRef: 'refs/pantheon/step-baselines/miss-a',
+      }),
+    ])
+
+    const rb = await call(tool, { action: 'rollback_step', stepKey: 'miss-a' }, ctx)
+    assert.equal(rb.ok, false)
+    assert.equal(rb.error, 'baseline_missing')
+    assert.equal(rb.baselineTree, 'a'.repeat(40))
+    assert.equal(rb.treeUntouched, true)
+    assert.match(String(rb.hint), /pruned|Re-initialize/)
+    assert.equal(readStepLedger(dir).steps['miss-a']?.state, 'in_progress')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('F2 the runtime-state predicate matches the exact `.pantheon` name (file and symlink)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-dep-exact-'))
+  const outside = mkdtempSync(join(tmpdir(), 'pantheon-dep-exact-outside-'))
+  try {
+    initGitRepo(dir)
+    const baseline = await captureGitCheckpoint(dir, 'exact')
+    assert.equal(baseline.ok, true)
+
+    // A *symlink* named exactly `.pantheon`: `startsWith('.pantheon/')` misses
+    // it, and the restore's untracked cleanup would delete it.
+    const symlink = join(dir, '.pantheon')
+    symlinkSync(outside, symlink)
+    assert.equal(
+      execFileSync('git', ['ls-files', '--others', '--exclude-standard'], {
+        cwd: dir,
+        encoding: 'utf8',
+      }).includes('.pantheon'),
+      true,
+    )
+    await restoreGitCheckpoint(dir, String(baseline.treeHash))
+    assert.equal(lstatSync(symlink).isSymbolicLink(), true, 'symlink named .pantheon must survive')
+
+    // A regular *file* named exactly `.pantheon`.
+    rmSync(symlink)
+    writeFileSync(symlink, 'runtime state placeholder\n')
+    await restoreGitCheckpoint(dir, String(baseline.treeHash))
+    assert.equal(existsSync(symlink), true, 'file named .pantheon must survive')
+    assert.equal(readFileSync(symlink, 'utf8'), 'runtime state placeholder\n')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+    rmSync(outside, { recursive: true, force: true })
   }
 })
 

@@ -72,8 +72,11 @@ your-project/
 `pending` means prerequisites are still open. A step is *ready* when it is
 `pending`, declares at least one dependency, and every dependency is `done`;
 `pantheon_step_ledger(action="status")` returns that as `graph.ready` with the
-parallel launch `waves` and the `unplaced` steps that can never launch. The lock
-file (`.pantheon/ledger/.step-ledger.lock`) carries an owner token so concurrent
+parallel launch `waves` and the `unplaced` steps that can never launch. Every
+baseline is anchored under `refs/pantheon/step-baselines/<stepKey>` so Git GC
+cannot prune a live checkpoint, and a pruned baseline is reported as
+`baseline_missing` instead of rolling back nothing. The lock file
+(`.pantheon/ledger/.step-ledger.lock`) carries an owner token so concurrent
 writers are safe, and a corrupt ledger is moved aside as
 `step-ledger.json.corrupt.<ts>` — see
 [Step dependencies](opencode.md#step-dependencies-and-readiness).
