@@ -14771,7 +14771,7 @@ async function runAtomicStepSubSession(input) {
 
 // src/pantheon/worktree-orchestrator.ts
 import { execFile as execFile4 } from "node:child_process";
-import { existsSync as existsSync14, mkdirSync as mkdirSync9, realpathSync as realpathSync6 } from "node:fs";
+import { accessSync, constants as constants3, existsSync as existsSync14, mkdirSync as mkdirSync9, realpathSync as realpathSync6 } from "node:fs";
 import { basename as basename5, dirname as dirname13, join as join19, resolve as resolve15 } from "node:path";
 import { promisify as promisify4 } from "node:util";
 var execFileAsync4 = promisify4(execFile4);
@@ -14797,6 +14797,42 @@ function isInsideOrDotPantheon(sourceDirectory, candidate) {
   const srcReal = existsSync14(sourceDirectory) ? realpathSync6(resolve15(sourceDirectory)) : resolve15(sourceDirectory);
   const candResolved = resolve15(candidate);
   return candResolved === srcReal || candResolved.startsWith(`${srcReal}/`) || candResolved.includes("/.pantheon/") || candResolved.includes("\\.pantheon\\");
+}
+var REQUIRED_WORKTREE_HOOKS = ["commit-msg", "pre-commit"];
+async function assertWorktreeHooks(source, targetDir, signal) {
+  let configured = "";
+  try {
+    configured = (await runGit2(source, ["config", "--get", "core.hooksPath"], signal)).trim();
+  } catch (err) {
+    if (isAbortError(err)) throw err;
+    return;
+  }
+  if (!configured) return;
+  const hooksDir = resolve15(
+    targetDir,
+    (await runGit2(targetDir, ["rev-parse", "--git-path", "hooks"], signal)).trim()
+  );
+  const problems = [];
+  if (!existsSync14(hooksDir)) {
+    problems.push(`hooks directory ${hooksDir} does not exist`);
+  } else {
+    for (const hook of REQUIRED_WORKTREE_HOOKS) {
+      const file = join19(hooksDir, hook);
+      if (!existsSync14(file)) {
+        problems.push(`${hook} is missing from ${hooksDir}`);
+        continue;
+      }
+      try {
+        accessSync(file, constants3.X_OK);
+      } catch {
+        problems.push(`${hook} is not executable`);
+      }
+    }
+  }
+  if (problems.length === 0) return;
+  throw new Error(
+    `Refusing to create ${targetDir}: git would silently skip its hooks (${problems.join("; ")}). core.hooksPath=${configured} comes from the shared .git/config, but a fresh worktree only contains tracked files. Fix the source checkout (npm run prepare) and create the worktree again.`
+  );
 }
 async function runGit2(cwd, args, signal) {
   if (signal?.aborted) {
@@ -14826,6 +14862,18 @@ function createPantheonWorktreeDefinition() {
       const args = ["worktree", "add", "--detach", targetDir];
       if (input.branch) args.push(input.branch);
       await runGit2(source, args, context.signal);
+      try {
+        await assertWorktreeHooks(source, targetDir, context.signal);
+      } catch (err) {
+        if (isAbortError(err)) throw err;
+        if (existsSync14(targetDir)) {
+          try {
+            await runGit2(source, ["worktree", "remove", "--force", targetDir], context.signal);
+          } catch {
+          }
+        }
+        throw err;
+      }
       return { directory: existsSync14(targetDir) ? realpathSync6(targetDir) : targetDir };
     },
     remove: async (input, context) => {
@@ -21500,7 +21548,7 @@ function createCodemapTools(fallbackDir) {
 
 // src/pantheon/cost-command.ts
 import { execFile as execFile6 } from "node:child_process";
-import { accessSync, constants as constants3, existsSync as existsSync23, statSync as statSync9 } from "node:fs";
+import { accessSync as accessSync2, constants as constants4, existsSync as existsSync23, statSync as statSync9 } from "node:fs";
 import { delimiter, dirname as dirname16, join as join30 } from "node:path";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
 import { z } from "zod";
@@ -22503,7 +22551,7 @@ function renderMarkdown(query, days, pricing) {
 var NODE_SQLITE_MIN_VERSION = "22.5";
 function defaultIsExecutable(path6) {
   try {
-    accessSync(path6, constants3.X_OK);
+    accessSync2(path6, constants4.X_OK);
     return statSync9(path6).isFile();
   } catch {
     return false;
@@ -23957,7 +24005,7 @@ function createV2LocalDecisionDefinition(options = {}) {
 
 // src/pantheon/model-command.ts
 import { randomBytes } from "node:crypto";
-import { constants as constants4 } from "node:fs";
+import { constants as constants5 } from "node:fs";
 import { lstat as lstat2, mkdir as mkdir8, open as open3, rename as rename7, unlink as unlink4 } from "node:fs/promises";
 import { homedir as homedir9 } from "node:os";
 import { basename as basename8, dirname as dirname17, join as join33, resolve as resolve24 } from "node:path";
@@ -23980,7 +24028,7 @@ var ModelCommandError = class extends Error {
     this.name = "ModelCommandError";
   }
 };
-var NO_FOLLOW = constants4.O_NOFOLLOW ?? 0;
+var NO_FOLLOW = constants5.O_NOFOLLOW ?? 0;
 var PERMISSION_MASK = 4095;
 var DEFAULT_FILE_MODE = 384;
 var pathLocks = /* @__PURE__ */ new Map();
@@ -24013,7 +24061,7 @@ async function readRegularFile(path6, label) {
   if (stats === void 0) return void 0;
   let file;
   try {
-    file = await open3(path6, constants4.O_RDONLY | NO_FOLLOW);
+    file = await open3(path6, constants5.O_RDONLY | NO_FOLLOW);
     const openedStats = await file.stat();
     if (!openedStats.isFile()) throw new ModelCommandError(`${label} must be a regular file`);
     return {
@@ -24032,7 +24080,7 @@ async function readRegularFile(path6, label) {
 async function syncDirectory(path6) {
   let directory;
   try {
-    directory = await open3(path6, constants4.O_RDONLY | NO_FOLLOW);
+    directory = await open3(path6, constants5.O_RDONLY | NO_FOLLOW);
     const stats = await directory.stat();
     if (!stats.isDirectory()) {
       throw new ModelCommandError("configuration directory is not a directory");
@@ -24047,7 +24095,7 @@ async function syncDirectory(path6) {
 async function createTemporaryFile(path6) {
   const directory = dirname17(path6);
   const prefix = `.${basename8(path6)}.tmp-`;
-  const flags = constants4.O_WRONLY | constants4.O_CREAT | constants4.O_EXCL | NO_FOLLOW;
+  const flags = constants5.O_WRONLY | constants5.O_CREAT | constants5.O_EXCL | NO_FOLLOW;
   for (let attempt = 0; attempt < 10; attempt += 1) {
     const temporaryPath = join33(directory, `${prefix}${randomBytes(16).toString("hex")}`);
     try {
@@ -24179,8 +24227,8 @@ async function readActivePresetRaw(path6, label) {
 async function readV2ActivePresetRaw(path6, label, fileSystem = {
   open: async (filePath, flags) => open3(filePath, flags)
 }) {
-  const noFollowFlag = constants4.O_NOFOLLOW;
-  const nonBlockFlag = constants4.O_NONBLOCK;
+  const noFollowFlag = constants5.O_NOFOLLOW;
+  const nonBlockFlag = constants5.O_NONBLOCK;
   if (noFollowFlag === void 0 || noFollowFlag === 0 || nonBlockFlag === void 0 || nonBlockFlag === 0) {
     throw new ModelCommandError(
       `${label} cannot be read securely on this platform; configuration was not changed`
@@ -24188,7 +24236,7 @@ async function readV2ActivePresetRaw(path6, label, fileSystem = {
   }
   let file;
   try {
-    file = await fileSystem.open(path6, constants4.O_RDONLY | noFollowFlag | nonBlockFlag);
+    file = await fileSystem.open(path6, constants5.O_RDONLY | noFollowFlag | nonBlockFlag);
     const openedStats = await file.stat();
     if (!openedStats.isFile()) {
       throw new ModelCommandError(

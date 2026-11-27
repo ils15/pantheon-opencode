@@ -22,7 +22,7 @@
   },
   "scripts": {
     "postinstall": "node scripts/postinstall.mjs",
-    "prepare": "git rev-parse --is-inside-work-tree >/dev/null 2>&1 && husky",
+    "prepare": "git rev-parse --is-inside-work-tree >/dev/null 2>&1 && git config core.hooksPath .husky",
     "build:agents-md": "node scripts/build-agents-md.mjs",
     "build:roster": "node scripts/build-roster.mjs",
     "check:roster": "node scripts/build-roster.mjs --check",
@@ -54,7 +54,7 @@
     "typecheck": "tsc --noEmit",
     "audit": "npm audit --audit-level=critical",
     "secret-scan": "node scripts/secret-scan.mjs",
-    "hooks:install": "pre-commit install",
+    "hooks:install": "node scripts/verify-git-hooks.mjs --apply",
     "hooks:update": "pre-commit autoupdate",
     "test:security": "npm run secret-scan",
     "test:quick": "node --test tests/skill-decision-proactive.test.mjs tests/plan-visibility-contract.test.mjs tests/proportional-execution-contract.test.mjs tests/memory-delegation-prompt.test.mjs tests/tui-settings-draft.test.mjs tests/tui-settings-i18n.test.mjs tests/test-slicing-contract.test.mjs",
@@ -128,7 +128,6 @@
     "@opencode/plugin": "2.4.1",
     "ajv": "8.20.0",
     "esbuild": "0.28.2",
-    "husky": "^9.1.7",
     "tsx": "4.23.15",
     "typescript": "7.0.2"
   },

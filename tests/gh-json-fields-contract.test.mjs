@@ -332,3 +332,176 @@ test('every env.NAME expression reference is declared by an env: block', () => {
   }
   assert.ok(checked > 0, 'the extractor found no env.NAME expression references')
 })
+
+/** Job blocks under the top-level `jobs:` map, with file-relative line numbers. */
+function jobSegments({ name, code }) {
+  const lines = code.split('\n')
+  const jobsStart = lines.findIndex((line) => /^jobs:\s*$/.test(line))
+  if (jobsStart === -1) return []
+  const segments = []
+  let current = null
+  for (let index = jobsStart + 1; index < lines.length; index += 1) {
+    const header = lines[index].match(/^ {2}([A-Za-z0-9_-]+):\s*$/)
+    if (header) {
+      current = { file: name, id: header[1], startLine: index + 1, lines: [lines[index]] }
+      segments.push(current)
+    } else if (current) {
+      current.lines.push(lines[index])
+    }
+  }
+  return segments.map(({ file, id, startLine, lines: body }) => ({
+    file,
+    id,
+    startLine,
+    text: body.join('\n'),
+  }))
+}
+
+/** Keys declared by a job-level `env:` block. */
+function jobEnv(job) {
+  const lines = job.text.split('\n')
+  const start = lines.findIndex((line) => /^ {4}env:\s*$/.test(line))
+  const env = {}
+  if (start === -1) return env
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (/^\s*$/.test(lines[index])) continue
+    const entry = lines[index].match(/^ {6}([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$/)
+    if (!entry) break
+    env[entry[1]] = entry[2].trim()
+  }
+  return env
+}
+
+/**
+ * Line indexes inside shell heredoc bodies. A `gh …` printed in a human-readable
+ * error message (e.g. release.yml's "restore with `gh release edit`" remedy,
+ * emitted from a Node heredoc) is not an executed call and must not be policed
+ * as one. Heredoc starts are `<<'WORD'`, `<<"WORD"`, `<<WORD`, and `<<-WORD`.
+ */
+function heredocBodyLines(code) {
+  const lines = code.split('\n')
+  const body = new Set()
+  let delimiter = null
+  for (let index = 0; index < lines.length; index += 1) {
+    if (delimiter) {
+      if (lines[index].trim() === delimiter) delimiter = null
+      else body.add(index)
+      continue
+    }
+    const start = lines[index].match(/<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/)
+    if (start) delimiter = start[2]
+  }
+  return body
+}
+
+/**
+ * `gh` invocations in a job, as logical lines (shell continuations joined), with
+ * file-relative line numbers. Comments are already blanked by `withoutComments`.
+ */
+function ghInvocations(job) {
+  const calls = []
+  const lines = job.text.split('\n')
+  const body = heredocBodyLines(job.text)
+  for (let index = 0; index < lines.length; index += 1) {
+    if (body.has(index)) continue
+    const startLine = index
+    let text = lines[index]
+    while (/\\$/.test(text) && index + 1 < lines.length && !body.has(index + 1)) {
+      index += 1
+      text = `${text.replace(/\\$/, '')} ${lines[index].trim()}`
+    }
+    if (!/\bgh\s+[a-z]/.test(text)) continue
+    calls.push({ file: job.file, line: job.startLine + startLine, text })
+  }
+  return calls
+}
+
+/** A gh invocation that names its repository without a working directory. */
+function namesRepositoryExplicitly(text) {
+  return (
+    /(?:^|\s)(?:--repo|-R)(?:\s|=)/.test(text) ||
+    /\brepos\//.test(text) ||
+    /api\.github\.com\/repos\//.test(text)
+  )
+}
+
+const CHECKOUT = /\buses:\s*actions\/checkout@/
+
+test('every gh call in a checkout-less job resolves its repository explicitly', () => {
+  const jobs = workflows.flatMap(jobSegments)
+  assert.ok(jobs.length > 0, 'no jobs found — a silent extractor must not pass')
+
+  const checkoutless = []
+  for (const job of jobs) {
+    const hasCheckout = CHECKOUT.test(job.text)
+    const env = jobEnv(job)
+    const declaresGhRepo = Boolean(env.GH_REPO)
+    if (!hasCheckout) checkoutless.push({ job, declaresGhRepo, ghRepo: env.GH_REPO ?? '' })
+
+    for (const call of ghInvocations(job)) {
+      if (hasCheckout || declaresGhRepo || namesRepositoryExplicitly(call.text)) continue
+      assert.fail(
+        `${call.file}:${call.line}: \`gh\` in checkout-less job "${job.id}" cannot resolve a ` +
+          'repository — there is no actions/checkout, no job-level GH_REPO, and no explicit ' +
+          '--repo/repos/ argument. It exits with "failed to run git: fatal: not a git ' +
+          'repository" BEFORE any assertion runs (run 46078813374). Declare job env ' +
+          'GH_REPO bound to github.repository, or pass an explicit repository.',
+      )
+    }
+  }
+
+  assert.ok(checkoutless.length > 0, 'no checkout-less job found — this gate would be vacuous')
+  for (const { job, declaresGhRepo, ghRepo } of checkoutless) {
+    if (!declaresGhRepo) continue
+    assert.match(
+      ghRepo,
+      /\$\{\{\s*github\.repository\s*\}\}/,
+      `${job.file}:${job.id}: job-level GH_REPO must bind to \${{ github.repository }} ` +
+        `(got "${ghRepo}"); an empty GH_REPO still falls back to git cwd detection`,
+    )
+  }
+})
+
+test('auto-merge.yml is checkout-less and declares GH_REPO for its pr calls', () => {
+  const workflow = workflows.find(({ name }) => name === 'auto-merge.yml')
+  assert.ok(workflow, 'auto-merge.yml must exist')
+  const job = jobSegments(workflow).find(({ id }) => id === 'auto-merge')
+  assert.ok(job, 'auto-merge.yml must define the "auto-merge" job')
+
+  assert.doesNotMatch(
+    job.text,
+    CHECKOUT,
+    'the merge job intentionally has no checkout; adding one would make this regression test ' +
+      'stop exercising the failure mode',
+  )
+  assert.match(
+    jobEnv(job).GH_REPO ?? '',
+    /\$\{\{\s*github\.repository\s*\}\}/,
+    'the merge job must declare job-level GH_REPO bound to github.repository',
+  )
+
+  const calls = ghInvocations(job)
+  assert.ok(calls.length >= 4, `expected the resolved PR merge calls, found ${calls.length}`)
+  const pathRelative = calls.filter((call) => !namesRepositoryExplicitly(call.text))
+  assert.ok(
+    pathRelative.length > 0,
+    'this regression test must include at least one gh call that relies on GH_REPO',
+  )
+})
+
+test('the checkout-less protection-audit job names repos/ explicitly', () => {
+  const workflow = workflows.find(({ name }) => name === 'auto-merge.yml')
+  assert.ok(workflow, 'auto-merge.yml must exist')
+  const job = jobSegments(workflow).find(({ id }) => id === 'protection-audit')
+  assert.ok(job, 'auto-merge.yml must define the "protection-audit" job')
+
+  assert.doesNotMatch(job.text, CHECKOUT, 'the audit job must stay checkout-less')
+  const calls = ghInvocations(job)
+  assert.ok(calls.length > 0, 'the audit job must invoke gh')
+  for (const call of calls) {
+    assert.ok(
+      namesRepositoryExplicitly(call.text),
+      `${call.file}:${call.line}: the checkout-less audit job must name repos/… explicitly`,
+    )
+  }
+})
