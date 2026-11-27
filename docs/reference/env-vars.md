@@ -43,7 +43,7 @@ Sandbox mechanics are in [Release Process](../RELEASING.md).
 | `PANTHEON_STRATEGY_PROMOTION_MIN` | `0.8` | Success-rate threshold for the `proven` strategy rung. Any number in `0..1`; anything else falls back to `0.8` and the query payload reports `promotionMinInvalid: true`. |
 | `PANTHEON_STRATEGY_MAX_AGE_DAYS` | `30` | Age window for `strategy_runs` retention. Positive integer; invalid values fall back to 30. `strategy_stats` and `strategy_docs` are never pruned. |
 | `PANTHEON_STRATEGY_MAX_ROWS` | `10000` | Row cap for `strategy_runs`. Positive integer; invalid values fall back to 10000. |
-| `PANTHEON_STRATEGY_ATTACH_WINDOW_MINUTES` | `60` | Recency window for an agent-scoped Themis BLOCK. A run older than this is never selected, and more than one eligible run makes the target ambiguous (`attached: false`, nothing demoted). Positive integer; invalid values fall back to 60 and the payload reports `attachWindowInvalid: true`. |
+| `PANTHEON_STRATEGY_ATTACH_WINDOW_MINUTES` | `60` | Recency window for an agent-scoped Themis BLOCK. A run older than this is never selected, and more than one eligible run makes the target ambiguous (`attached: false`, nothing demoted). Capped at `1440` (24 h) — a larger value is clamped and reported as `attachWindowCapped: true`. Positive integer; invalid values fall back to 60 and the payload reports `attachWindowInvalid: true`. |
 
 Memory policy is in [Memory](../MEMORY.md).
 

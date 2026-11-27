@@ -16727,6 +16727,7 @@ var DEFAULT_ANTI_PATTERN_MAX = 0.6;
 var DEFAULT_MAX_AGE_DAYS = 30;
 var DEFAULT_MAX_ROWS = 1e4;
 var DEFAULT_ATTACH_WINDOW_MINUTES = 60;
+var MAX_ATTACH_WINDOW_MINUTES = 1440;
 var MAX_SUMMARY_BYTES = 4096;
 var STRATEGY_PRUNE_EVERY = 50;
 var DAY_MS = 864e5;
@@ -16756,15 +16757,17 @@ function resolveStrategyPolicy(env = process.env) {
     env.PANTHEON_STRATEGY_ATTACH_WINDOW_MINUTES,
     DEFAULT_ATTACH_WINDOW_MINUTES
   );
+  const attachWindowCapped = !attachWindow.invalid && attachWindow.value > MAX_ATTACH_WINDOW_MINUTES;
   return {
     minAttempts: STRATEGY_MIN_ATTEMPTS,
     promotionMin: promotion.value,
     antiPatternMax: DEFAULT_ANTI_PATTERN_MAX,
     promotionMinSource: promotion.source,
     promotionMinInvalid: promotion.invalid,
-    attachWindowMinutes: attachWindow.value,
+    attachWindowMinutes: attachWindowCapped ? MAX_ATTACH_WINDOW_MINUTES : attachWindow.value,
     attachWindowSource: attachWindow.source,
-    attachWindowInvalid: attachWindow.invalid
+    attachWindowInvalid: attachWindow.invalid,
+    attachWindowCapped
   };
 }
 function resolveRetentionPolicy(env = process.env) {
@@ -16874,6 +16877,10 @@ var STRATEGY_DDL = `
     VALUES (new.id, new.strategy_id, new.agent, new.summary);
   END;
 
+  -- stored_status is the persisted default-ladder projection kept for raw-SQL
+  -- consumers. CREATE VIEW IF NOT EXISTS cannot drop a column, so it stays
+  -- here until a v3 migration redefines the view; tool payloads never expose it
+  -- (they report the status computed with the policy actually applied).
   CREATE VIEW IF NOT EXISTS strategy_effective AS
   SELECT
     s.strategy_id,
@@ -16941,19 +16948,23 @@ function tableColumns(db, table) {
 }
 function ensureStrategySchema(db) {
   const existing = readSchemaVersion(db);
-  if (existing === STRATEGY_SCHEMA_VERSION) {
-    return { applied: false, schemaVersion: existing, created: [], from: existing };
-  }
   if (existing !== null && Number(existing) > Number(STRATEGY_SCHEMA_VERSION)) {
     throw new Error(
       `strategy schema_version "${existing}" is newer than supported "${STRATEGY_SCHEMA_VERSION}"; refusing to write`
     );
   }
   const before = objectNames(db);
+  const hasRuns = before.has("strategy_runs");
+  const hasBlockedAt = hasRuns && tableColumns(db, "strategy_runs").includes("blocked_at");
+  const hasObjections = before.has("strategy_objections");
+  if (existing === STRATEGY_SCHEMA_VERSION && hasBlockedAt && hasObjections) {
+    return { applied: false, schemaVersion: existing, created: [], from: existing };
+  }
+  const from = existing ?? (hasRuns ? "unversioned" : null);
   db.exec("BEGIN IMMEDIATE");
   try {
     db.exec(STRATEGY_DDL);
-    if (existing !== null && !tableColumns(db, "strategy_runs").includes("blocked_at")) {
+    if (hasRuns && !hasBlockedAt) {
       db.exec("ALTER TABLE strategy_runs ADD COLUMN blocked_at TEXT");
     }
     db.prepare(
@@ -16973,7 +16984,7 @@ function ensureStrategySchema(db) {
     applied: true,
     schemaVersion: STRATEGY_SCHEMA_VERSION,
     created: [...after].filter((name) => !before.has(name)).sort(),
-    from: existing
+    from
   };
 }
 var ensuredHandles = /* @__PURE__ */ new WeakMap();
@@ -17452,6 +17463,9 @@ function insertUnattributedObjection(db, params) {
   );
   return Number(info.lastInsertRowid ?? 0);
 }
+var BLOCK_VERDICT_SQL = "UPDATE strategy_runs SET themis_verdict = ? WHERE id = ?";
+var BLOCK_FLAG_SQL = "UPDATE strategy_runs SET success = 0, blocked_at = COALESCE(blocked_at, ?) WHERE id = ?";
+var BLOCK_AGGREGATE_SQL = "UPDATE strategy_stats SET successes = max(0, successes - ?), objections = objections + ? WHERE strategy_id = ? AND agent = ?";
 function attachThemisVerdict(workspaceDir, input) {
   const verdict = normalizeVerdict(input.verdict);
   if (!verdict) {
@@ -17479,36 +17493,31 @@ function attachThemisVerdict(workspaceDir, input) {
       resolution = resolveAttachTarget(db, { stepKey, strategyId, agent, now, policy });
       const target2 = resolution.target;
       if (!target2) {
-        objectionId = insertUnattributedObjection(db, {
-          verdict,
-          stepKey,
-          strategyId,
-          agent,
-          reason: resolution.reason ?? "no_run",
-          candidates: resolution.candidates,
-          createdAt: nowIso
-        });
+        if (verdict === "BLOCK") {
+          objectionId = insertUnattributedObjection(db, {
+            verdict,
+            stepKey,
+            strategyId,
+            agent,
+            reason: resolution.reason ?? "no_run",
+            candidates: resolution.candidates,
+            createdAt: nowIso
+          });
+        }
       } else {
         forcedSuccessZero = verdict === "BLOCK" && Number(target2.success) === 1;
         objectionDelta = verdict === "BLOCK" && target2.blocked_at === null ? 1 : 0;
-        db.prepare("UPDATE strategy_runs SET themis_verdict = ? WHERE id = ?").run(
-          verdict,
-          target2.id
-        );
+        db.prepare(BLOCK_VERDICT_SQL).run(verdict, target2.id);
         if (verdict === "BLOCK") {
-          db.prepare(
-            `UPDATE strategy_runs
-                SET success = 0, blocked_at = COALESCE(blocked_at, ?)
-              WHERE id = ?`
-          ).run(nowIso, target2.id);
+          db.prepare(BLOCK_FLAG_SQL).run(nowIso, target2.id);
         }
         if (forcedSuccessZero || objectionDelta > 0) {
-          db.prepare(
-            `UPDATE strategy_stats SET
-               successes = max(0, successes - ?),
-               objections = objections + ?
-             WHERE strategy_id = ? AND agent = ?`
-          ).run(forcedSuccessZero ? 1 : 0, objectionDelta, target2.strategy_id, target2.agent);
+          db.prepare(BLOCK_AGGREGATE_SQL).run(
+            forcedSuccessZero ? 1 : 0,
+            objectionDelta,
+            target2.strategy_id,
+            target2.agent
+          );
           recomputeStoredStatus(db, target2.strategy_id, target2.agent);
         }
       }

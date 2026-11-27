@@ -310,11 +310,13 @@ decomposition that keeps failing.
   re-approving a blocked run never restores its success.
   `pantheon_review_verdict` attaches a `BLOCK` to the newest run for the supplied
   `stepKey`, else for the reviewed agent's newest run **inside**
-  `PANTHEON_STRATEGY_ATTACH_WINDOW_MINUTES` (60). Several eligible runs →
-  `attached: false, reason: "ambiguous_target"` with the candidates listed and
-  nothing demoted; an unattributable BLOCK is still persisted in
+  `PANTHEON_STRATEGY_ATTACH_WINDOW_MINUTES` (60, capped at 1440 = 24 h; a larger
+  value is clamped and reported as `attachWindowCapped: true`). Several eligible
+  runs → `attached: false, reason: "ambiguous_target"` with the candidates listed
+  and nothing demoted; an unattributable **BLOCK** is persisted in
   `strategy_objections` and surfaced by `stats` as `unattributed_objections`, and
-  the payload says it was not attributed.
+  the payload says it was not attributed. An unattributable APPROVE writes
+  nothing.
 - **Bounded text.** `summary` is capped at 4 KiB of UTF-8 (cut on a code-point
   boundary); the record payload then carries `summaryTruncated: true`.
 - **Retention.** `strategy_runs` is pruned every 50th insert and on

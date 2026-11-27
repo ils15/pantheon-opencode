@@ -754,7 +754,7 @@ test('N1 a concurrent BLOCK cannot be double-counted (target read inside the wri
 
   const child = spawn(
     process.execPath,
-    ['--import', 'tsx', fixture, dbPath, signal, 'race:1', 'race-strategy', 'hermes', '1200'],
+    ['--import', 'tsx', fixture, dbPath, signal, 'race:1', '1200'],
     { stdio: 'pipe' },
   )
   let stderr = ''
@@ -984,6 +984,154 @@ test('N7 a failed migration rolls back the whole batch and the recorder reports 
   assert.equal(recorded.ok, false)
   assert.equal(recorded.recorded, false)
   assert.match(String(recorded.error), /CHECK|constraint/i)
+})
+
+// ── M1: the shape, not the guard row, decides repairability ───────────────
+
+test('M1 an unversioned store with a runs table is repaired, not reported healthy', () => {
+  const dir = workspace()
+  const db = openStrategyDb(dir)
+  recordStrategyRun(dir, {
+    strategyId: 'm1-strategy',
+    agent: 'hermes',
+    success: true,
+    stepKey: 'm1',
+    attempt: 1,
+    createdAt: iso(new Date()),
+  })
+
+  // Reproduce the broken store: pre-v2 shape, and the guard row is gone.
+  db.exec('DROP TABLE strategy_objections')
+  db.exec('ALTER TABLE strategy_runs DROP COLUMN blocked_at')
+  db.exec('DROP TABLE strategy_meta')
+  const brokenColumns = (
+    db.prepare('PRAGMA table_info(strategy_runs)').all() as Array<{
+      name: string
+    }>
+  ).map((column) => column.name)
+  assert.equal(brokenColumns.includes('blocked_at'), false, 'precondition: the column is gone')
+
+  const report = ensureStrategySchema(db)
+  assert.equal(report.applied, true)
+  assert.equal(report.from, 'unversioned', 'a runs table without a guard row is legacy, not fresh')
+  assert.equal(report.schemaVersion, STRATEGY_SCHEMA_VERSION)
+  assert.ok(
+    (db.prepare('PRAGMA table_info(strategy_runs)').all() as Array<{ name: string }>).some(
+      (column) => column.name === 'blocked_at',
+    ),
+    'the upgrade must be gated on the column, not on the missing row',
+  )
+  assert.ok(objectNames(db, 'table').includes('strategy_objections'))
+  assert.equal(
+    db.prepare("SELECT value FROM strategy_meta WHERE key = 'schema_version'").get()?.value,
+    STRATEGY_SCHEMA_VERSION,
+  )
+
+  // The repair is durable: a fresh handle is a no-op, and the public surfaces work.
+  const raw = new DatabaseSync(join(dir, '.pantheon', 'memory', 'memory.db'))
+  try {
+    assert.equal(ensureStrategySchema(raw).applied, false)
+  } finally {
+    raw.close()
+  }
+  const attached = attachThemisVerdict(dir, { verdict: 'BLOCK', stepKey: 'm1' })
+  assert.equal(attached.ok, true, String(attached.error))
+  assert.equal(attached.attached, true)
+  assert.equal(attached.runId, 'm1:1')
+  const stats = strategyStats(dir)
+  assert.equal(stats.ok, true)
+  assert.equal(stats.schema_version, STRATEGY_SCHEMA_VERSION)
+})
+
+// ── M2: only a BLOCK is an objection ──────────────────────────────────────
+
+test('M2 an unattributable APPROVE writes no objection', () => {
+  const dir = workspace()
+  const now = new Date('2026-06-01T12:00:00.000Z')
+  const db = openStrategyDb(dir)
+  const objectionRows = (): number =>
+    Number((db.prepare('SELECT count(*) AS n FROM strategy_objections').get() as { n: number }).n)
+
+  const approve = attachThemisVerdict(dir, {
+    verdict: 'APPROVE_WITH_NOTES',
+    stepKey: 'ghost',
+    now,
+  })
+  assert.equal(approve.ok, true)
+  assert.equal(approve.attached, false)
+  assert.equal(approve.reason, 'no_run')
+  assert.equal(approve.unattributedObjectionId, undefined)
+  assert.equal(objectionRows(), 0, 'an approval is not an objection')
+  assert.equal(strategyStats(dir, { now }).unattributed_objections, 0)
+
+  // Ambiguous + non-BLOCK writes nothing either.
+  recordStrategyRun(dir, {
+    strategyId: 'm2-a',
+    agent: 'hermes',
+    success: true,
+    stepKey: 'm2-a',
+    attempt: 1,
+    createdAt: iso(now),
+  })
+  recordStrategyRun(dir, {
+    strategyId: 'm2-b',
+    agent: 'hermes',
+    success: true,
+    stepKey: 'm2-b',
+    attempt: 1,
+    createdAt: iso(now),
+  })
+  const ambiguousApprove = attachThemisVerdict(dir, { verdict: 'APPROVE', agent: 'hermes', now })
+  assert.equal(ambiguousApprove.attached, false)
+  assert.equal(ambiguousApprove.reason, 'ambiguous_target')
+  assert.equal(ambiguousApprove.unattributedObjectionId, undefined)
+  assert.equal(objectionRows(), 0)
+
+  // A BLOCK with no target still records, so the counter is not dead.
+  const blocked = attachThemisVerdict(dir, { verdict: 'BLOCK', stepKey: 'ghost', now })
+  assert.ok((blocked.unattributedObjectionId ?? 0) > 0)
+  assert.equal(strategyStats(dir, { now }).unattributed_objections, 1)
+})
+
+// ── M3: the attach window has a ceiling ───────────────────────────────────
+
+test('M3 the attach window is capped at 24h and never reaches a stale run', () => {
+  const dir = workspace()
+  const now = new Date('2026-06-01T12:00:00.000Z')
+  recordStrategyRun(dir, {
+    strategyId: 'year-old',
+    agent: 'iris',
+    success: true,
+    stepKey: 'old-1',
+    attempt: 1,
+    createdAt: iso(new Date(now.getTime() - 300 * DAY_MS)),
+  })
+
+  withEnv({ PANTHEON_STRATEGY_ATTACH_WINDOW_MINUTES: '525600' }, () => {
+    const policy = resolveStrategyPolicy()
+    assert.equal(policy.attachWindowMinutes, 1440)
+    assert.equal(policy.attachWindowCapped, true)
+    assert.equal(policy.attachWindowInvalid, false)
+
+    const res = attachThemisVerdict(dir, { verdict: 'BLOCK', agent: 'iris', now })
+    assert.equal(res.attached, false, 'a 300-day-old run is outside the 24h ceiling')
+    assert.equal(res.reason, 'no_run')
+    assert.equal(queryStrategies(dir, { strategyId: 'year-old', now }).results[0]?.objections, 0)
+  })
+
+  withEnv({ PANTHEON_STRATEGY_ATTACH_WINDOW_MINUTES: '240' }, () => {
+    const policy = resolveStrategyPolicy()
+    assert.equal(policy.attachWindowMinutes, 240)
+    assert.equal(policy.attachWindowCapped, false)
+  })
+
+  // An unusable value still falls back to the 60-minute default.
+  withEnv({ PANTHEON_STRATEGY_ATTACH_WINDOW_MINUTES: 'nope' }, () => {
+    const policy = resolveStrategyPolicy()
+    assert.equal(policy.attachWindowMinutes, 60)
+    assert.equal(policy.attachWindowInvalid, true)
+    assert.equal(policy.attachWindowCapped, false)
+  })
 })
 
 // ── Recorder safety: a broken recorder never fails a step ─────────────────

@@ -64,6 +64,8 @@ export const DEFAULT_MAX_ROWS = 10_000
  * demoted.
  */
 export const DEFAULT_ATTACH_WINDOW_MINUTES = 60
+/** Hard ceiling for the attach window (24 h): a BLOCK can never reach further. */
+export const MAX_ATTACH_WINDOW_MINUTES = 1440
 /** Hard cap for a stored `strategy_docs.summary` (bytes of UTF-8). */
 export const MAX_SUMMARY_BYTES = 4096
 /** Every Nth successful insert triggers a retention pass. */
@@ -85,6 +87,8 @@ export interface StrategyPolicy {
   readonly attachWindowSource: 'default' | 'env'
   /** True when `PANTHEON_STRATEGY_ATTACH_WINDOW_MINUTES` was unusable. */
   readonly attachWindowInvalid: boolean
+  /** True when the requested window exceeded `MAX_ATTACH_WINDOW_MINUTES` (1440). */
+  readonly attachWindowCapped: boolean
 }
 
 export interface RetentionPolicy {
@@ -295,15 +299,17 @@ export function resolveStrategyPolicy(env: NodeJS.ProcessEnv = process.env): Str
     env.PANTHEON_STRATEGY_ATTACH_WINDOW_MINUTES,
     DEFAULT_ATTACH_WINDOW_MINUTES,
   )
+  const attachWindowCapped = !attachWindow.invalid && attachWindow.value > MAX_ATTACH_WINDOW_MINUTES
   return {
     minAttempts: STRATEGY_MIN_ATTEMPTS,
     promotionMin: promotion.value,
     antiPatternMax: DEFAULT_ANTI_PATTERN_MAX,
     promotionMinSource: promotion.source,
     promotionMinInvalid: promotion.invalid,
-    attachWindowMinutes: attachWindow.value,
+    attachWindowMinutes: attachWindowCapped ? MAX_ATTACH_WINDOW_MINUTES : attachWindow.value,
     attachWindowSource: attachWindow.source,
     attachWindowInvalid: attachWindow.invalid,
+    attachWindowCapped,
   }
 }
 
@@ -427,6 +433,10 @@ const STRATEGY_DDL = `
     VALUES (new.id, new.strategy_id, new.agent, new.summary);
   END;
 
+  -- stored_status is the persisted default-ladder projection kept for raw-SQL
+  -- consumers. CREATE VIEW IF NOT EXISTS cannot drop a column, so it stays
+  -- here until a v3 migration redefines the view; tool payloads never expose it
+  -- (they report the status computed with the policy actually applied).
   CREATE VIEW IF NOT EXISTS strategy_effective AS
   SELECT
     s.strategy_id,
@@ -511,9 +521,6 @@ function tableColumns(db: DatabaseSync, table: string): string[] {
  */
 export function ensureStrategySchema(db: DatabaseSync): StrategySchemaReport {
   const existing = readSchemaVersion(db)
-  if (existing === STRATEGY_SCHEMA_VERSION) {
-    return { applied: false, schemaVersion: existing, created: [], from: existing }
-  }
   if (existing !== null && Number(existing) > Number(STRATEGY_SCHEMA_VERSION)) {
     throw new Error(
       `strategy schema_version "${existing}" is newer than supported "${STRATEGY_SCHEMA_VERSION}"; refusing to write`,
@@ -521,11 +528,25 @@ export function ensureStrategySchema(db: DatabaseSync): StrategySchemaReport {
   }
 
   const before = objectNames(db)
+  // The shape is authoritative, not the guard row: a store can carry
+  // `strategy_runs` with a missing `strategy_meta` row (or a version row that
+  // was written by a migration that skipped an ALTER). Gating on the column
+  // keeps the upgrade idempotent from the DDL alone and gives a broken store a
+  // repair path instead of a "healthy" verdict.
+  const hasRuns = before.has('strategy_runs')
+  const hasBlockedAt = hasRuns && tableColumns(db, 'strategy_runs').includes('blocked_at')
+  const hasObjections = before.has('strategy_objections')
+  if (existing === STRATEGY_SCHEMA_VERSION && hasBlockedAt && hasObjections) {
+    return { applied: false, schemaVersion: existing, created: [], from: existing }
+  }
+  // A runs table without a guard row is a legacy (v1) store, never "fresh".
+  const from = existing ?? (hasRuns ? 'unversioned' : null)
+
   db.exec('BEGIN IMMEDIATE')
   try {
     db.exec(STRATEGY_DDL)
-    // v1 → v2: `blocked_at` is the once-per-run objection marker.
-    if (existing !== null && !tableColumns(db, 'strategy_runs').includes('blocked_at')) {
+    // v1/pre-v2 → v2: `blocked_at` is the once-per-run objection marker.
+    if (hasRuns && !hasBlockedAt) {
       db.exec('ALTER TABLE strategy_runs ADD COLUMN blocked_at TEXT')
     }
     db.prepare(
@@ -546,7 +567,7 @@ export function ensureStrategySchema(db: DatabaseSync): StrategySchemaReport {
     applied: true,
     schemaVersion: STRATEGY_SCHEMA_VERSION,
     created: [...after].filter((name) => !before.has(name)).sort(),
-    from: existing,
+    from,
   }
 }
 
@@ -1273,6 +1294,18 @@ function insertUnattributedObjection(
 }
 
 /**
+ * The exact statements a BLOCK applies. Exported so the concurrency fixture
+ * (`tests/pantheon/fixtures/strategy-attach-race.mts`) replays the production
+ * SQL instead of a copy that could silently drift.
+ */
+export const BLOCK_VERDICT_SQL = 'UPDATE strategy_runs SET themis_verdict = ? WHERE id = ?'
+export const BLOCK_FLAG_SQL =
+  'UPDATE strategy_runs SET success = 0, blocked_at = COALESCE(blocked_at, ?) WHERE id = ?'
+export const BLOCK_AGGREGATE_SQL =
+  'UPDATE strategy_stats SET successes = max(0, successes - ?), objections = objections + ? ' +
+  'WHERE strategy_id = ? AND agent = ?'
+
+/**
  * Attach a Themis verdict to the run under review.
  *
  * Target resolution and the aggregate update run inside one `BEGIN IMMEDIATE`
@@ -1320,36 +1353,33 @@ export function attachThemisVerdict(
       const target = resolution.target
 
       if (!target) {
-        objectionId = insertUnattributedObjection(db, {
-          verdict,
-          stepKey,
-          strategyId,
-          agent,
-          reason: resolution.reason ?? 'no_run',
-          candidates: resolution.candidates,
-          createdAt: nowIso,
-        })
+        // Only a BLOCK is an objection. An unattributable APPROVE writes
+        // nothing: the trail must count refused strategies, not documents.
+        if (verdict === 'BLOCK') {
+          objectionId = insertUnattributedObjection(db, {
+            verdict,
+            stepKey,
+            strategyId,
+            agent,
+            reason: resolution.reason ?? 'no_run',
+            candidates: resolution.candidates,
+            createdAt: nowIso,
+          })
+        }
       } else {
         forcedSuccessZero = verdict === 'BLOCK' && Number(target.success) === 1
         objectionDelta = verdict === 'BLOCK' && target.blocked_at === null ? 1 : 0
-        db.prepare('UPDATE strategy_runs SET themis_verdict = ? WHERE id = ?').run(
-          verdict,
-          target.id,
-        )
+        db.prepare(BLOCK_VERDICT_SQL).run(verdict, target.id)
         if (verdict === 'BLOCK') {
-          db.prepare(
-            `UPDATE strategy_runs
-                SET success = 0, blocked_at = COALESCE(blocked_at, ?)
-              WHERE id = ?`,
-          ).run(nowIso, target.id)
+          db.prepare(BLOCK_FLAG_SQL).run(nowIso, target.id)
         }
         if (forcedSuccessZero || objectionDelta > 0) {
-          db.prepare(
-            `UPDATE strategy_stats SET
-               successes = max(0, successes - ?),
-               objections = objections + ?
-             WHERE strategy_id = ? AND agent = ?`,
-          ).run(forcedSuccessZero ? 1 : 0, objectionDelta, target.strategy_id, target.agent)
+          db.prepare(BLOCK_AGGREGATE_SQL).run(
+            forcedSuccessZero ? 1 : 0,
+            objectionDelta,
+            target.strategy_id,
+            target.agent,
+          )
           recomputeStoredStatus(db, target.strategy_id, target.agent)
         }
       }
