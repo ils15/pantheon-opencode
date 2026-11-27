@@ -17,7 +17,11 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
 import { getSharedBus } from './bus.ts'
-import { deriveEphemeralRoleSlug, spawnEphemeralWorker } from './ephemeral-worker.ts'
+import {
+  deriveEphemeralRoleSlug,
+  spawnEphemeralWorker,
+  verifyEphemeralBranches,
+} from './ephemeral-worker.ts'
 import { createExecutionReceipt } from './execution-receipt.ts'
 import { captureGitCheckpoint, restoreGitCheckpoint } from './git-checkpoint.ts'
 import { runAtomicStepSubSession, type SubSessionDomainLike } from './step-runner.ts'
@@ -144,6 +148,7 @@ export function createStepLedgerTool(
             'init_step',
             'execute_step',
             'spawn_ephemeral',
+            'verify_ephemeral',
             'record_reproduction',
             'record_mutation',
             'record_verification',
@@ -152,7 +157,7 @@ export function createStepLedgerTool(
             'status',
           ],
           description:
-            'Ledger operation (init_step | execute_step | spawn_ephemeral | record_reproduction | record_mutation | record_verification | complete_step | rollback_step | status)',
+            'Ledger operation (init_step | execute_step | spawn_ephemeral | verify_ephemeral | record_reproduction | record_mutation | record_verification | complete_step | rollback_step | status)',
         },
         stepKey: {
           type: 'string',
@@ -192,6 +197,41 @@ export function createStepLedgerTool(
           maximum: 20,
           description:
             'Max continuation turns for execute_step/spawn_ephemeral (default 1 for execute_step, 8 for spawn_ephemeral)',
+        },
+        wallClockMs: {
+          type: 'number',
+          minimum: 0,
+          description:
+            'Per-worker wall-clock timeout in ms for execute_step/spawn_ephemeral (default 300000)',
+        },
+        maxCostUsd: {
+          type: 'number',
+          minimum: 0,
+          description: 'Optional cumulative USD cost ceiling per worker sub-session',
+        },
+        ownedFiles: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Owned file paths/globs for worker lease boundary and prompt contract',
+        },
+        forbiddenFiles: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Forbidden file paths/globs that the worker must never modify',
+        },
+        autoVerify: {
+          type: 'boolean',
+          description:
+            'When true on spawn_ephemeral, automatically run verifier diff review on preserved pantheon/eph/<stepKey> branch',
+        },
+        verifierAgent: {
+          type: 'string',
+          description: 'Verifier agent for autoVerify / verify_ephemeral (default "themis")',
+        },
+        branches: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Ephemeral worker branches (pantheon/eph/<stepKey>) for verify_ephemeral',
         },
         to: {
           type: 'array',
@@ -244,6 +284,34 @@ export function createStepLedgerTool(
             return jsonResult({ ok: true, step, gate: canTransitionStepToDone(step) })
           }
           return jsonResult({ ok: true, steps: Object.values(store.steps) })
+        }
+
+        if (action === 'verify_ephemeral') {
+          const branches = Array.isArray(input.branches)
+            ? input.branches.filter(
+                (b): b is string => typeof b === 'string' && b.trim().length > 0,
+              )
+            : []
+          if (branches.length === 0) {
+            return jsonResult({
+              ok: false,
+              error: 'branches array is required for verify_ephemeral',
+            })
+          }
+          const parentSid =
+            typeof (context as { sessionID?: unknown } | undefined)?.sessionID === 'string'
+              ? ((context as { sessionID?: string }).sessionID ?? undefined)
+              : undefined
+          const verifyOut = await verifyEphemeralBranches({
+            branches,
+            sharedRoot: resolveSharedPantheonRoot(cwd),
+            ...(typeof input.verifierAgent === 'string' && input.verifierAgent.trim()
+              ? { verifierAgent: input.verifierAgent.trim() }
+              : {}),
+            ...(sessionDomain ? { sessionDomain } : {}),
+            ...(parentSid ? { parentSessionID: parentSid } : {}),
+          })
+          return jsonResult(verifyOut)
         }
 
         const key = assertSafeStepKey(input.stepKey)
@@ -324,6 +392,26 @@ export function createStepLedgerTool(
             ...(typeof input.maxTurns === 'number' && Number.isInteger(input.maxTurns)
               ? { maxTurns: input.maxTurns }
               : {}),
+            ...(typeof input.wallClockMs === 'number' && Number.isFinite(input.wallClockMs)
+              ? { wallClockMs: input.wallClockMs }
+              : {}),
+            ...(typeof input.maxCostUsd === 'number' && Number.isFinite(input.maxCostUsd)
+              ? { maxCostUsd: input.maxCostUsd }
+              : {}),
+            ...(Array.isArray(input.ownedFiles)
+              ? {
+                  ownedFiles: input.ownedFiles.filter(
+                    (entry): entry is string => typeof entry === 'string',
+                  ),
+                }
+              : {}),
+            ...(Array.isArray(input.forbiddenFiles)
+              ? {
+                  forbiddenFiles: input.forbiddenFiles.filter(
+                    (entry): entry is string => typeof entry === 'string',
+                  ),
+                }
+              : {}),
             ...(Array.isArray(input.to)
               ? { to: input.to.filter((entry): entry is string => typeof entry === 'string') }
               : {}),
@@ -368,6 +456,30 @@ export function createStepLedgerTool(
             ...(typeof input.extraContext === 'string' ? { extraContext: input.extraContext } : {}),
             ...(typeof input.maxTurns === 'number' && Number.isInteger(input.maxTurns)
               ? { maxTurns: input.maxTurns }
+              : {}),
+            ...(typeof input.wallClockMs === 'number' && Number.isFinite(input.wallClockMs)
+              ? { wallClockMs: input.wallClockMs }
+              : {}),
+            ...(typeof input.maxCostUsd === 'number' && Number.isFinite(input.maxCostUsd)
+              ? { maxCostUsd: input.maxCostUsd }
+              : {}),
+            ...(Array.isArray(input.ownedFiles)
+              ? {
+                  ownedFiles: input.ownedFiles.filter(
+                    (entry): entry is string => typeof entry === 'string',
+                  ),
+                }
+              : {}),
+            ...(Array.isArray(input.forbiddenFiles)
+              ? {
+                  forbiddenFiles: input.forbiddenFiles.filter(
+                    (entry): entry is string => typeof entry === 'string',
+                  ),
+                }
+              : {}),
+            ...(typeof input.autoVerify === 'boolean' ? { autoVerify: input.autoVerify } : {}),
+            ...(typeof input.verifierAgent === 'string' && input.verifierAgent.trim()
+              ? { verifierAgent: input.verifierAgent.trim() }
               : {}),
             ...(Array.isArray(input.to)
               ? { to: input.to.filter((entry): entry is string => typeof entry === 'string') }

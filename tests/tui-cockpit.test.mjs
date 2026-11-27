@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { getSharedBus } from '../src/pantheon/bus.ts'
 import { wireCockpitBusRecorder } from '../src/pantheon/cockpit-events.ts'
 import {
+  buildBoardInteractionGraph,
   buildCockpitSnapshot,
   formatCockpitReplayArtifact,
   formatGanttBar,
@@ -452,4 +453,173 @@ test('gui-experimental.cjs uses dynamic version and fixed settings/telemetry/sql
   assert.match(bundle, /parent_id/)
   assert.match(bundle, /cockpit-events\.ndjson/)
   assert.doesNotMatch(bundle, /require\(["']node:sqlite["']\)/)
+})
+
+test('buildBoardInteractionGraph extracts @mention edges, supports #seq replay cap, and enriches formatCockpitReplayArtifact', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-cockpit-graph-'))
+  try {
+    const messages = [
+      {
+        seq: 10,
+        timestamp: 1000,
+        channel: 'swarm',
+        threadId: 'th-1',
+        from: 'zeus',
+        mentions: ['@hermes', 'hermes'],
+        tag: 'claim',
+        body: 'Claiming OAuth workstream for @hermes',
+      },
+      {
+        seq: 11,
+        timestamp: 2000,
+        channel: 'swarm',
+        threadId: 'th-1',
+        from: 'hermes',
+        mentions: [],
+        replyToSeq: 10,
+        tag: 'blocker',
+        body: 'Blocked on @themis review before merge',
+      },
+      {
+        seq: 12,
+        timestamp: 3000,
+        channel: 'swarm',
+        threadId: 'th-1',
+        from: 'themis',
+        mentions: ['zeus'],
+        replyToSeq: 11,
+        tag: 'done',
+        body: 'Approved and unblocked',
+      },
+    ]
+
+    const fullGraph = buildBoardInteractionGraph(messages)
+    assert.equal(fullGraph.edges.length, 3)
+    assert.deepEqual(fullGraph.nodes, ['zeus', 'hermes', 'themis'])
+    assert.equal(fullGraph.maxSeq, 12)
+    assert.equal(fullGraph.edgeCountByPair['zeus->hermes'], 1)
+    assert.equal(fullGraph.edgeCountByPair['hermes->themis'], 1)
+    assert.equal(fullGraph.edgeCountByPair['themis->zeus'], 1)
+    assert.equal(fullGraph.edges[1]?.replyToSeq, 10)
+    assert.equal(fullGraph.edges[1]?.tag, 'blocker')
+
+    const replayGraph = buildBoardInteractionGraph(messages, 11)
+    assert.equal(replayGraph.edges.length, 2)
+    assert.equal(replayGraph.maxSeq, 11)
+
+    const snapshot = buildCockpitSnapshot({
+      workspaceDir: dir,
+      children: [],
+      boardMessages: messages,
+    })
+    assert.equal(snapshot.interactions.edges.length, 3)
+
+    const replay = formatCockpitReplayArtifact(snapshot, new Date('2026-11-27T00:00:00Z'))
+    assert.match(replay.markdown, /zeus->>hermes: #10 \[claim\]/)
+    assert.match(replay.markdown, /hermes->>themis: #11 \[blocker\] \(re:#10\)/)
+    assert.match(replay.markdown, /themis->>zeus: #12 \[done\] \(re:#11\)/)
+    assert.match(replay.markdown, /## @mention Interaction Graph \(#seq Causal Replay\)/)
+    assert.match(replay.markdown, /\*\*@hermes → @themis\*\*/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('gui.tsx and cockpit.tsx expose @mention interaction graph and #seq replay UI', () => {
+  const guiSrc = readFileSync(join(root, 'src/plugins/tui/src/gui.tsx'), 'utf8')
+  assert.match(guiSrc, /'dag' \| 'gantt' \| 'interactions'/)
+  assert.match(guiSrc, /tr\('Interactions', 'Interações'\)/)
+  assert.match(guiSrc, /interactionEdges\(\)/)
+  assert.match(guiSrc, /edge\.replyToSeq/)
+
+  const cockpitSrc = readFileSync(join(root, 'src/plugins/tui/src/cockpit.tsx'), 'utf8')
+  assert.match(cockpitSrc, /I18N\.cockpit\.interactionGraph/)
+  assert.match(cockpitSrc, /snapshot\(\)\.interactions\.edges/)
+})
+
+test('computeTidyDagLayout builds 3+ level tree with zero node overlap', async () => {
+  const { computeTidyDagLayout } = await import('../src/plugins/tui/src/cockpit-state.ts')
+  const layout = computeTidyDagLayout({
+    events: [
+      { kind: 'subagent:start', parentAgent: 'zeus', agent: 'hermes', status: 'running' },
+      { kind: 'subagent:start', parentAgent: 'zeus', agent: 'athena', status: 'done' },
+      { kind: 'ephemeral:worker', baseAgent: 'hermes', role: 'ephemeral-auth', status: 'running' },
+      { kind: 'ephemeral:worker', baseAgent: 'hermes', role: 'ephemeral-db', status: 'done' },
+      { kind: 'ephemeral:worker', baseAgent: 'ephemeral-auth', role: 'themis', status: 'blocked' },
+    ],
+    messages: [
+      { seq: 1, from: 'zeus', mentions: ['hermes'], tag: 'claim' },
+      { seq: 2, from: 'hermes', mentions: ['ephemeral-auth'], replyToSeq: 1, tag: 'claim' },
+      { seq: 3, from: 'ephemeral-auth', mentions: ['themis'], replyToSeq: 2, tag: 'blocker' },
+    ],
+    activeJobs: [{ agent: 'apollo', status: 'running' }],
+  })
+
+  assert.ok(layout.nodes.length >= 6)
+  const depths = new Set(layout.nodes.map((n) => n.depth))
+  assert.ok(depths.has(0) && depths.has(1) && depths.has(2) && depths.has(3))
+
+  // Verify zero bounding-box overlap between any pair of nodes
+  for (let i = 0; i < layout.nodes.length; i++) {
+    for (let j = i + 1; j < layout.nodes.length; j++) {
+      const a = layout.nodes[i]
+      const b = layout.nodes[j]
+      const overlapX = a.x < b.x + b.width && a.x + a.width > b.x
+      const overlapY = a.y < b.y + b.height && a.y + a.height > b.y
+      assert.equal(overlapX && overlapY, false, `Nodes ${a.id} and ${b.id} overlap`)
+    }
+  }
+})
+
+test('gui.tsx removes TUI & Layout tab while keeping tui.layout.language in overview and refresh guards', () => {
+  const guiSrc = readFileSync(join(root, 'src/plugins/tui/src/gui.tsx'), 'utf8')
+  assert.doesNotMatch(guiSrc, /\|\s*'tui'/)
+  assert.doesNotMatch(guiSrc, /\['tui',\s*tr\('TUI & Layout'/)
+  assert.doesNotMatch(guiSrc, /section\(\)\s*===\s*'tui'/)
+  assert.match(guiSrc, /'tui\.layout\.language'/)
+  assert.match(guiSrc, /split\(\/\\r\?\\n\/\)/)
+  assert.match(guiSrc, /guiCachedCosts/)
+  assert.match(guiSrc, /refreshSeq/)
+  assert.match(guiSrc, /visibilitychange/)
+  assert.match(guiSrc, /computeTidyDagLayout/)
+  assert.match(guiSrc, /computeRadialHubLayout/)
+  assert.match(guiSrc, /selectedAgent/)
+})
+
+test('computeRadialHubLayout centers zeus and places 3+ levels without node overlap', async () => {
+  const { computeTidyDagLayout, computeRadialHubLayout } = await import(
+    '../src/plugins/tui/src/cockpit-state.ts'
+  )
+  const tree = computeTidyDagLayout({
+    events: [
+      { kind: 'subagent:start', parentAgent: 'zeus', agent: 'hermes', status: 'running' },
+      { kind: 'subagent:start', parentAgent: 'zeus', agent: 'athena', status: 'done' },
+      { kind: 'subagent:start', parentAgent: 'zeus', agent: 'apollo', status: 'running' },
+      { kind: 'ephemeral:worker', baseAgent: 'hermes', role: 'eph-auth', status: 'running' },
+      { kind: 'ephemeral:worker', baseAgent: 'hermes', role: 'eph-db', status: 'done' },
+      { kind: 'ephemeral:worker', baseAgent: 'eph-auth', role: 'themis', status: 'blocked' },
+    ],
+  })
+  const radial = computeRadialHubLayout(tree)
+
+  const zeus = radial.nodes.find((n) => n.id === 'zeus')
+  assert.ok(zeus)
+  // Zeus should be near the center of the radial canvas
+  const zeusCx = zeus.x + zeus.width / 2
+  const zeusCy = zeus.y + zeus.height / 2
+  assert.ok(Math.abs(zeusCx - radial.width / 2) < radial.width * 0.2)
+  assert.ok(Math.abs(zeusCy - radial.height / 2) < radial.height * 0.2)
+
+  const depths = new Set(radial.nodes.map((n) => n.depth))
+  assert.ok(depths.has(0) && depths.has(1) && depths.has(2) && depths.has(3))
+
+  for (let i = 0; i < radial.nodes.length; i++) {
+    for (let j = i + 1; j < radial.nodes.length; j++) {
+      const a = radial.nodes[i]
+      const b = radial.nodes[j]
+      const overlapX = a.x < b.x + b.width && a.x + a.width > b.x
+      const overlapY = a.y < b.y + b.height && a.y + a.height > b.y
+      assert.equal(overlapX && overlapY, false, `Radial nodes ${a.id} and ${b.id} overlap`)
+    }
+  }
 })

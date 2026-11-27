@@ -313,6 +313,14 @@ export const I18N = {
       en: 'QUOTA',
       pt: 'COTA',
     },
+    interactionGraph: {
+      en: '@mention Interaction Graph',
+      pt: 'Grafo de Interações (@mention)',
+    },
+    noInteractions: {
+      en: '  (no @mention edges recorded yet)',
+      pt: '  (nenhuma interação @mention registrada ainda)',
+    },
   },
 } as const
 

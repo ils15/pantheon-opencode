@@ -62,6 +62,364 @@ function parseUsd(cell) {
 	return Number.isFinite(value) && value > 0 ? value : null;
 }
 //#endregion
+//#region src/mermaid-ascii.ts
+const ARROW_PATTERN = String.raw`(?:(?:-->|-\.->|==>)\|([^|]+)\||--\s+([^->\n]+?)\s+-->|-\.\s*([^.]+?)\s*\.->|==\s*([^=]+?)\s*==>|-->|-\.->|==>|---)`;
+new RegExp(String.raw`^(.*?)\s+${ARROW_PATTERN}\s+(.*)$`);
+//#endregion
+//#region src/artifacts-state.ts
+/**
+* artifacts-state.ts — Pure scanner, formatter, and paginator for Pantheon
+* Markdown artifacts (`.pantheon/deepwork/<slug>/*.md`, `.pantheon/reports/*.md`,
+* `docs/adr/*.md`, `.pantheon/memory-bank/adr/*.md`).
+*
+* Zero JSX and zero host dependencies so the full scanning, formatting, and
+* pagination logic is directly unit-testable in Node.
+*/
+//#endregion
+//#region src/cockpit-state.ts
+/**
+* cockpit-state.ts — Pure selectors, Gantt renderers, Work Map topology, and
+* Gate Matrix aggregation for the TUI Mission Control Cockpit (`Overview`,
+* `Swarm`, `Flightdeck`).
+*/
+const TIDY_DAG_IGNORED_AGENTS = /* @__PURE__ */ new Set([
+	"user",
+	"pantheon",
+	"ledger",
+	"all",
+	"unknown"
+]);
+function normalizeDagAgentId(raw) {
+	if (!raw) return null;
+	const cleaned = raw.trim().replace(/^@+/, "");
+	if (!cleaned || TIDY_DAG_IGNORED_AGENTS.has(cleaned.toLowerCase())) return null;
+	return cleaned;
+}
+function statusFromString(raw) {
+	if (!raw) return void 0;
+	const s = raw.trim().toLowerCase();
+	if (s === "running" || s === "active" || s === "working" || s === "in_progress") return "running";
+	if (s === "done" || s === "completed" || s === "approve" || s === "approved") return "done";
+	if (s === "blocked" || s === "failed" || s === "error" || s === "block" || s === "stuck") return "blocked";
+}
+function mergeDagStatus(prev, next) {
+	if (!next) return prev ?? "idle";
+	if (prev === "root") return "root";
+	if (next === "blocked" || prev === "blocked") return "blocked";
+	if (next === "running" || prev === "running") return "running";
+	if (next === "done" || prev === "done") return "done";
+	return next;
+}
+/**
+* Computes a non-overlapping multi-level tidy tree layout rooted at `zeus`.
+* Uses bottom-up subtree width measurement (Reingold-Tilford style) with cycle protection.
+*/
+function computeTidyDagLayout(input) {
+	const nodeWidth = input.nodeWidth ?? 132;
+	const nodeHeight = input.nodeHeight ?? 44;
+	const siblingSpacing = input.siblingSpacing ?? 16;
+	const levelSpacing = input.levelSpacing ?? 48;
+	const padX = 16;
+	const padY = 12;
+	const parentOf = /* @__PURE__ */ new Map();
+	const statusOf = /* @__PURE__ */ new Map([["zeus", "root"]]);
+	const wouldCreateCycle = (childId, candidateParentId) => {
+		let cur = candidateParentId;
+		const visited = /* @__PURE__ */ new Set([childId]);
+		while (cur) {
+			if (visited.has(cur)) return true;
+			visited.add(cur);
+			cur = parentOf.get(cur);
+		}
+		return false;
+	};
+	const linkNode = (parentRaw, childRaw, status) => {
+		const child = normalizeDagAgentId(childRaw);
+		if (!child) return;
+		if (status) statusOf.set(child, mergeDagStatus(statusOf.get(child), status));
+		if (child === "zeus") return;
+		const parent = normalizeDagAgentId(parentRaw) ?? "zeus";
+		if (parent === child) return;
+		const existing = parentOf.get(child);
+		if (!existing || existing === "zeus" && parent !== "zeus") {
+			if (!wouldCreateCycle(child, parent)) parentOf.set(child, parent);
+			else if (!existing) parentOf.set(child, "zeus");
+		}
+		if (!statusOf.has(child)) statusOf.set(child, "idle");
+	};
+	for (const ev of input.events ?? []) {
+		const kind = (ev.kind ?? ev.type ?? "").trim();
+		const st = statusFromString(ev.status) ?? (kind === "subagent:start" ? "running" : kind === "subagent:stop" ? "done" : void 0);
+		if (kind === "ephemeral:worker") {
+			const child = ev.role || ev.stepKey || ev.agent;
+			linkNode(ev.baseAgent || ev.parentAgent || "zeus", child, st);
+		} else if (ev.parentAgent && ev.agent) linkNode(ev.parentAgent, ev.agent, st);
+		else if (ev.agent) linkNode("zeus", ev.agent, st);
+	}
+	const seqSender = /* @__PURE__ */ new Map();
+	for (const m of input.messages ?? []) {
+		const sender = normalizeDagAgentId(m.from);
+		if (sender) seqSender.set(m.seq, sender);
+	}
+	for (const m of input.messages ?? []) {
+		const from = normalizeDagAgentId(m.from);
+		const tagStatus = statusFromString(m.tag);
+		if (from) {
+			if (m.replyToSeq !== void 0) {
+				const origSender = seqSender.get(m.replyToSeq);
+				if (origSender && origSender !== from) linkNode(origSender, from, tagStatus);
+				else linkNode("zeus", from, tagStatus);
+			} else linkNode("zeus", from, tagStatus);
+		}
+		for (const target of m.mentions ?? []) linkNode(from ?? "zeus", target, tagStatus);
+	}
+	for (const job of input.activeJobs ?? []) linkNode("zeus", job.agent, statusFromString(job.status));
+	for (const p of [...parentOf.values()]) if (p !== "zeus" && !parentOf.has(p)) {
+		if (!wouldCreateCycle(p, "zeus")) parentOf.set(p, "zeus");
+		if (!statusOf.has(p)) statusOf.set(p, "idle");
+	}
+	const childrenMap = /* @__PURE__ */ new Map();
+	for (const [child, parent] of parentOf.entries()) {
+		const list = childrenMap.get(parent);
+		if (list) list.push(child);
+		else childrenMap.set(parent, [child]);
+	}
+	const measureVisited = /* @__PURE__ */ new Set();
+	const measure = (id) => {
+		measureVisited.add(id);
+		const rawChildren = childrenMap.get(id) ?? [];
+		const measuredChildren = [];
+		for (const childId of rawChildren) if (!measureVisited.has(childId)) measuredChildren.push(measure(childId));
+		const childrenWidth = measuredChildren.reduce((sum, c) => sum + c.subtreeWidth, 0) + Math.max(0, measuredChildren.length - 1) * siblingSpacing;
+		return {
+			id,
+			children: measuredChildren,
+			subtreeWidth: Math.max(nodeWidth, childrenWidth),
+			childrenWidth
+		};
+	};
+	const rootMeasured = measure("zeus");
+	const nodes = [];
+	const nodeById = /* @__PURE__ */ new Map();
+	let maxDepth = 0;
+	const assign = (m, leftX, depth, parentId) => {
+		if (depth > maxDepth) maxDepth = depth;
+		const y = padY + depth * (nodeHeight + levelSpacing);
+		let x = leftX + (m.subtreeWidth - nodeWidth) / 2;
+		if (m.children.length > 0) {
+			let cursorX = leftX + (m.subtreeWidth - m.childrenWidth) / 2;
+			for (const child of m.children) {
+				assign(child, cursorX, depth + 1, m.id);
+				cursorX += child.subtreeWidth + siblingSpacing;
+			}
+			const firstChildId = m.children[0]?.id;
+			const lastChildId = m.children[m.children.length - 1]?.id;
+			const firstChild = firstChildId ? nodeById.get(firstChildId) : void 0;
+			const lastChild = lastChildId ? nodeById.get(lastChildId) : void 0;
+			if (firstChild && lastChild) x = (firstChild.x + nodeWidth / 2 + (lastChild.x + nodeWidth / 2)) / 2 - nodeWidth / 2;
+		}
+		const node = {
+			id: m.id,
+			label: m.id === "zeus" ? "zeus (root)" : m.id,
+			parentId,
+			depth,
+			status: statusOf.get(m.id) ?? "idle",
+			x,
+			y,
+			width: nodeWidth,
+			height: nodeHeight
+		};
+		nodes.push(node);
+		nodeById.set(m.id, node);
+	};
+	assign(rootMeasured, padX, 0, null);
+	const edges = [];
+	for (const node of nodes) {
+		if (!node.parentId) continue;
+		const parent = nodeById.get(node.parentId);
+		if (!parent) continue;
+		edges.push({
+			fromId: parent.id,
+			toId: node.id,
+			x1: parent.x + nodeWidth / 2,
+			y1: parent.y + nodeHeight,
+			x2: node.x + nodeWidth / 2,
+			y2: node.y,
+			status: node.status
+		});
+	}
+	return {
+		nodes,
+		edges,
+		width: Math.max(320, Math.ceil(rootMeasured.subtreeWidth + 32)),
+		height: Math.max(160, Math.ceil((maxDepth + 1) * nodeHeight + maxDepth * levelSpacing + 24))
+	};
+}
+function toRadialTree(input) {
+	if ("nodes" in input) {
+		const map = /* @__PURE__ */ new Map();
+		for (const n of input.nodes) map.set(n.id, {
+			id: n.id,
+			label: n.label,
+			parentId: n.parentId,
+			depth: n.depth,
+			status: n.status,
+			children: [],
+			leafCount: 1
+		});
+		let root;
+		for (const n of input.nodes) {
+			const node = map.get(n.id);
+			if (!node) continue;
+			if (n.parentId && map.has(n.parentId)) map.get(n.parentId)?.children.push(node);
+			else if (n.id === "zeus" || !root) root = node;
+		}
+		const resolvedRoot = root ?? {
+			id: "zeus",
+			label: "zeus (root)",
+			parentId: null,
+			depth: 0,
+			status: "root",
+			children: [],
+			leafCount: 1
+		};
+		const computeLeaves = (node, depth) => {
+			node.depth = depth;
+			if (node.children.length === 0) {
+				node.leafCount = 1;
+				return 1;
+			}
+			let sum = 0;
+			for (const c of node.children) sum += computeLeaves(c, depth + 1);
+			node.leafCount = Math.max(1, sum);
+			return node.leafCount;
+		};
+		computeLeaves(resolvedRoot, 0);
+		return resolvedRoot;
+	}
+	const cloneNode = (n, depth) => {
+		const children = (n.children ?? []).map((c) => cloneNode(c, depth + 1));
+		const leafCount = children.length === 0 ? 1 : children.reduce((sum, c) => sum + c.leafCount, 0);
+		return {
+			id: n.id,
+			label: n.label,
+			parentId: n.parentId,
+			depth,
+			status: n.status,
+			children,
+			leafCount: Math.max(1, leafCount)
+		};
+	};
+	return cloneNode(input, 0);
+}
+/**
+* Computes a coordinator-centered radial hub layout where `zeus` sits at the center
+* and Level-1+ subtrees fan out in proportional angular sectors without overlapping.
+*/
+function computeRadialHubLayout(rootOrLayout, options) {
+	const nodeWidth = options?.nodeWidth ?? 132;
+	const nodeHeight = options?.nodeHeight ?? 44;
+	const innerRadius = options?.innerRadius ?? 170;
+	const ringStep = options?.ringStep ?? 145;
+	const tree = toRadialTree(rootOrLayout);
+	const minRadiusForRing = Math.max(1, tree.leafCount) * (nodeWidth + 24) / (2 * Math.PI);
+	const placed = [];
+	const nodeById = /* @__PURE__ */ new Map();
+	const placeNode = (item, startAngle, endAngle, cx, cy) => {
+		const midAngle = (startAngle + endAngle) / 2;
+		const radius = item.depth === 0 ? 0 : Math.max(innerRadius + (item.depth - 1) * ringStep, minRadiusForRing * (item.depth * .65));
+		const x = cx + Math.cos(midAngle) * radius - nodeWidth / 2;
+		const y = cy + Math.sin(midAngle) * radius - nodeHeight / 2;
+		const dagNode = {
+			id: item.id,
+			label: item.label,
+			parentId: item.parentId,
+			depth: item.depth,
+			status: item.status,
+			x,
+			y,
+			width: nodeWidth,
+			height: nodeHeight
+		};
+		placed.push({
+			node: dagNode,
+			angle: midAngle,
+			radius
+		});
+		nodeById.set(dagNode.id, dagNode);
+		if (item.children.length === 0) return;
+		const span = endAngle - startAngle;
+		let cursor = startAngle;
+		for (const child of item.children) {
+			const childSpan = span * (child.leafCount / item.leafCount);
+			placeNode(child, cursor, cursor + childSpan, cx, cy);
+			cursor += childSpan;
+		}
+	};
+	placeNode(tree, -Math.PI / 2, 3 * Math.PI / 2, 0, 0);
+	const margin = 12;
+	for (let pass = 0; pass < 4; pass++) {
+		let moved = false;
+		for (let i = 0; i < placed.length; i++) for (let j = i + 1; j < placed.length; j++) {
+			const a = placed[i];
+			const b = placed[j];
+			if (!a || !b) continue;
+			const overlapX = a.node.x < b.node.x + b.node.width + margin && a.node.x + a.node.width + margin > b.node.x;
+			const overlapY = a.node.y < b.node.y + b.node.height + margin && a.node.y + a.node.height + margin > b.node.y;
+			if (overlapX && overlapY) {
+				const target = b.node.depth >= a.node.depth ? b : a;
+				target.radius += nodeHeight + margin;
+				target.node.x = Math.cos(target.angle) * target.radius - nodeWidth / 2;
+				target.node.y = Math.sin(target.angle) * target.radius - nodeHeight / 2;
+				moved = true;
+			}
+		}
+		if (!moved) break;
+	}
+	let minX = Infinity;
+	let minY = Infinity;
+	let maxX = -Infinity;
+	let maxY = -Infinity;
+	for (const { node } of placed) {
+		if (node.x < minX) minX = node.x;
+		if (node.y < minY) minY = node.y;
+		if (node.x + node.width > maxX) maxX = node.x + node.width;
+		if (node.y + node.height > maxY) maxY = node.y + node.height;
+	}
+	const contentW = Math.max(nodeWidth, maxX - minX);
+	const contentH = Math.max(nodeHeight, maxY - minY);
+	const width = Math.max(options?.width ?? 760, Math.ceil(contentW + 48));
+	const height = Math.max(options?.height ?? 520, Math.ceil(contentH + 48));
+	const shiftX = (width - contentW) / 2 - minX;
+	const shiftY = (height - contentH) / 2 - minY;
+	const nodes = placed.map(({ node }) => {
+		node.x = Math.round(node.x + shiftX);
+		node.y = Math.round(node.y + shiftY);
+		return node;
+	});
+	const edges = [];
+	for (const node of nodes) {
+		if (!node.parentId) continue;
+		const parent = nodeById.get(node.parentId);
+		if (!parent) continue;
+		edges.push({
+			fromId: parent.id,
+			toId: node.id,
+			x1: parent.x + nodeWidth / 2,
+			y1: parent.y + nodeHeight / 2,
+			x2: node.x + nodeWidth / 2,
+			y2: node.y + nodeHeight / 2,
+			status: node.status
+		});
+	}
+	return {
+		nodes,
+		edges,
+		width,
+		height
+	};
+}
+//#endregion
 //#region src/model-pricing.ts
 /**
 * Model pricing — money for `pantheon_cost`.
@@ -3120,53 +3478,64 @@ async function readChangelogForBundle(bundleUrl) {
 * - Slash commands `/pantheon-cockpit` and `/pantheon-settings`.
 */
 var _tmpl$ = /*#__PURE__*/ (0, solid_js_web.template)(`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border-radius:4px;border:1px solid #ef4444;color:#fca5a5"><span></span><button type=button style=border:none;background:transparent;color:inherit;cursor:pointer>✕`);
-var _tmpl$2 = /*#__PURE__*/ (0, solid_js_web.template)(`<svg viewBox="0 0 640 200"style=width:100%;height:200px><title></title><rect x=245 y=10 width=150 height=36 rx=6 fill=none stroke=#fba970 stroke-width=2></rect><text x=320 y=32 text-anchor=middle fill=currentColor font-size=12 font-weight=600>`);
-var _tmpl$3 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=display:flex;flex-direction:column;gap:10px><div style=display:flex;justify-content:space-between;align-items:center><div style=display:flex;align-items:center;gap:8px><input type=range min=0><span style=opacity:0.75></span></div><div style=display:flex;gap:6px><button type=button style="padding:2px 8px;border-radius:4px;border:1px solid var(--border-weak-base, #3f3f46);cursor:pointer"></button><button type=button style="padding:2px 8px;border-radius:4px;border:1px solid var(--border-weak-base, #3f3f46);cursor:pointer">`);
-var _tmpl$4 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=display:flex;flex-direction:column;gap:8px><div style=display:flex;gap:6px><input type=text style="width:90px;padding:4px 6px;border-radius:4px;border:1px solid var(--border-weak-base, #3f3f46);background:transparent;color:inherit"><input type=text style="flex:1;padding:4px 8px;border-radius:4px;border:1px solid var(--border-weak-base, #3f3f46);background:transparent;color:inherit"><button type=button style="padding:4px 10px;border-radius:4px;border:none;background:#fba970;color:#111;font-weight:600;cursor:pointer">`);
-var _tmpl$5 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=display:flex;flex-direction:column;gap:8px>`);
-var _tmpl$6 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=display:flex;flex-direction:column;gap:10px;padding:12px;font-size:12px;height:100%;overflow:auto><div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border-weak-base, #2e2e32);padding-bottom:8px"><div style=display:flex;align-items:center;gap:8px><span style=font-weight:600>Pantheon Cockpit</span><span style=opacity:0.7></span></div><div style=display:flex;align-items:center;gap:10px><span style=opacity:0.8></span><button type=button style="padding:2px 8px;border-radius:4px;border:1px solid var(--border-weak-base, #3f3f46);background:transparent;color:inherit;cursor:pointer"></button></div></div><div style="display:flex;gap:12px;border-bottom:1px solid var(--border-weak-base, #2e2e32)">`);
-var _tmpl$7 = /*#__PURE__*/ (0, solid_js_web.template)(`<button type=button style="padding:4px 2px 8px;border:none;background:transparent;color:inherit;cursor:pointer">`);
-var _tmpl$8 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=display:flex;flex-direction:column;gap:6px>`);
-var _tmpl$9 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=display:flex;align-items:center;gap:8px><span style=width:96px;font-family:monospace></span><div style=flex:1;height:10px;background:rgba(128,128,128,0.18);border-radius:4px;overflow:hidden><div style=height:100%>`);
-var _tmpl$0 = /*#__PURE__*/ (0, solid_js_web.template)(`<svg><g><path fill=none stroke=#38bdf8 stroke-width=1.5></path><rect y=104 width=110 height=40 rx=6 fill=none stroke=#38bdf8 stroke-width=1.4></rect><text y=128 text-anchor=middle fill=currentColor font-size=11></svg>`, false, true, false);
-var _tmpl$1 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=opacity:0.6>`);
-var _tmpl$10 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style="padding:8px;border-radius:6px;border:1px solid var(--border-weak-base, #2e2e32)"><div style=display:flex;justify-content:space-between;opacity:0.75><span></span><span></span></div><div style=margin-top:4px>`);
-var _tmpl$11 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style="display:flex;justify-content:space-between;padding:8px;border-radius:6px;border:1px solid var(--border-weak-base, #2e2e32)"><span></span><span>`);
-var _tmpl$12 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=opacity:0.8>`);
-var _tmpl$13 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style="display:flex;justify-content:space-between;padding:6px 8px;border-radius:6px;border:1px solid var(--border-weak-base, #2e2e32);opacity:0.85"><span></span><span style=opacity:0.75>`);
-var _tmpl$14 = /*#__PURE__*/ (0, solid_js_web.template)(`<span style=opacity:0.65;font-size:10px>`);
-var _tmpl$15 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div style=display:flex;flex-direction:column><span style=font-size:12px></span></div><button type=button>`);
-var _tmpl$16 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=display:flex;flex-direction:column;gap:4px><div><span style=font-size:12px></span><span style=opacity:0.7;font-family:monospace;font-size:11px></span></div><div style=display:flex;flex-wrap:wrap;gap:4px>`);
-var _tmpl$17 = /*#__PURE__*/ (0, solid_js_web.template)(`<button type=button>`);
-var _tmpl$18 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border-radius:4px;border:1px solid #fba970;color:#fdba74;font-size:11px"><span></span><button type=button style=border:none;background:transparent;color:inherit;cursor:pointer>✕`);
-var _tmpl$19 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style="display:flex;flex-direction:column;gap:4px;border-top:1px solid var(--border-weak-base, #2e2e32);padding-top:6px"><span style=opacity:0.75;font-size:11px>`);
-var _tmpl$20 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div style=font-weight:600></div><div><span></span><span style=font-family:monospace;font-weight:600>`);
-var _tmpl$21 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div><span></span><div style=display:flex;gap:4px></div></div><div><span></span><button type=button></button></div><div><span></span><button type=button>`);
-var _tmpl$22 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=opacity:0.75;font-size:11px>`);
-var _tmpl$23 = /*#__PURE__*/ (0, solid_js_web.template)(`<span style=color:#fca5a5;font-size:11px>`);
-var _tmpl$24 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div><span style=font-weight:600></span><div style=display:flex;gap:4px>`);
-var _tmpl$25 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div><span style=font-weight:600></span><span style=opacity:0.7;font-family:monospace;font-size:11px></span></div><div style=display:flex;flex-wrap:wrap;gap:4px>`);
-var _tmpl$26 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div style=font-weight:600>`);
-var _tmpl$27 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=opacity:0.75;font-size:11px;font-family:monospace>`);
-var _tmpl$28 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div style=font-weight:600></div><div><span></span><button type=button></button></div><div><span></span><div style=display:flex;gap:4px></div></div><div style=display:flex;flex-direction:column;gap:4px><div><span></span><span style=opacity:0.7;font-family:monospace;font-size:11px></span></div><div style=display:flex;flex-wrap:wrap;gap:4px></div></div><div><span></span><button type=button>`);
-var _tmpl$29 = /*#__PURE__*/ (0, solid_js_web.template)(`<span style=color:#f59e0b;font-size:11px>`);
-var _tmpl$30 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div><span style=font-weight:600></span></div><div><span></span><button type=button></button></div><div><span></span><div style=display:flex;gap:4px></div></div><div><span></span><div style=display:flex;gap:4px>`);
-var _tmpl$31 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div style=font-weight:600></div><div><span></span><div style=display:flex;flex-wrap:wrap;gap:4px></div></div><div><span></span><div style=display:flex;flex-wrap:wrap;gap:4px>`);
-var _tmpl$32 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div style=font-weight:600></div><div><span></span><span style=font-family:monospace></span></div><div><span></span><span style=font-family:monospace></span></div><div><span></span><span style=font-family:monospace></span></div><span style=opacity:0.65;font-size:10px>`);
-var _tmpl$33 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div style=font-weight:600></div><div><span></span><div style=display:flex;gap:4px></div></div><div><span></span><span style=font-family:monospace></span></div><div style=display:flex;gap:6px;flex-wrap:wrap><button type=button></button><button type=button>`);
-var _tmpl$34 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div style=font-weight:600></div><div><span></span><span style=font-family:monospace></span></div><div style=display:flex;gap:6px;flex-wrap:wrap><button type=button></button><button type=button></button><button type=button style="border:1px solid #ef4444">`);
-var _tmpl$35 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div style=font-weight:600></div><div><span></span><span style=font-family:monospace></span></div><div><span></span><span style=font-family:monospace></span></div><div><span></span><span style=font-family:monospace></span></div><div><span></span><span style=font-family:monospace>`);
-var _tmpl$36 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=display:flex;flex-direction:column;gap:10px><div style=display:flex;flex-wrap:wrap;gap:4px>`);
-var _tmpl$37 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=font-size:11px;font-family:monospace><span style=opacity:0.9></span><span style=opacity:0.75>`);
-var _tmpl$38 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div style=display:flex;flex-direction:column><span></span><span style=opacity:0.65;font-size:10px></span></div><button type=button>`);
-var _tmpl$39 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=display:flex;gap:6px;align-items:center><input type=text style="flex:1;padding:3px 6px;border-radius:4px;border:1px solid var(--border-weak-base, #3f3f46);background:transparent;color:inherit;font-family:monospace;font-size:11px"><select style="padding:3px 6px;border-radius:4px;border:1px solid var(--border-weak-base, #3f3f46);background:#18181b;color:inherit;font-size:11px"><option value=default>default</option><option value=low>low</option><option value=medium>medium</option><option value=high>high</option></select><button type=button>`);
-var _tmpl$40 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=display:flex;flex-direction:column;gap:4px><div><span style=font-family:monospace;font-weight:600></span><div style=display:flex;align-items:center;gap:6px><span style=opacity:0.8;font-family:monospace;font-size:11px></span><button type=button>`);
-var _tmpl$41 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div style=display:flex;flex-direction:column><span style=font-family:monospace;font-size:11px></span><span style=opacity:0.65;font-size:10px></span></div><span style=font-family:monospace;font-size:11px>`);
-var _tmpl$42 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=font-size:11px><strong></strong><span style=opacity:0.75>`);
-var _tmpl$43 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=display:flex;flex-direction:column;gap:2px><div><span style=font-size:11px;font-weight:600></span><span style=font-family:monospace;font-size:10px;opacity:0.8></span></div><span style=opacity:0.65;font-size:10px;font-family:monospace>`);
-var _tmpl$44 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style="padding:6px 8px;border-radius:4px;border:1px solid #ef4444;color:#fca5a5;font-size:12px">`);
-var _tmpl$45 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=padding:16px;display:flex;flex-direction:column;gap:12px><div style=display:flex;justify-content:space-between;align-items:center><h2 style=font-size:16px;font-weight:600></h2><button type=button style="padding:2px 8px;border-radius:4px;border:1px solid var(--border-weak-base, #3f3f46);background:transparent;color:inherit;cursor:pointer"></button></div><p style=font-size:12px;opacity:0.7>`);
-var _tmpl$46 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=padding:12px><div style=display:flex;justify-content:space-between;margin-bottom:8px><strong>Pantheon Cockpit</strong><button type=button>`);
+var _tmpl$2 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=display:flex;flex-direction:column;gap:6px>`);
+var _tmpl$3 = /*#__PURE__*/ (0, solid_js_web.template)(`<button type=button style="padding:1px 6px;border-radius:4px;border:1px solid var(--border-weak-base, #3f3f46);background:transparent;color:#fba970;cursor:pointer;font-size:11px">`);
+var _tmpl$4 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=display:flex;flex-direction:column;gap:8px><div style=display:flex;justify-content:space-between;align-items:center;opacity:0.8;font-size:11px><span>`);
+var _tmpl$5 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style="position:relative;flex:1;min-height:360px;overflow:auto;border:1px solid var(--border-weak-base, #2e2e32);border-radius:8px;background-color:rgba(15, 17, 23, 0.55);background-image:radial-gradient(rgba(255,255,255,0.06) 1px, transparent 1px);background-size:18px 18px;padding:8px"><div style="position:sticky;top:4px;float:right;z-index:2;display:flex;gap:4px;padding:4px;border-radius:6px;background:rgba(17, 20, 28, 0.88);border:1px solid var(--border-weak-base, #3f3f46)"><button type=button style="padding:2px 7px;border-radius:4px;border:1px solid var(--border-weak-base, #3f3f46);font-size:11px;cursor:pointer"></button><button type=button style="padding:2px 7px;border-radius:4px;border:1px solid var(--border-weak-base, #3f3f46);font-size:11px;cursor:pointer"></button><button type=button style="padding:2px 6px;border-radius:4px;border:1px solid var(--border-weak-base, #3f3f46);background:transparent;color:inherit;font-size:11px;cursor:pointer">-</button><button type=button style="padding:2px 6px;border-radius:4px;border:1px solid var(--border-weak-base, #3f3f46);background:transparent;color:inherit;font-size:11px;font-family:monospace;cursor:pointer"></button><button type=button style="padding:2px 6px;border-radius:4px;border:1px solid var(--border-weak-base, #3f3f46);background:transparent;color:inherit;font-size:11px;cursor:pointer">+</button><button type=button style="padding:2px 6px;border-radius:4px;border:1px solid var(--border-weak-base, #3f3f46);background:transparent;color:inherit;font-size:11px;cursor:pointer"></button></div><svg style=display:block;min-width:100%><title>`);
+var _tmpl$6 = /*#__PURE__*/ (0, solid_js_web.template)(`<span style=opacity:0.6>`);
+var _tmpl$7 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style="height:170px;min-height:170px;border-radius:8px;border:1px solid var(--border-weak-base, #2e2e32);background:rgba(19, 23, 34, 0.72);padding:8px 10px;display:flex;flex-direction:column;gap:6px;overflow:hidden"><div style=display:flex;justify-content:space-between;align-items:center><div style=display:flex;align-items:center;gap:8px><span style=font-weight:600;font-family:monospace></span><span style="padding:1px 7px;border-radius:999px;font-size:10px;font-family:monospace"></span></div><span style=opacity:0.75;font-size:11px;font-family:monospace></span></div><div style=flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:3px;font-size:11px></div><div style="display:flex;justify-content:space-between;border-top:1px solid var(--border-weak-base, #2e2e32);padding-top:4px;font-size:10.5px;font-family:monospace;opacity:0.8"><span></span><span></span><span></span><span></span><span></span><span>`);
+var _tmpl$8 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=flex:1;min-height:0;display:flex;flex-direction:column;gap:10px><div style=display:flex;justify-content:space-between;align-items:center><div style=display:flex;align-items:center;gap:8px><input type=range min=0><span style=opacity:0.75></span></div><div style=display:flex;gap:6px><button type=button style="padding:2px 8px;border-radius:4px;border:1px solid var(--border-weak-base, #3f3f46);cursor:pointer"></button><button type=button style="padding:2px 8px;border-radius:4px;border:1px solid var(--border-weak-base, #3f3f46);cursor:pointer"></button><button type=button style="padding:2px 8px;border-radius:4px;border:1px solid var(--border-weak-base, #3f3f46);cursor:pointer">`);
+var _tmpl$9 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=display:flex;flex-direction:column;gap:8px><div style=display:flex;gap:6px><input type=text style="width:90px;padding:4px 6px;border-radius:4px;border:1px solid var(--border-weak-base, #3f3f46);background:transparent;color:inherit"><input type=text style="flex:1;padding:4px 8px;border-radius:4px;border:1px solid var(--border-weak-base, #3f3f46);background:transparent;color:inherit"><button type=button style="padding:4px 10px;border-radius:4px;border:none;background:#fba970;color:#111;font-weight:600;cursor:pointer">`);
+var _tmpl$0 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=display:flex;flex-direction:column;gap:8px>`);
+var _tmpl$1 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=display:flex;flex-direction:column;gap:10px;padding:12px;font-size:12px;height:100%;overflow:auto><div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border-weak-base, #2e2e32);padding-bottom:8px"><div style=display:flex;align-items:center;gap:8px><span style=font-weight:600>Pantheon Cockpit</span><span style=opacity:0.7></span></div><div style=display:flex;align-items:center;gap:10px><span style=opacity:0.8></span><button type=button style="padding:2px 8px;border-radius:4px;border:1px solid var(--border-weak-base, #3f3f46);background:transparent;color:inherit;cursor:pointer"></button></div></div><div style="display:flex;gap:12px;border-bottom:1px solid var(--border-weak-base, #2e2e32)">`);
+var _tmpl$10 = /*#__PURE__*/ (0, solid_js_web.template)(`<button type=button style="padding:4px 2px 8px;border:none;background:transparent;color:inherit;cursor:pointer">`);
+var _tmpl$11 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=display:flex;align-items:center;gap:8px><span style=width:96px;font-family:monospace></span><div style=flex:1;height:10px;background:rgba(128,128,128,0.18);border-radius:4px;overflow:hidden><div style=height:100%>`);
+var _tmpl$12 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=opacity:0.6>`);
+var _tmpl$13 = /*#__PURE__*/ (0, solid_js_web.template)(`<span style="padding:1px 6px;border-radius:999px;font-size:10px;font-family:monospace">`);
+var _tmpl$14 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=opacity:0.7;font-size:11px>`);
+var _tmpl$15 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style="display:flex;flex-direction:column;gap:3px;padding:6px 8px;border-radius:6px;border:1px solid var(--border-weak-base, #2e2e32)"><div style=display:flex;justify-content:space-between;align-items:center;gap:8px><span style=font-family:monospace>`);
+var _tmpl$16 = /*#__PURE__*/ (0, solid_js_web.template)(`<svg><path fill=none stroke-width=1.6 opacity=0.85></svg>`, false, true, false);
+var _tmpl$17 = /*#__PURE__*/ (0, solid_js_web.template)(`<svg><path fill=none stroke=#94a3b8 stroke-width=1 stroke-dasharray="4 4"opacity=0.45></svg>`, false, true, false);
+var _tmpl$18 = /*#__PURE__*/ (0, solid_js_web.template)(`<svg><g role=button tabIndex=0 style=cursor:pointer><rect rx=8 fill=#131722></rect><circle r=4></circle><text fill=currentColor></text><text fill=#94a3b8 font-size=9.5 font-family=monospace></svg>`, false, true, false);
+var _tmpl$19 = /*#__PURE__*/ (0, solid_js_web.template)(`<span style=font-family:monospace;opacity:0.75>`);
+var _tmpl$20 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=display:flex;gap:6px;opacity:0.9><span style=font-family:monospace;color:#fba970></span><span style=opacity:0.85>`);
+var _tmpl$21 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=display:flex;gap:6px;opacity:0.75><span style=font-family:monospace;color:#38bdf8></span><span>`);
+var _tmpl$22 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style="padding:8px;border-radius:6px;border:1px solid var(--border-weak-base, #2e2e32)"><div style=display:flex;justify-content:space-between;opacity:0.75><span></span><span></span></div><div style=margin-top:4px>`);
+var _tmpl$23 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style="display:flex;justify-content:space-between;padding:8px;border-radius:6px;border:1px solid var(--border-weak-base, #2e2e32)"><span></span><span>`);
+var _tmpl$24 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=opacity:0.8>`);
+var _tmpl$25 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style="display:flex;justify-content:space-between;padding:6px 8px;border-radius:6px;border:1px solid var(--border-weak-base, #2e2e32);opacity:0.85"><span></span><span style=opacity:0.75>`);
+var _tmpl$26 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=display:flex;flex-direction:column;gap:4px><div><span style=font-size:12px></span><span style=opacity:0.7;font-family:monospace;font-size:11px></span></div><div style=display:flex;flex-wrap:wrap;gap:4px>`);
+var _tmpl$27 = /*#__PURE__*/ (0, solid_js_web.template)(`<button type=button>`);
+var _tmpl$28 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border-radius:4px;border:1px solid #fba970;color:#fdba74;font-size:11px"><span></span><button type=button style=border:none;background:transparent;color:inherit;cursor:pointer>✕`);
+var _tmpl$29 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style="display:flex;flex-direction:column;gap:4px;border-top:1px solid var(--border-weak-base, #2e2e32);padding-top:6px"><span style=opacity:0.75;font-size:11px>`);
+var _tmpl$30 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div style=font-weight:600></div><div><span></span><span style=font-family:monospace;font-weight:600>`);
+var _tmpl$31 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div><span></span><div style=display:flex;gap:4px></div></div><div><span></span><button type=button></button></div><div><span></span><button type=button>`);
+var _tmpl$32 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=opacity:0.75;font-size:11px>`);
+var _tmpl$33 = /*#__PURE__*/ (0, solid_js_web.template)(`<span style=color:#fca5a5;font-size:11px>`);
+var _tmpl$34 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div><span style=font-weight:600></span><div style=display:flex;gap:4px>`);
+var _tmpl$35 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div><span style=font-weight:600></span><span style=opacity:0.7;font-family:monospace;font-size:11px></span></div><div style=display:flex;flex-wrap:wrap;gap:4px>`);
+var _tmpl$36 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div style=font-weight:600>`);
+var _tmpl$37 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=opacity:0.75;font-size:11px;font-family:monospace>`);
+var _tmpl$38 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div style=font-weight:600></div><div><span></span><button type=button></button></div><div><span></span><div style=display:flex;gap:4px></div></div><div style=display:flex;flex-direction:column;gap:4px><div><span></span><span style=opacity:0.7;font-family:monospace;font-size:11px></span></div><div style=display:flex;flex-wrap:wrap;gap:4px></div></div><div><span></span><button type=button>`);
+var _tmpl$39 = /*#__PURE__*/ (0, solid_js_web.template)(`<span style=color:#f59e0b;font-size:11px>`);
+var _tmpl$40 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div><span style=font-weight:600></span></div><div><span></span><button type=button></button></div><div><span></span><div style=display:flex;gap:4px></div></div><div><span></span><div style=display:flex;gap:4px>`);
+var _tmpl$41 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div style=font-weight:600></div><div><span></span><div style=display:flex;flex-wrap:wrap;gap:4px></div></div><div><span></span><div style=display:flex;flex-wrap:wrap;gap:4px>`);
+var _tmpl$42 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div style=font-weight:600></div><div><span></span><span style=font-family:monospace></span></div><div><span></span><span style=font-family:monospace></span></div><div><span></span><span style=font-family:monospace></span></div><span style=opacity:0.65;font-size:10px>`);
+var _tmpl$43 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div style=font-weight:600></div><div><span></span><div style=display:flex;gap:4px></div></div><div><span></span><span style=font-family:monospace></span></div><div style=display:flex;gap:6px;flex-wrap:wrap><button type=button></button><button type=button>`);
+var _tmpl$44 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div style=font-weight:600></div><div><span></span><span style=font-family:monospace></span></div><div style=display:flex;gap:6px;flex-wrap:wrap><button type=button></button><button type=button></button><button type=button style="border:1px solid #ef4444">`);
+var _tmpl$45 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div style=font-weight:600></div><div><span></span><span style=font-family:monospace></span></div><div><span></span><span style=font-family:monospace></span></div><div><span></span><span style=font-family:monospace></span></div><div><span></span><span style=font-family:monospace>`);
+var _tmpl$46 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=display:flex;flex-direction:column;gap:10px><div style=display:flex;flex-wrap:wrap;gap:4px>`);
+var _tmpl$47 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=font-size:11px;font-family:monospace><span style=opacity:0.9></span><span style=opacity:0.75>`);
+var _tmpl$48 = /*#__PURE__*/ (0, solid_js_web.template)(`<span style=opacity:0.65;font-size:10px>`);
+var _tmpl$49 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div style=display:flex;flex-direction:column><span></span><span style=opacity:0.65;font-size:10px></span></div><button type=button>`);
+var _tmpl$50 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=display:flex;gap:6px;align-items:center><input type=text style="flex:1;padding:3px 6px;border-radius:4px;border:1px solid var(--border-weak-base, #3f3f46);background:transparent;color:inherit;font-family:monospace;font-size:11px"><select style="padding:3px 6px;border-radius:4px;border:1px solid var(--border-weak-base, #3f3f46);background:#18181b;color:inherit;font-size:11px"><option value=default>default</option><option value=low>low</option><option value=medium>medium</option><option value=high>high</option></select><button type=button>`);
+var _tmpl$51 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=display:flex;flex-direction:column;gap:4px><div><span style=font-family:monospace;font-weight:600></span><div style=display:flex;align-items:center;gap:6px><span style=opacity:0.8;font-family:monospace;font-size:11px></span><button type=button>`);
+var _tmpl$52 = /*#__PURE__*/ (0, solid_js_web.template)(`<div><div style=display:flex;flex-direction:column><span style=font-family:monospace;font-size:11px></span><span style=opacity:0.65;font-size:10px></span></div><span style=font-family:monospace;font-size:11px>`);
+var _tmpl$53 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=font-size:11px><strong></strong><span style=opacity:0.75>`);
+var _tmpl$54 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=display:flex;flex-direction:column;gap:2px><div><span style=font-size:11px;font-weight:600></span><span style=font-family:monospace;font-size:10px;opacity:0.8></span></div><span style=opacity:0.65;font-size:10px;font-family:monospace>`);
+var _tmpl$55 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style="padding:6px 8px;border-radius:4px;border:1px solid #ef4444;color:#fca5a5;font-size:12px">`);
+var _tmpl$56 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=padding:16px;display:flex;flex-direction:column;gap:12px><div style=display:flex;justify-content:space-between;align-items:center><h2 style=font-size:16px;font-weight:600></h2><button type=button style="padding:2px 8px;border-radius:4px;border:1px solid var(--border-weak-base, #3f3f46);background:transparent;color:inherit;cursor:pointer"></button></div><p style=font-size:12px;opacity:0.7>`);
+var _tmpl$57 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=padding:12px><div style=display:flex;justify-content:space-between;margin-bottom:8px><strong>Pantheon Cockpit</strong><button type=button>`);
 const KNOWN_AGENTS = [
 	"zeus",
 	"athena",
@@ -3204,7 +3573,7 @@ const PantheonBridge = _opencode_plugin_gui.Ipc.define({
 function readNdjsonLines(filePath, limit = 80) {
 	if (!(0, node_fs.existsSync)(filePath)) return [];
 	try {
-		const slice = (0, node_fs.readFileSync)(filePath, "utf8").trim().split("\n").filter(Boolean).slice(-limit);
+		const slice = (0, node_fs.readFileSync)(filePath, "utf8").trim().split(/\r?\n/).filter(Boolean).slice(-limit);
 		const parsed = [];
 		for (const line of slice) try {
 			parsed.push(JSON.parse(line));
@@ -3240,6 +3609,8 @@ async function openSqliteReadOnly(dbPath) {
 		return null;
 	}
 }
+const COST_CACHE_TTL_MS = 1e4;
+let guiCachedCosts = null;
 async function readOpenCodeCosts() {
 	const dbPaths = resolveOpenCodeDbPaths();
 	if (dbPaths.length === 0) return {
@@ -3776,7 +4147,23 @@ async function readSnapshotFromDisk(directory) {
 	if ((0, node_fs.existsSync)(plansDir)) try {
 		artifactsCount = (0, node_fs.readdirSync)(plansDir).filter((f) => f.endsWith(".md")).length;
 	} catch {}
-	const { todayCostUSD, monthCostUSD, modelSpend } = await readOpenCodeCosts();
+	let costs = guiCachedCosts;
+	const nowMs = Date.now();
+	if (!costs || nowMs - costs.fetchedAt >= COST_CACHE_TTL_MS) try {
+		costs = {
+			...await readOpenCodeCosts(),
+			fetchedAt: nowMs
+		};
+		guiCachedCosts = costs;
+	} catch {
+		costs = costs ?? {
+			todayCostUSD: 0,
+			monthCostUSD: 0,
+			modelSpend: [],
+			fetchedAt: nowMs
+		};
+	}
+	const { todayCostUSD, monthCostUSD, modelSpend } = costs;
 	return {
 		messages,
 		events,
@@ -4150,15 +4537,21 @@ function resolveActiveDirectory(ctx, explicit) {
 function PantheonCockpitView(props) {
 	const [subTab, setSubTab] = (0, solid_js.createSignal)("topology");
 	const [topoView, setTopoView] = (0, solid_js.createSignal)("dag");
+	const [dagStyle, setDagStyle] = (0, solid_js.createSignal)("radial");
+	const [dagZoom, setDagZoom] = (0, solid_js.createSignal)(1);
+	const [selectedAgent, setSelectedAgent] = (0, solid_js.createSignal)("zeus");
 	const [scrubberSeq, setScrubberSeq] = (0, solid_js.createSignal)(null);
 	const [draftMsg, setDraftMsg] = (0, solid_js.createSignal)("");
 	const [draftChannel, setDraftChannel] = (0, solid_js.createSignal)("default");
 	const effectiveDirectory = () => resolveActiveDirectory(props.ctx, props.directory);
+	let refreshSeq = 0;
 	const refresh = async () => {
+		const seq = ++refreshSeq;
 		try {
 			const dir = effectiveDirectory();
 			if (dir) setActiveDirectory(dir);
 			const raw = await props.ctx.main(PantheonBridge).snapshot(dir);
+			if (seq !== refreshSeq) return;
 			setSharedSnapshot(JSON.parse(raw));
 		} catch {}
 	};
@@ -4188,7 +4581,17 @@ function PantheonCockpitView(props) {
 		if (dir) setActiveDirectory(dir);
 		refresh();
 		const timer = setInterval(() => void refresh(), 3e3);
-		(0, solid_js.onCleanup)(() => clearInterval(timer));
+		const onFocus = () => void refresh();
+		const onVisibility = () => {
+			if (typeof document !== "undefined" && document.visibilityState === "visible") refresh();
+		};
+		if (typeof window !== "undefined") window.addEventListener("focus", onFocus);
+		if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisibility);
+		(0, solid_js.onCleanup)(() => {
+			clearInterval(timer);
+			if (typeof window !== "undefined") window.removeEventListener("focus", onFocus);
+			if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisibility);
+		});
 	});
 	const maxSeq = (0, solid_js.createMemo)(() => {
 		const msgs = sharedSnapshot().messages;
@@ -4198,6 +4601,29 @@ function PantheonCockpitView(props) {
 		const cap = scrubberSeq();
 		const msgs = sharedSnapshot().messages;
 		return cap === null ? msgs : msgs.filter((m) => m.seq <= cap);
+	});
+	const interactionEdges = (0, solid_js.createMemo)(() => {
+		const edges = [];
+		for (const m of visibleMessages()) {
+			const from = m.from.trim().replace(/^@+/, "") || "unknown";
+			const rawTargets = m.mentions.length > 0 ? m.mentions.map((t) => t.trim().replace(/^@+/, "")) : Array.from(m.body.matchAll(/(?:^|[\s(])@([A-Za-z0-9][A-Za-z0-9_-]*)/g), (x) => x[1]);
+			const seen = /* @__PURE__ */ new Set();
+			const preview = m.body.trim().replace(/\s+/g, " ").slice(0, 72);
+			for (const target of rawTargets) {
+				if (!target || seen.has(target)) continue;
+				seen.add(target);
+				edges.push({
+					from,
+					target,
+					seq: m.seq,
+					tag: m.tag,
+					replyToSeq: m.replyToSeq,
+					timestamp: m.timestamp,
+					bodyPreview: preview
+				});
+			}
+		}
+		return edges;
 	});
 	const ephemeralWorkers = (0, solid_js.createMemo)(() => visibleMessages().filter((m) => m.ephemeral !== void 0));
 	const subagentEvents = (0, solid_js.createMemo)(() => sharedSnapshot().events.filter((ev) => {
@@ -4214,9 +4640,61 @@ function PantheonCockpitView(props) {
 		}
 		return [...set].slice(0, 10);
 	});
+	const treeDagLayout = (0, solid_js.createMemo)(() => computeTidyDagLayout({
+		events: sharedSnapshot().events,
+		messages: visibleMessages(),
+		activeJobs: sharedSnapshot().activeJobs
+	}));
+	const radialDagLayout = (0, solid_js.createMemo)(() => computeRadialHubLayout(treeDagLayout()));
+	const activeDagLayout = (0, solid_js.createMemo)(() => dagStyle() === "radial" ? radialDagLayout() : treeDagLayout());
+	const selectedNodeInfo = (0, solid_js.createMemo)(() => {
+		const id = selectedAgent();
+		const node = activeDagLayout().nodes.find((n) => n.id === id) ?? activeDagLayout().nodes[0];
+		const nodeId = node?.id ?? id;
+		const childCount = activeDagLayout().nodes.filter((n) => n.parentId === nodeId).length;
+		const msgs = visibleMessages().filter((m) => {
+			const from = m.from.trim().replace(/^@+/, "");
+			const mentions = m.mentions.map((x) => x.trim().replace(/^@+/, ""));
+			return from === nodeId || mentions.includes(nodeId);
+		}).slice(-5).reverse();
+		const events = sharedSnapshot().events.filter((ev) => {
+			const a = ev.agent?.trim().replace(/^@+/, "");
+			const b = ev.baseAgent?.trim().replace(/^@+/, "");
+			const r = ev.role?.trim().replace(/^@+/, "");
+			return a === nodeId || b === nodeId || r === nodeId;
+		}).slice(-5).reverse();
+		const mentionCount = interactionEdges().filter((e) => e.from === nodeId || e.target === nodeId).length;
+		return {
+			id: nodeId,
+			label: node?.label ?? nodeId,
+			status: node?.status ?? "idle",
+			childCount,
+			mentionCount,
+			msgs,
+			events
+		};
+	});
+	const dagSummaryCounts = (0, solid_js.createMemo)(() => {
+		const nodes = activeDagLayout().nodes;
+		return {
+			total: nodes.length,
+			active: nodes.filter((n) => n.status === "running").length,
+			done: nodes.filter((n) => n.status === "done").length,
+			blocked: nodes.filter((n) => n.status === "blocked").length
+		};
+	});
+	const dagStatusColor = (status) => {
+		switch (status) {
+			case "root": return "#fba970";
+			case "running": return "#38bdf8";
+			case "done": return "#22c55e";
+			case "blocked": return "#ef4444";
+			default: return "#64748b";
+		}
+	};
 	const totalCost = (0, solid_js.createMemo)(() => sharedSnapshot().activeJobs.reduce((sum, j) => sum + (Number.isFinite(j.cost) ? j.cost : 0), 0));
 	return (() => {
-		var _el$ = _tmpl$6(), _el$2 = _el$.firstChild, _el$3 = _el$2.firstChild, _el$5 = _el$3.firstChild.nextSibling, _el$7 = _el$3.nextSibling.firstChild, _el$8 = _el$7.nextSibling, _el$10 = _el$2.nextSibling;
+		var _el$ = _tmpl$1(), _el$2 = _el$.firstChild, _el$3 = _el$2.firstChild, _el$5 = _el$3.firstChild.nextSibling, _el$7 = _el$3.nextSibling.firstChild, _el$8 = _el$7.nextSibling, _el$10 = _el$2.nextSibling;
 		(0, solid_js_web.insert)(_el$5, () => `v${resolveRunningVersion()}`);
 		(0, solid_js_web.insert)(_el$7, () => `${sharedSnapshot().activeJobs.filter((j) => j.status === "running").length} ${tr("active", "ativos")} · $${totalCost().toFixed(2)}`);
 		_el$8.$$click = () => void refresh();
@@ -4238,28 +4716,28 @@ function PantheonCockpitView(props) {
 			["ephemeral", `${tr("Ephemeral & Bots", "Efêmeros & Bots")} (${sharedSnapshot().activeJobs.length})`],
 			["settings", tr("Settings & Cost", "Configurações & Custo")]
 		].map(([id, label]) => (() => {
-			var _el$29 = _tmpl$7();
-			_el$29.$$click = () => setSubTab(id);
-			(0, solid_js_web.insert)(_el$29, label);
+			var _el$56 = _tmpl$10();
+			_el$56.$$click = () => setSubTab(id);
+			(0, solid_js_web.insert)(_el$56, label);
 			(0, solid_js_web.effect)((_p$) => {
-				var _v$8 = subTab() === id ? "2px solid #fba970" : "2px solid transparent", _v$9 = subTab() === id ? 1 : .65, _v$0 = subTab() === id ? 600 : 400;
-				_v$8 !== _p$.e && (0, solid_js_web.setStyleProperty)(_el$29, "border-bottom", _p$.e = _v$8);
-				_v$9 !== _p$.t && (0, solid_js_web.setStyleProperty)(_el$29, "opacity", _p$.t = _v$9);
-				_v$0 !== _p$.a && (0, solid_js_web.setStyleProperty)(_el$29, "font-weight", _p$.a = _v$0);
+				var _v$17 = subTab() === id ? "2px solid #fba970" : "2px solid transparent", _v$18 = subTab() === id ? 1 : .65, _v$19 = subTab() === id ? 600 : 400;
+				_v$17 !== _p$.e && (0, solid_js_web.setStyleProperty)(_el$56, "border-bottom", _p$.e = _v$17);
+				_v$18 !== _p$.t && (0, solid_js_web.setStyleProperty)(_el$56, "opacity", _p$.t = _v$18);
+				_v$19 !== _p$.a && (0, solid_js_web.setStyleProperty)(_el$56, "font-weight", _p$.a = _v$19);
 				return _p$;
 			}, {
 				e: void 0,
 				t: void 0,
 				a: void 0
 			});
-			return _el$29;
+			return _el$56;
 		})()));
 		(0, solid_js_web.insert)(_el$, (0, solid_js_web.createComponent)(solid_js.Show, {
 			get when() {
 				return subTab() === "topology";
 			},
 			get children() {
-				var _el$11 = _tmpl$3(), _el$13 = _el$11.firstChild.firstChild, _el$14 = _el$13.firstChild, _el$15 = _el$14.nextSibling, _el$17 = _el$13.nextSibling.firstChild, _el$18 = _el$17.nextSibling;
+				var _el$11 = _tmpl$8(), _el$13 = _el$11.firstChild.firstChild, _el$14 = _el$13.firstChild, _el$15 = _el$14.nextSibling, _el$17 = _el$13.nextSibling.firstChild, _el$18 = _el$17.nextSibling, _el$19 = _el$18.nextSibling;
 				_el$14.$$input = (e) => {
 					const val = Number(e.currentTarget.value);
 					setScrubberSeq(val >= maxSeq() ? null : val);
@@ -4272,67 +4750,323 @@ function PantheonCockpitView(props) {
 				(0, solid_js_web.insert)(_el$17, () => tr("DAG Pillars", "Pilares DAG"));
 				_el$18.$$click = () => setTopoView("gantt");
 				(0, solid_js_web.insert)(_el$18, () => tr("Timeline", "Linha do Tempo"));
+				_el$19.$$click = () => setTopoView("interactions");
+				(0, solid_js_web.insert)(_el$19, () => tr("Interactions", "Interações"));
+				(0, solid_js_web.insert)(_el$11, (0, solid_js_web.createComponent)(solid_js.Show, {
+					get when() {
+						return topoView() === "gantt";
+					},
+					get children() {
+						var _el$20 = _tmpl$2();
+						(0, solid_js_web.insert)(_el$20, (0, solid_js_web.createComponent)(solid_js.For, {
+							get each() {
+								return uniqueAgents();
+							},
+							children: (agent, idx) => (() => {
+								var _el$57 = _tmpl$11(), _el$58 = _el$57.firstChild, _el$60 = _el$58.nextSibling.firstChild;
+								(0, solid_js_web.insert)(_el$58, agent);
+								(0, solid_js_web.setStyleProperty)(_el$60, "background", agent === "zeus" ? "#fba970" : "#38bdf8");
+								(0, solid_js_web.effect)((_$p) => (0, solid_js_web.setStyleProperty)(_el$60, "width", `${Math.max(20, 95 - idx() * 15)}%`));
+								return _el$57;
+							})()
+						}));
+						return _el$20;
+					}
+				}), null);
+				(0, solid_js_web.insert)(_el$11, (0, solid_js_web.createComponent)(solid_js.Show, {
+					get when() {
+						return topoView() === "interactions";
+					},
+					get children() {
+						var _el$21 = _tmpl$4(), _el$22 = _el$21.firstChild, _el$23 = _el$22.firstChild;
+						(0, solid_js_web.insert)(_el$23, () => `${interactionEdges().length} ${tr("@mention edges", "arestas @mention")} · ${visibleMessages().length}/${sharedSnapshot().messages.length} ${tr("msgs up to", "msgs até")} #${scrubberSeq() ?? maxSeq()}`);
+						(0, solid_js_web.insert)(_el$22, (0, solid_js_web.createComponent)(solid_js.Show, {
+							get when() {
+								return scrubberSeq() !== null;
+							},
+							get children() {
+								var _el$24 = _tmpl$3();
+								_el$24.$$click = () => setScrubberSeq(null);
+								(0, solid_js_web.insert)(_el$24, () => tr("Live", "Ao vivo"));
+								return _el$24;
+							}
+						}), null);
+						(0, solid_js_web.insert)(_el$21, (0, solid_js_web.createComponent)(solid_js.For, {
+							get each() {
+								return interactionEdges();
+							},
+							get fallback() {
+								return (() => {
+									var _el$61 = _tmpl$12();
+									(0, solid_js_web.insert)(_el$61, () => tr("No @mention interactions up to this #seq.", "Nenhuma interação @mention até este #seq."));
+									return _el$61;
+								})();
+							},
+							children: (edge) => {
+								const tagColor = edge.tag === "done" ? "#34d399" : edge.tag === "blocker" || edge.tag === "deadlock" ? "#f87171" : edge.tag === "claim" || edge.tag === "handoff" ? "#fba970" : "#38bdf8";
+								return (() => {
+									var _el$62 = _tmpl$15(), _el$63 = _el$62.firstChild, _el$64 = _el$63.firstChild;
+									(0, solid_js_web.insert)(_el$64, () => `#${edge.seq} ${edge.from} → @${edge.target}`, null);
+									(0, solid_js_web.insert)(_el$64, (() => {
+										var _c$2 = (0, solid_js_web.memo)(() => edge.replyToSeq !== void 0);
+										return () => _c$2() ? ` (re:#${edge.replyToSeq})` : "";
+									})(), null);
+									(0, solid_js_web.insert)(_el$63, (0, solid_js_web.createComponent)(solid_js.Show, {
+										get when() {
+											return edge.tag;
+										},
+										get children() {
+											var _el$65 = _tmpl$13();
+											(0, solid_js_web.setStyleProperty)(_el$65, "border", `1px solid ${tagColor}`);
+											(0, solid_js_web.setStyleProperty)(_el$65, "color", tagColor);
+											(0, solid_js_web.insert)(_el$65, () => `[${edge.tag}]`);
+											return _el$65;
+										}
+									}), null);
+									(0, solid_js_web.insert)(_el$62, (0, solid_js_web.createComponent)(solid_js.Show, {
+										get when() {
+											return edge.bodyPreview.length > 0;
+										},
+										get children() {
+											var _el$66 = _tmpl$14();
+											(0, solid_js_web.insert)(_el$66, () => edge.bodyPreview);
+											return _el$66;
+										}
+									}), null);
+									return _el$62;
+								})();
+							}
+						}), null);
+						return _el$21;
+					}
+				}), null);
 				(0, solid_js_web.insert)(_el$11, (0, solid_js_web.createComponent)(solid_js.Show, {
 					get when() {
 						return topoView() === "dag";
 					},
-					get fallback() {
-						return (() => {
-							var _el$30 = _tmpl$8();
-							(0, solid_js_web.insert)(_el$30, (0, solid_js_web.createComponent)(solid_js.For, {
-								get each() {
-									return uniqueAgents();
-								},
-								children: (agent, idx) => (() => {
-									var _el$31 = _tmpl$9(), _el$32 = _el$31.firstChild, _el$34 = _el$32.nextSibling.firstChild;
-									(0, solid_js_web.insert)(_el$32, agent);
-									(0, solid_js_web.setStyleProperty)(_el$34, "background", agent === "zeus" ? "#fba970" : "#38bdf8");
-									(0, solid_js_web.effect)((_$p) => (0, solid_js_web.setStyleProperty)(_el$34, "width", `${Math.max(20, 95 - idx() * 15)}%`));
-									return _el$31;
-								})()
-							}));
-							return _el$30;
-						})();
-					},
 					get children() {
-						var _el$19 = _tmpl$2(), _el$20 = _el$19.firstChild, _el$22 = _el$20.nextSibling.nextSibling;
-						(0, solid_js_web.insert)(_el$20, () => tr("Olympus Topology DAG", "Topologia Olympus (DAG)"));
-						(0, solid_js_web.insert)(_el$22, () => tr("zeus (root)", "zeus (raiz)"));
-						(0, solid_js_web.insert)(_el$19, (0, solid_js_web.createComponent)(solid_js.For, {
-							get each() {
-								return uniqueAgents().filter((a) => a !== "zeus");
-							},
-							children: (agent, idx) => {
-								const count = Math.max(1, uniqueAgents().length - 1);
-								const x = 20 + idx() * 600 / count;
-								const cx = x + 55;
-								return (() => {
-									var _el$35 = _tmpl$0(), _el$36 = _el$35.firstChild, _el$37 = _el$36.nextSibling, _el$38 = _el$37.nextSibling;
-									(0, solid_js_web.setAttribute)(_el$36, "d", `M 320 46 C 320 78, ${cx} 72, ${cx} 104`);
-									(0, solid_js_web.setAttribute)(_el$37, "x", x);
-									(0, solid_js_web.setAttribute)(_el$38, "x", cx);
-									(0, solid_js_web.insert)(_el$38, agent);
-									return _el$35;
-								})();
-							}
-						}), null);
-						return _el$19;
+						return [(() => {
+							var _el$25 = _tmpl$5(), _el$26 = _el$25.firstChild, _el$27 = _el$26.firstChild, _el$28 = _el$27.nextSibling, _el$29 = _el$28.nextSibling, _el$30 = _el$29.nextSibling, _el$31 = _el$30.nextSibling, _el$32 = _el$31.nextSibling, _el$33 = _el$26.nextSibling, _el$34 = _el$33.firstChild;
+							_el$27.$$click = () => setDagStyle("radial");
+							(0, solid_js_web.insert)(_el$27, () => tr("Hub Radial", "Hub Radial"));
+							_el$28.$$click = () => setDagStyle("tree");
+							(0, solid_js_web.insert)(_el$28, () => tr("Tree DAG", "Árvore DAG"));
+							_el$29.$$click = () => setDagZoom((z) => Math.max(.5, Number((z - .15).toFixed(2))));
+							_el$30.$$click = () => setDagZoom(1);
+							(0, solid_js_web.insert)(_el$30, () => `${Math.round(dagZoom() * 100)}%`);
+							_el$31.$$click = () => setDagZoom((z) => Math.min(2, Number((z + .15).toFixed(2))));
+							_el$32.$$click = () => setDagZoom(.85);
+							(0, solid_js_web.insert)(_el$32, () => tr("Fit", "Ajustar"));
+							(0, solid_js_web.insert)(_el$34, () => tr("Olympus Topology DAG", "Topologia Olympus (DAG)"));
+							(0, solid_js_web.insert)(_el$33, (0, solid_js_web.createComponent)(solid_js.For, {
+								get each() {
+									return activeDagLayout().edges;
+								},
+								children: (edge) => {
+									const stroke = dagStatusColor(edge.status);
+									const pathD = dagStyle() === "radial" ? (() => {
+										const mx = (edge.x1 + edge.x2) / 2;
+										const my = (edge.y1 + edge.y2) / 2;
+										const dx = edge.x2 - edge.x1;
+										const cx = mx - (edge.y2 - edge.y1) * .08;
+										const cy = my + dx * .08;
+										return `M ${edge.x1} ${edge.y1} Q ${cx} ${cy}, ${edge.x2} ${edge.y2}`;
+									})() : (() => {
+										const midY = (edge.y1 + edge.y2) / 2;
+										return `M ${edge.x1} ${edge.y1} C ${edge.x1} ${midY}, ${edge.x2} ${midY}, ${edge.x2} ${edge.y2}`;
+									})();
+									return (() => {
+										var _el$67 = _tmpl$16();
+										(0, solid_js_web.setAttribute)(_el$67, "d", pathD);
+										(0, solid_js_web.setAttribute)(_el$67, "stroke", stroke);
+										return _el$67;
+									})();
+								}
+							}), null);
+							(0, solid_js_web.insert)(_el$33, (0, solid_js_web.createComponent)(solid_js.Show, {
+								get when() {
+									return dagStyle() === "radial";
+								},
+								get children() {
+									return (0, solid_js_web.createComponent)(solid_js.For, {
+										get each() {
+											return interactionEdges().slice(-24);
+										},
+										children: (edge) => {
+											const fromNode = activeDagLayout().nodes.find((n) => n.id === edge.from);
+											const toNode = activeDagLayout().nodes.find((n) => n.id === edge.target);
+											if (!fromNode || !toNode || fromNode.id === toNode.id) return null;
+											if (toNode.parentId === fromNode.id || fromNode.parentId === toNode.id) return null;
+											const x1 = fromNode.x + fromNode.width / 2;
+											const y1 = fromNode.y + fromNode.height / 2;
+											const x2 = toNode.x + toNode.width / 2;
+											const y2 = toNode.y + toNode.height / 2;
+											return (() => {
+												var _el$68 = _tmpl$17();
+												(0, solid_js_web.setAttribute)(_el$68, "d", `M ${x1} ${y1} Q ${(x1 + x2) / 2} ${(y1 + y2) / 2 - 22}, ${x2} ${y2}`);
+												return _el$68;
+											})();
+										}
+									});
+								}
+							}), null);
+							(0, solid_js_web.insert)(_el$33, (0, solid_js_web.createComponent)(solid_js.For, {
+								get each() {
+									return activeDagLayout().nodes;
+								},
+								children: (node) => {
+									const stroke = dagStatusColor(node.status);
+									const isSelected = () => selectedAgent() === node.id;
+									const label = node.id === "zeus" ? tr("zeus (root)", "zeus (raiz)") : node.label.length > 15 ? `${node.label.slice(0, 14)}…` : node.label;
+									return (() => {
+										var _el$69 = _tmpl$18(), _el$70 = _el$69.firstChild, _el$71 = _el$70.nextSibling, _el$72 = _el$71.nextSibling, _el$73 = _el$72.nextSibling;
+										_el$69.$$keydown = (e) => {
+											if (e.key === "Enter" || e.key === " ") setSelectedAgent(node.id);
+										};
+										_el$69.$$click = () => setSelectedAgent(node.id);
+										(0, solid_js_web.setAttribute)(_el$70, "stroke", stroke);
+										(0, solid_js_web.setAttribute)(_el$71, "fill", stroke);
+										(0, solid_js_web.insert)(_el$72, label);
+										(0, solid_js_web.insert)(_el$73, () => `${node.status} · L${node.depth}`);
+										(0, solid_js_web.effect)((_p$) => {
+											var _v$20 = node.x, _v$21 = node.y, _v$22 = node.width, _v$23 = node.height, _v$24 = isSelected() ? "2.5" : node.id === "zeus" ? "2" : "1.4", _v$25 = node.x + 14, _v$26 = node.y + 16, _v$27 = node.x + 24, _v$28 = node.y + 20, _v$29 = node.id === "zeus" ? "12" : "11", _v$30 = node.id === "zeus" || isSelected() ? "600" : "500", _v$31 = node.x + 24, _v$32 = node.y + 34;
+											_v$20 !== _p$.e && (0, solid_js_web.setAttribute)(_el$70, "x", _p$.e = _v$20);
+											_v$21 !== _p$.t && (0, solid_js_web.setAttribute)(_el$70, "y", _p$.t = _v$21);
+											_v$22 !== _p$.a && (0, solid_js_web.setAttribute)(_el$70, "width", _p$.a = _v$22);
+											_v$23 !== _p$.o && (0, solid_js_web.setAttribute)(_el$70, "height", _p$.o = _v$23);
+											_v$24 !== _p$.i && (0, solid_js_web.setAttribute)(_el$70, "stroke-width", _p$.i = _v$24);
+											_v$25 !== _p$.n && (0, solid_js_web.setAttribute)(_el$71, "cx", _p$.n = _v$25);
+											_v$26 !== _p$.s && (0, solid_js_web.setAttribute)(_el$71, "cy", _p$.s = _v$26);
+											_v$27 !== _p$.h && (0, solid_js_web.setAttribute)(_el$72, "x", _p$.h = _v$27);
+											_v$28 !== _p$.r && (0, solid_js_web.setAttribute)(_el$72, "y", _p$.r = _v$28);
+											_v$29 !== _p$.d && (0, solid_js_web.setAttribute)(_el$72, "font-size", _p$.d = _v$29);
+											_v$30 !== _p$.l && (0, solid_js_web.setAttribute)(_el$72, "font-weight", _p$.l = _v$30);
+											_v$31 !== _p$.u && (0, solid_js_web.setAttribute)(_el$73, "x", _p$.u = _v$31);
+											_v$32 !== _p$.c && (0, solid_js_web.setAttribute)(_el$73, "y", _p$.c = _v$32);
+											return _p$;
+										}, {
+											e: void 0,
+											t: void 0,
+											a: void 0,
+											o: void 0,
+											i: void 0,
+											n: void 0,
+											s: void 0,
+											h: void 0,
+											r: void 0,
+											d: void 0,
+											l: void 0,
+											u: void 0,
+											c: void 0
+										});
+										return _el$69;
+									})();
+								}
+							}), null);
+							(0, solid_js_web.effect)((_p$) => {
+								var _v$ = dagStyle() === "radial" ? "#fba970" : "transparent", _v$2 = dagStyle() === "radial" ? "#111" : "inherit", _v$3 = dagStyle() === "tree" ? "#fba970" : "transparent", _v$4 = dagStyle() === "tree" ? "#111" : "inherit", _v$5 = Math.round(activeDagLayout().width * dagZoom()), _v$6 = Math.round(activeDagLayout().height * dagZoom()), _v$7 = `0 0 ${activeDagLayout().width} ${activeDagLayout().height}`;
+								_v$ !== _p$.e && (0, solid_js_web.setStyleProperty)(_el$27, "background", _p$.e = _v$);
+								_v$2 !== _p$.t && (0, solid_js_web.setStyleProperty)(_el$27, "color", _p$.t = _v$2);
+								_v$3 !== _p$.a && (0, solid_js_web.setStyleProperty)(_el$28, "background", _p$.a = _v$3);
+								_v$4 !== _p$.o && (0, solid_js_web.setStyleProperty)(_el$28, "color", _p$.o = _v$4);
+								_v$5 !== _p$.i && (0, solid_js_web.setAttribute)(_el$33, "width", _p$.i = _v$5);
+								_v$6 !== _p$.n && (0, solid_js_web.setAttribute)(_el$33, "height", _p$.n = _v$6);
+								_v$7 !== _p$.s && (0, solid_js_web.setAttribute)(_el$33, "viewBox", _p$.s = _v$7);
+								return _p$;
+							}, {
+								e: void 0,
+								t: void 0,
+								a: void 0,
+								o: void 0,
+								i: void 0,
+								n: void 0,
+								s: void 0
+							});
+							return _el$25;
+						})(), (() => {
+							var _el$35 = _tmpl$7(), _el$36 = _el$35.firstChild, _el$37 = _el$36.firstChild, _el$38 = _el$37.firstChild, _el$39 = _el$38.nextSibling, _el$40 = _el$37.nextSibling, _el$41 = _el$36.nextSibling, _el$44 = _el$41.nextSibling.firstChild, _el$45 = _el$44.nextSibling, _el$46 = _el$45.nextSibling, _el$47 = _el$46.nextSibling, _el$48 = _el$47.nextSibling, _el$49 = _el$48.nextSibling;
+							(0, solid_js_web.insert)(_el$38, () => `@${selectedNodeInfo().id}`);
+							(0, solid_js_web.insert)(_el$39, () => selectedNodeInfo().status);
+							(0, solid_js_web.insert)(_el$40, () => `${tr("children", "filhos")}: ${selectedNodeInfo().childCount} · @mentions: ${selectedNodeInfo().mentionCount}`);
+							(0, solid_js_web.insert)(_el$41, (0, solid_js_web.createComponent)(solid_js.For, {
+								get each() {
+									return selectedNodeInfo().msgs;
+								},
+								children: (m) => (() => {
+									var _el$74 = _tmpl$20(), _el$75 = _el$74.firstChild, _el$77 = _el$75.nextSibling;
+									(0, solid_js_web.insert)(_el$75, () => `#${m.seq}`);
+									(0, solid_js_web.insert)(_el$74, (0, solid_js_web.createComponent)(solid_js.Show, {
+										get when() {
+											return m.tag;
+										},
+										get children() {
+											var _el$76 = _tmpl$19();
+											(0, solid_js_web.insert)(_el$76, () => `[${m.tag}]`);
+											return _el$76;
+										}
+									}), _el$77);
+									(0, solid_js_web.insert)(_el$77, () => m.body.trim().replace(/\s+/g, " ").slice(0, 96));
+									return _el$74;
+								})()
+							}), null);
+							(0, solid_js_web.insert)(_el$41, (0, solid_js_web.createComponent)(solid_js.For, {
+								get each() {
+									return selectedNodeInfo().events;
+								},
+								children: (ev) => (() => {
+									var _el$78 = _tmpl$21(), _el$79 = _el$78.firstChild, _el$80 = _el$79.nextSibling;
+									(0, solid_js_web.insert)(_el$79, () => ev.kind ?? ev.type ?? "event");
+									(0, solid_js_web.insert)(_el$80, () => ev.stepKey ?? ev.role ?? ev.status ?? "");
+									return _el$78;
+								})()
+							}), null);
+							(0, solid_js_web.insert)(_el$41, (0, solid_js_web.createComponent)(solid_js.Show, {
+								get when() {
+									return (0, solid_js_web.memo)(() => selectedNodeInfo().msgs.length === 0)() && selectedNodeInfo().events.length === 0;
+								},
+								get children() {
+									var _el$42 = _tmpl$6();
+									(0, solid_js_web.insert)(_el$42, () => tr("No board messages or telemetry events recorded for this node yet.", "Nenhuma mensagem ou evento de telemetria registrado para este nó ainda."));
+									return _el$42;
+								}
+							}), null);
+							(0, solid_js_web.insert)(_el$44, () => `Agents: ${dagSummaryCounts().total}`);
+							(0, solid_js_web.insert)(_el$45, () => `Active: ${dagSummaryCounts().active}`);
+							(0, solid_js_web.insert)(_el$46, () => `Done: ${dagSummaryCounts().done}`);
+							(0, solid_js_web.insert)(_el$47, () => `Blocked: ${dagSummaryCounts().blocked}`);
+							(0, solid_js_web.insert)(_el$48, () => `Board: #${maxSeq()}`);
+							(0, solid_js_web.insert)(_el$49, () => `Cost: $${totalCost().toFixed(2)}`);
+							(0, solid_js_web.effect)((_p$) => {
+								var _v$8 = `1px solid ${dagStatusColor(selectedNodeInfo().status)}`, _v$9 = dagStatusColor(selectedNodeInfo().status);
+								_v$8 !== _p$.e && (0, solid_js_web.setStyleProperty)(_el$39, "border", _p$.e = _v$8);
+								_v$9 !== _p$.t && (0, solid_js_web.setStyleProperty)(_el$39, "color", _p$.t = _v$9);
+								return _p$;
+							}, {
+								e: void 0,
+								t: void 0
+							});
+							return _el$35;
+						})()];
 					}
 				}), null);
 				(0, solid_js_web.effect)((_p$) => {
-					var _v$ = Math.max(1, maxSeq()), _v$2 = topoView() === "dag" ? "#fba970" : "transparent", _v$3 = topoView() === "dag" ? "#111" : "inherit", _v$4 = topoView() === "gantt" ? "#fba970" : "transparent", _v$5 = topoView() === "gantt" ? "#111" : "inherit";
-					_v$ !== _p$.e && (0, solid_js_web.setAttribute)(_el$14, "max", _p$.e = _v$);
-					_v$2 !== _p$.t && (0, solid_js_web.setStyleProperty)(_el$17, "background", _p$.t = _v$2);
-					_v$3 !== _p$.a && (0, solid_js_web.setStyleProperty)(_el$17, "color", _p$.a = _v$3);
-					_v$4 !== _p$.o && (0, solid_js_web.setStyleProperty)(_el$18, "background", _p$.o = _v$4);
-					_v$5 !== _p$.i && (0, solid_js_web.setStyleProperty)(_el$18, "color", _p$.i = _v$5);
+					var _v$0 = Math.max(1, maxSeq()), _v$1 = topoView() === "dag" ? "#fba970" : "transparent", _v$10 = topoView() === "dag" ? "#111" : "inherit", _v$11 = topoView() === "gantt" ? "#fba970" : "transparent", _v$12 = topoView() === "gantt" ? "#111" : "inherit", _v$13 = topoView() === "interactions" ? "#fba970" : "transparent", _v$14 = topoView() === "interactions" ? "#111" : "inherit";
+					_v$0 !== _p$.e && (0, solid_js_web.setAttribute)(_el$14, "max", _p$.e = _v$0);
+					_v$1 !== _p$.t && (0, solid_js_web.setStyleProperty)(_el$17, "background", _p$.t = _v$1);
+					_v$10 !== _p$.a && (0, solid_js_web.setStyleProperty)(_el$17, "color", _p$.a = _v$10);
+					_v$11 !== _p$.o && (0, solid_js_web.setStyleProperty)(_el$18, "background", _p$.o = _v$11);
+					_v$12 !== _p$.i && (0, solid_js_web.setStyleProperty)(_el$18, "color", _p$.i = _v$12);
+					_v$13 !== _p$.n && (0, solid_js_web.setStyleProperty)(_el$19, "background", _p$.n = _v$13);
+					_v$14 !== _p$.s && (0, solid_js_web.setStyleProperty)(_el$19, "color", _p$.s = _v$14);
 					return _p$;
 				}, {
 					e: void 0,
 					t: void 0,
 					a: void 0,
 					o: void 0,
-					i: void 0
+					i: void 0,
+					n: void 0,
+					s: void 0
 				});
 				(0, solid_js_web.effect)(() => _el$14.value = scrubberSeq() ?? maxSeq());
 				return _el$11;
@@ -4343,45 +5077,45 @@ function PantheonCockpitView(props) {
 				return subTab() === "board";
 			},
 			get children() {
-				var _el$23 = _tmpl$4(), _el$25 = _el$23.firstChild.firstChild, _el$26 = _el$25.nextSibling, _el$27 = _el$26.nextSibling;
-				_el$25.$$input = (e) => setDraftChannel(e.currentTarget.value);
-				_el$26.$$keydown = (e) => {
+				var _el$50 = _tmpl$9(), _el$52 = _el$50.firstChild.firstChild, _el$53 = _el$52.nextSibling, _el$54 = _el$53.nextSibling;
+				_el$52.$$input = (e) => setDraftChannel(e.currentTarget.value);
+				_el$53.$$keydown = (e) => {
 					if (e.key === "Enter") sendBoardMsg();
 				};
-				_el$26.$$input = (e) => setDraftMsg(e.currentTarget.value);
-				_el$27.$$click = () => void sendBoardMsg();
-				(0, solid_js_web.insert)(_el$27, () => tr("Send", "Enviar"));
-				(0, solid_js_web.insert)(_el$23, (0, solid_js_web.createComponent)(solid_js.For, {
+				_el$53.$$input = (e) => setDraftMsg(e.currentTarget.value);
+				_el$54.$$click = () => void sendBoardMsg();
+				(0, solid_js_web.insert)(_el$54, () => tr("Send", "Enviar"));
+				(0, solid_js_web.insert)(_el$50, (0, solid_js_web.createComponent)(solid_js.For, {
 					get each() {
 						return [...visibleMessages()].reverse().slice(0, 20);
 					},
 					get fallback() {
 						return (() => {
-							var _el$39 = _tmpl$1();
-							(0, solid_js_web.insert)(_el$39, () => tr("No board messages recorded yet.", "Nenhuma mensagem registrada no board ainda."));
-							return _el$39;
+							var _el$81 = _tmpl$12();
+							(0, solid_js_web.insert)(_el$81, () => tr("No board messages recorded yet.", "Nenhuma mensagem registrada no board ainda."));
+							return _el$81;
 						})();
 					},
 					children: (msg) => (() => {
-						var _el$40 = _tmpl$10(), _el$41 = _el$40.firstChild, _el$42 = _el$41.firstChild, _el$43 = _el$42.nextSibling, _el$44 = _el$41.nextSibling;
-						(0, solid_js_web.insert)(_el$42, () => `#${msg.seq} ${msg.from}${msg.mentions.length ? ` → ${msg.mentions.join(", ")}` : ""}`);
-						(0, solid_js_web.insert)(_el$43, () => msg.tag ?? "");
-						(0, solid_js_web.insert)(_el$44, () => msg.body);
-						return _el$40;
+						var _el$82 = _tmpl$22(), _el$83 = _el$82.firstChild, _el$84 = _el$83.firstChild, _el$85 = _el$84.nextSibling, _el$86 = _el$83.nextSibling;
+						(0, solid_js_web.insert)(_el$84, () => `#${msg.seq} ${msg.from}${msg.mentions.length ? ` → ${msg.mentions.join(", ")}` : ""}`);
+						(0, solid_js_web.insert)(_el$85, () => msg.tag ?? "");
+						(0, solid_js_web.insert)(_el$86, () => msg.body);
+						return _el$82;
 					})()
 				}), null);
 				(0, solid_js_web.effect)((_p$) => {
-					var _v$6 = tr("Channel", "Canal"), _v$7 = tr("Post message to Agora Board (@agent)...", "Enviar mensagem ao Board Agora (@agente)...");
-					_v$6 !== _p$.e && (0, solid_js_web.setAttribute)(_el$25, "placeholder", _p$.e = _v$6);
-					_v$7 !== _p$.t && (0, solid_js_web.setAttribute)(_el$26, "placeholder", _p$.t = _v$7);
+					var _v$15 = tr("Channel", "Canal"), _v$16 = tr("Post message to Agora Board (@agent)...", "Enviar mensagem ao Board Agora (@agente)...");
+					_v$15 !== _p$.e && (0, solid_js_web.setAttribute)(_el$52, "placeholder", _p$.e = _v$15);
+					_v$16 !== _p$.t && (0, solid_js_web.setAttribute)(_el$53, "placeholder", _p$.t = _v$16);
 					return _p$;
 				}, {
 					e: void 0,
 					t: void 0
 				});
-				(0, solid_js_web.effect)(() => _el$25.value = draftChannel());
-				(0, solid_js_web.effect)(() => _el$26.value = draftMsg());
-				return _el$23;
+				(0, solid_js_web.effect)(() => _el$52.value = draftChannel());
+				(0, solid_js_web.effect)(() => _el$53.value = draftMsg());
+				return _el$50;
 			}
 		}), null);
 		(0, solid_js_web.insert)(_el$, (0, solid_js_web.createComponent)(solid_js.Show, {
@@ -4389,8 +5123,8 @@ function PantheonCockpitView(props) {
 				return subTab() === "ephemeral";
 			},
 			get children() {
-				var _el$28 = _tmpl$5();
-				(0, solid_js_web.insert)(_el$28, (0, solid_js_web.createComponent)(solid_js.For, {
+				var _el$55 = _tmpl$0();
+				(0, solid_js_web.insert)(_el$55, (0, solid_js_web.createComponent)(solid_js.For, {
 					get each() {
 						return sharedSnapshot().activeJobs;
 					},
@@ -4400,41 +5134,41 @@ function PantheonCockpitView(props) {
 								return subagentEvents().length === 0;
 							},
 							get children() {
-								var _el$45 = _tmpl$1();
-								(0, solid_js_web.insert)(_el$45, () => tr("No active background jobs or subagent runs.", "Nenhum job em segundo plano ou subagente ativo."));
-								return _el$45;
+								var _el$87 = _tmpl$12();
+								(0, solid_js_web.insert)(_el$87, () => tr("No active background jobs or subagent runs.", "Nenhum job em segundo plano ou subagente ativo."));
+								return _el$87;
 							}
 						});
 					},
 					children: (job) => (() => {
-						var _el$46 = _tmpl$11(), _el$47 = _el$46.firstChild, _el$48 = _el$47.nextSibling;
-						(0, solid_js_web.insert)(_el$47, () => `${job.agent} (${job.id.slice(0, 8)})`);
-						(0, solid_js_web.insert)(_el$48, () => `${job.status} · $${job.cost.toFixed(3)}`);
-						return _el$46;
+						var _el$88 = _tmpl$23(), _el$89 = _el$88.firstChild, _el$90 = _el$89.nextSibling;
+						(0, solid_js_web.insert)(_el$89, () => `${job.agent} (${job.id.slice(0, 8)})`);
+						(0, solid_js_web.insert)(_el$90, () => `${job.status} · $${job.cost.toFixed(3)}`);
+						return _el$88;
 					})()
 				}), null);
-				(0, solid_js_web.insert)(_el$28, (0, solid_js_web.createComponent)(solid_js.For, {
+				(0, solid_js_web.insert)(_el$55, (0, solid_js_web.createComponent)(solid_js.For, {
 					get each() {
 						return ephemeralWorkers().slice(-6);
 					},
 					children: (msg) => (() => {
-						var _el$49 = _tmpl$12();
-						(0, solid_js_web.insert)(_el$49, () => `◈ ${msg.ephemeral?.role ?? msg.from} [${msg.ephemeral?.status ?? "active"}]`);
-						return _el$49;
+						var _el$91 = _tmpl$24();
+						(0, solid_js_web.insert)(_el$91, () => `◈ ${msg.ephemeral?.role ?? msg.from} [${msg.ephemeral?.status ?? "active"}]`);
+						return _el$91;
 					})()
 				}), null);
-				(0, solid_js_web.insert)(_el$28, (0, solid_js_web.createComponent)(solid_js.For, {
+				(0, solid_js_web.insert)(_el$55, (0, solid_js_web.createComponent)(solid_js.For, {
 					get each() {
 						return [...subagentEvents()].reverse().slice(0, 10);
 					},
 					children: (ev) => (() => {
-						var _el$50 = _tmpl$13(), _el$51 = _el$50.firstChild, _el$52 = _el$51.nextSibling;
-						(0, solid_js_web.insert)(_el$51, () => `${ev.agent ?? "subagent"} · ${ev.kind ?? ev.type ?? "event"}`);
-						(0, solid_js_web.insert)(_el$52, () => ev.detail ?? "");
-						return _el$50;
+						var _el$92 = _tmpl$25(), _el$93 = _el$92.firstChild, _el$94 = _el$93.nextSibling;
+						(0, solid_js_web.insert)(_el$93, () => `${ev.agent ?? "subagent"} · ${ev.kind ?? ev.type ?? "event"}`);
+						(0, solid_js_web.insert)(_el$94, () => ev.detail ?? "");
+						return _el$92;
 					})()
 				}), null);
-				return _el$28;
+				return _el$55;
 			}
 		}), null);
 		(0, solid_js_web.insert)(_el$, (0, solid_js_web.createComponent)(solid_js.Show, {
@@ -4545,169 +5279,139 @@ function PantheonSettingsControls(props) {
 	};
 	const scopedBehaviors = () => gateScope() === "project" ? sharedSnapshot().behaviorsProject : sharedSnapshot().behaviorsGlobal;
 	const tui = () => sharedSnapshot().tuiPrefs;
-	const renderTuiToggle = (id, label, current, note) => (() => {
-		var _el$53 = _tmpl$15(), _el$54 = _el$53.firstChild, _el$55 = _el$54.firstChild, _el$57 = _el$54.nextSibling;
-		(0, solid_js_web.insert)(_el$55, label);
-		(0, solid_js_web.insert)(_el$54, (0, solid_js_web.createComponent)(solid_js.Show, {
-			when: note,
-			get children() {
-				var _el$56 = _tmpl$14();
-				(0, solid_js_web.insert)(_el$56, note);
-				return _el$56;
-			}
-		}), null);
-		_el$57.$$click = () => void savePatch({ tuiPref: {
-			id,
-			value: current ? "disabled" : "enabled"
-		} });
-		(0, solid_js_web.insert)(_el$57, () => current ? tr("enabled", "ativado") : tr("disabled", "desativado"));
-		(0, solid_js_web.effect)((_p$) => {
-			var _v$1 = rowStyle, _v$10 = {
-				...pillButtonStyle(false),
-				color: current ? "#4ade80" : "#f87171"
-			};
-			_p$.e = (0, solid_js_web.style)(_el$53, _v$1, _p$.e);
-			_p$.t = (0, solid_js_web.style)(_el$57, _v$10, _p$.t);
-			return _p$;
-		}, {
-			e: void 0,
-			t: void 0
-		});
-		return _el$53;
-	})();
 	const renderTuiCycle = (id, label, current, options) => (() => {
-		var _el$58 = _tmpl$16(), _el$59 = _el$58.firstChild, _el$60 = _el$59.firstChild, _el$61 = _el$60.nextSibling, _el$62 = _el$59.nextSibling;
-		(0, solid_js_web.insert)(_el$60, label);
-		(0, solid_js_web.insert)(_el$61, current);
-		(0, solid_js_web.insert)(_el$62, () => options.map((opt) => (() => {
-			var _el$63 = _tmpl$17();
-			_el$63.$$click = () => void savePatch({ tuiPref: {
+		var _el$95 = _tmpl$26(), _el$96 = _el$95.firstChild, _el$97 = _el$96.firstChild, _el$98 = _el$97.nextSibling, _el$99 = _el$96.nextSibling;
+		(0, solid_js_web.insert)(_el$97, label);
+		(0, solid_js_web.insert)(_el$98, current);
+		(0, solid_js_web.insert)(_el$99, () => options.map((opt) => (() => {
+			var _el$100 = _tmpl$27();
+			_el$100.$$click = () => void savePatch({ tuiPref: {
 				id,
 				value: opt
 			} });
-			(0, solid_js_web.insert)(_el$63, opt);
-			(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$63, pillButtonStyle(current === opt), _$p));
-			return _el$63;
+			(0, solid_js_web.insert)(_el$100, opt);
+			(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$100, pillButtonStyle(current === opt), _$p));
+			return _el$100;
 		})()));
-		(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$59, rowStyle, _$p));
-		return _el$58;
+		(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$96, rowStyle, _$p));
+		return _el$95;
 	})();
 	return (() => {
-		var _el$64 = _tmpl$36(), _el$68 = _el$64.firstChild;
-		(0, solid_js_web.insert)(_el$64, (0, solid_js_web.createComponent)(solid_js.Show, {
+		var _el$101 = _tmpl$46(), _el$105 = _el$101.firstChild;
+		(0, solid_js_web.insert)(_el$101, (0, solid_js_web.createComponent)(solid_js.Show, {
 			get when() {
 				return uiNotice() !== null;
 			},
 			get children() {
-				var _el$65 = _tmpl$18(), _el$66 = _el$65.firstChild, _el$67 = _el$66.nextSibling;
-				(0, solid_js_web.insert)(_el$66, uiNotice);
-				_el$67.$$click = () => setUiNotice(null);
-				return _el$65;
+				var _el$102 = _tmpl$28(), _el$103 = _el$102.firstChild, _el$104 = _el$103.nextSibling;
+				(0, solid_js_web.insert)(_el$103, uiNotice);
+				_el$104.$$click = () => setUiNotice(null);
+				return _el$102;
 			}
-		}), _el$68);
-		(0, solid_js_web.insert)(_el$68, () => [
+		}), _el$105);
+		(0, solid_js_web.insert)(_el$105, () => [
 			["overview", tr("Overview & Cost", "Visão Geral & Custo")],
 			["gates", tr("Gates", "Portões (Gates)")],
 			["preset", tr("Presets & Models", "Presets & Modelos")],
 			["decision", tr("Decision (Jev)", "Decisão (Jev)")],
 			["autonomy", tr("Autonomy & J1", "Autonomia & J1")],
-			["tui", tr("TUI & Layout", "TUI & Layout")],
 			["updates", tr("Updates & Cleanup", "Atualizações & Limpeza")],
 			["doctor", tr("Doctor & About", "Doctor & Sobre")]
 		].map(([id, label]) => (() => {
-			var _el$203 = _tmpl$17();
-			_el$203.$$click = () => {
+			var _el$232 = _tmpl$27();
+			_el$232.$$click = () => {
 				setConfirmPurge(false);
 				setSection(id);
 			};
-			(0, solid_js_web.insert)(_el$203, label);
-			(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$203, pillButtonStyle(section() === id), _$p));
-			return _el$203;
+			(0, solid_js_web.insert)(_el$232, label);
+			(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$232, pillButtonStyle(section() === id), _$p));
+			return _el$232;
 		})()));
-		(0, solid_js_web.insert)(_el$64, (0, solid_js_web.createComponent)(solid_js.Show, {
+		(0, solid_js_web.insert)(_el$101, (0, solid_js_web.createComponent)(solid_js.Show, {
 			get when() {
 				return section() === "overview";
 			},
 			get children() {
 				return [
 					(() => {
-						var _el$69 = _tmpl$20(), _el$70 = _el$69.firstChild, _el$71 = _el$70.nextSibling, _el$72 = _el$71.firstChild, _el$73 = _el$72.nextSibling;
-						(0, solid_js_web.insert)(_el$70, () => tr("OpenCode Spend (Today / 30d)", "Gastos OpenCode (Hoje / 30d)"));
-						(0, solid_js_web.insert)(_el$72, () => tr("Total Cost", "Custo Total"));
-						(0, solid_js_web.insert)(_el$73, () => `$${sharedSnapshot().todayCostUSD.toFixed(2)} / $${sharedSnapshot().monthCostUSD.toFixed(2)}`);
-						(0, solid_js_web.insert)(_el$69, (0, solid_js_web.createComponent)(solid_js.Show, {
+						var _el$106 = _tmpl$30(), _el$107 = _el$106.firstChild, _el$108 = _el$107.nextSibling, _el$109 = _el$108.firstChild, _el$110 = _el$109.nextSibling;
+						(0, solid_js_web.insert)(_el$107, () => tr("OpenCode Spend (Today / 30d)", "Gastos OpenCode (Hoje / 30d)"));
+						(0, solid_js_web.insert)(_el$109, () => tr("Total Cost", "Custo Total"));
+						(0, solid_js_web.insert)(_el$110, () => `$${sharedSnapshot().todayCostUSD.toFixed(2)} / $${sharedSnapshot().monthCostUSD.toFixed(2)}`);
+						(0, solid_js_web.insert)(_el$106, (0, solid_js_web.createComponent)(solid_js.Show, {
 							get when() {
 								return sharedSnapshot().modelSpend.length > 0;
 							},
 							get children() {
-								var _el$74 = _tmpl$19(), _el$75 = _el$74.firstChild;
-								(0, solid_js_web.insert)(_el$75, () => tr("30d Model Breakdown", "Detalhamento por Modelo (30d)"));
-								(0, solid_js_web.insert)(_el$74, (0, solid_js_web.createComponent)(solid_js.For, {
+								var _el$111 = _tmpl$29(), _el$112 = _el$111.firstChild;
+								(0, solid_js_web.insert)(_el$112, () => tr("30d Model Breakdown", "Detalhamento por Modelo (30d)"));
+								(0, solid_js_web.insert)(_el$111, (0, solid_js_web.createComponent)(solid_js.For, {
 									get each() {
 										return sharedSnapshot().modelSpend;
 									},
 									children: (m) => (() => {
-										var _el$204 = _tmpl$37(), _el$205 = _el$204.firstChild, _el$206 = _el$205.nextSibling;
-										(0, solid_js_web.insert)(_el$205, () => `${m.providerID}/${m.modelID}`);
-										(0, solid_js_web.insert)(_el$206, () => `${(m.tokens / 1e3).toFixed(1)}k tok · ${m.estimatedUsd !== void 0 ? `$${m.estimatedUsd.toFixed(2)}` : tr("unpriced", "sem preço")}`);
-										(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$204, { ...rowStyle }, _$p));
-										return _el$204;
+										var _el$233 = _tmpl$47(), _el$234 = _el$233.firstChild, _el$235 = _el$234.nextSibling;
+										(0, solid_js_web.insert)(_el$234, () => `${m.providerID}/${m.modelID}`);
+										(0, solid_js_web.insert)(_el$235, () => `${(m.tokens / 1e3).toFixed(1)}k tok · ${m.estimatedUsd !== void 0 ? `$${m.estimatedUsd.toFixed(2)}` : tr("unpriced", "sem preço")}`);
+										(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$233, { ...rowStyle }, _$p));
+										return _el$233;
 									})()
 								}), null);
-								return _el$74;
+								return _el$111;
 							}
 						}), null);
 						(0, solid_js_web.effect)((_p$) => {
-							var _v$11 = cardStyle, _v$12 = rowStyle;
-							_p$.e = (0, solid_js_web.style)(_el$69, _v$11, _p$.e);
-							_p$.t = (0, solid_js_web.style)(_el$71, _v$12, _p$.t);
+							var _v$33 = cardStyle, _v$34 = rowStyle;
+							_p$.e = (0, solid_js_web.style)(_el$106, _v$33, _p$.e);
+							_p$.t = (0, solid_js_web.style)(_el$108, _v$34, _p$.t);
 							return _p$;
 						}, {
 							e: void 0,
 							t: void 0
 						});
-						return _el$69;
+						return _el$106;
 					})(),
 					(() => {
-						var _el$76 = _tmpl$21(), _el$77 = _el$76.firstChild, _el$78 = _el$77.firstChild, _el$79 = _el$78.nextSibling, _el$80 = _el$77.nextSibling, _el$81 = _el$80.firstChild, _el$82 = _el$81.nextSibling, _el$83 = _el$80.nextSibling, _el$84 = _el$83.firstChild, _el$85 = _el$84.nextSibling;
-						(0, solid_js_web.insert)(_el$78, () => tr("Auto-Permissions Gate", "Portão Auto-Permissões"));
-						(0, solid_js_web.insert)(_el$79, () => [
+						var _el$113 = _tmpl$31(), _el$114 = _el$113.firstChild, _el$115 = _el$114.firstChild, _el$116 = _el$115.nextSibling, _el$117 = _el$114.nextSibling, _el$118 = _el$117.firstChild, _el$119 = _el$118.nextSibling, _el$120 = _el$117.nextSibling, _el$121 = _el$120.firstChild, _el$122 = _el$121.nextSibling;
+						(0, solid_js_web.insert)(_el$115, () => tr("Auto-Permissions Gate", "Portão Auto-Permissões"));
+						(0, solid_js_web.insert)(_el$116, () => [
 							"shadow",
 							"enforce",
 							"off"
 						].map((mode) => (() => {
-							var _el$207 = _tmpl$17();
-							_el$207.$$click = () => void savePatch({ gateMode: mode });
-							(0, solid_js_web.insert)(_el$207, mode);
-							(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$207, pillButtonStyle(sharedSnapshot().gateMode === mode), _$p));
-							return _el$207;
+							var _el$236 = _tmpl$27();
+							_el$236.$$click = () => void savePatch({ gateMode: mode });
+							(0, solid_js_web.insert)(_el$236, mode);
+							(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$236, pillButtonStyle(sharedSnapshot().gateMode === mode), _$p));
+							return _el$236;
 						})()));
-						(0, solid_js_web.insert)(_el$81, () => tr("Cockpit Auto-Open", "Abrir Cockpit Automaticamente"));
-						_el$82.$$click = () => void savePatch({ cockpitAutoOpen: !sharedSnapshot().cockpitAutoOpen });
-						(0, solid_js_web.insert)(_el$82, (() => {
-							var _c$2 = (0, solid_js_web.memo)(() => !!sharedSnapshot().cockpitAutoOpen);
-							return () => _c$2() ? tr("enabled", "ativado") : tr("disabled", "desativado");
-						})());
-						(0, solid_js_web.insert)(_el$84, () => tr("Show Todo Block in Cockpit", "Mostrar Bloco Todo no Cockpit"));
-						_el$85.$$click = () => void savePatch({ cockpitShowTodo: !sharedSnapshot().cockpitShowTodo });
-						(0, solid_js_web.insert)(_el$85, (() => {
-							var _c$3 = (0, solid_js_web.memo)(() => !!sharedSnapshot().cockpitShowTodo);
+						(0, solid_js_web.insert)(_el$118, () => tr("Cockpit Auto-Open", "Abrir Cockpit Automaticamente"));
+						_el$119.$$click = () => void savePatch({ cockpitAutoOpen: !sharedSnapshot().cockpitAutoOpen });
+						(0, solid_js_web.insert)(_el$119, (() => {
+							var _c$3 = (0, solid_js_web.memo)(() => !!sharedSnapshot().cockpitAutoOpen);
 							return () => _c$3() ? tr("enabled", "ativado") : tr("disabled", "desativado");
 						})());
+						(0, solid_js_web.insert)(_el$121, () => tr("Show Todo Block in Cockpit", "Mostrar Bloco Todo no Cockpit"));
+						_el$122.$$click = () => void savePatch({ cockpitShowTodo: !sharedSnapshot().cockpitShowTodo });
+						(0, solid_js_web.insert)(_el$122, (() => {
+							var _c$4 = (0, solid_js_web.memo)(() => !!sharedSnapshot().cockpitShowTodo);
+							return () => _c$4() ? tr("enabled", "ativado") : tr("disabled", "desativado");
+						})());
+						(0, solid_js_web.insert)(_el$113, () => renderTuiCycle("tui.layout.language", tr("Language / Idioma", "Idioma / Language"), tui().layout.language ?? "auto", LANGUAGE_CYCLE), null);
 						(0, solid_js_web.effect)((_p$) => {
-							var _v$13 = cardStyle, _v$14 = rowStyle, _v$15 = rowStyle, _v$16 = {
+							var _v$35 = cardStyle, _v$36 = rowStyle, _v$37 = rowStyle, _v$38 = {
 								...pillButtonStyle(false),
 								color: sharedSnapshot().cockpitAutoOpen ? "#4ade80" : "#f87171"
-							}, _v$17 = rowStyle, _v$18 = {
+							}, _v$39 = rowStyle, _v$40 = {
 								...pillButtonStyle(false),
 								color: sharedSnapshot().cockpitShowTodo ? "#4ade80" : "#f87171"
 							};
-							_p$.e = (0, solid_js_web.style)(_el$76, _v$13, _p$.e);
-							_p$.t = (0, solid_js_web.style)(_el$77, _v$14, _p$.t);
-							_p$.a = (0, solid_js_web.style)(_el$80, _v$15, _p$.a);
-							_p$.o = (0, solid_js_web.style)(_el$82, _v$16, _p$.o);
-							_p$.i = (0, solid_js_web.style)(_el$83, _v$17, _p$.i);
-							_p$.n = (0, solid_js_web.style)(_el$85, _v$18, _p$.n);
+							_p$.e = (0, solid_js_web.style)(_el$113, _v$35, _p$.e);
+							_p$.t = (0, solid_js_web.style)(_el$114, _v$36, _p$.t);
+							_p$.a = (0, solid_js_web.style)(_el$117, _v$37, _p$.a);
+							_p$.o = (0, solid_js_web.style)(_el$119, _v$38, _p$.o);
+							_p$.i = (0, solid_js_web.style)(_el$120, _v$39, _p$.i);
+							_p$.n = (0, solid_js_web.style)(_el$122, _v$40, _p$.n);
 							return _p$;
 						}, {
 							e: void 0,
@@ -4717,176 +5421,176 @@ function PantheonSettingsControls(props) {
 							i: void 0,
 							n: void 0
 						});
-						return _el$76;
+						return _el$113;
 					})(),
 					(() => {
-						var _el$86 = _tmpl$22();
-						(0, solid_js_web.insert)(_el$86, () => `Preset: ${sharedSnapshot().presetProjectOverride ?? sharedSnapshot().activePreset} · ${tr("Decision", "Decisão")}: ${sharedSnapshot().decisionEnabled ? sharedSnapshot().decisionMode : tr("off", "desligado")} · ${tr("Overrides", "Substituições")}: ${sharedSnapshot().overridesCount} · ${tr("Plans", "Planos")}: ${sharedSnapshot().artifactsCount} · Jobs: ${sharedSnapshot().activeJobs.length}`);
-						return _el$86;
+						var _el$123 = _tmpl$32();
+						(0, solid_js_web.insert)(_el$123, () => `Preset: ${sharedSnapshot().presetProjectOverride ?? sharedSnapshot().activePreset} · ${tr("Decision", "Decisão")}: ${sharedSnapshot().decisionEnabled ? sharedSnapshot().decisionMode : tr("off", "desligado")} · ${tr("Overrides", "Substituições")}: ${sharedSnapshot().overridesCount} · ${tr("Plans", "Planos")}: ${sharedSnapshot().artifactsCount} · Jobs: ${sharedSnapshot().activeJobs.length}`);
+						return _el$123;
 					})()
 				];
 			}
 		}), null);
-		(0, solid_js_web.insert)(_el$64, (0, solid_js_web.createComponent)(solid_js.Show, {
+		(0, solid_js_web.insert)(_el$101, (0, solid_js_web.createComponent)(solid_js.Show, {
 			get when() {
 				return section() === "gates";
 			},
 			get children() {
 				return [(() => {
-					var _el$87 = _tmpl$24(), _el$88 = _el$87.firstChild, _el$89 = _el$88.firstChild, _el$90 = _el$89.nextSibling;
-					(0, solid_js_web.insert)(_el$89, () => tr("Overrides Scope", "Escopo de Substituições"));
-					(0, solid_js_web.insert)(_el$90, () => ["project", "global"].map((sc) => (() => {
-						var _el$208 = _tmpl$17();
-						_el$208.$$click = () => setGateScope(sc);
-						(0, solid_js_web.insert)(_el$208, () => sc === "project" ? tr("project (.pantheon)", "projeto (.pantheon)") : tr("global (~/.config)", "global (~/.config)"));
-						(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$208, pillButtonStyle(gateScope() === sc), _$p));
-						return _el$208;
+					var _el$124 = _tmpl$34(), _el$125 = _el$124.firstChild, _el$126 = _el$125.firstChild, _el$127 = _el$126.nextSibling;
+					(0, solid_js_web.insert)(_el$126, () => tr("Overrides Scope", "Escopo de Substituições"));
+					(0, solid_js_web.insert)(_el$127, () => ["project", "global"].map((sc) => (() => {
+						var _el$237 = _tmpl$27();
+						_el$237.$$click = () => setGateScope(sc);
+						(0, solid_js_web.insert)(_el$237, () => sc === "project" ? tr("project (.pantheon)", "projeto (.pantheon)") : tr("global (~/.config)", "global (~/.config)"));
+						(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$237, pillButtonStyle(gateScope() === sc), _$p));
+						return _el$237;
 					})()));
-					(0, solid_js_web.insert)(_el$87, (0, solid_js_web.createComponent)(solid_js.Show, {
+					(0, solid_js_web.insert)(_el$124, (0, solid_js_web.createComponent)(solid_js.Show, {
 						get when() {
 							return (0, solid_js_web.memo)(() => gateScope() === "global")() && sharedSnapshot().corruptGlobalOverrides;
 						},
 						get children() {
-							var _el$91 = _tmpl$23();
-							(0, solid_js_web.insert)(_el$91, () => tr("Global overrides file is unreadable — repair with `doctor --fix` before editing.", "Arquivo global de substituições ilegível — repare com `doctor --fix` antes de editar."));
-							return _el$91;
+							var _el$128 = _tmpl$33();
+							(0, solid_js_web.insert)(_el$128, () => tr("Global overrides file is unreadable — repair with `doctor --fix` before editing.", "Arquivo global de substituições ilegível — repare com `doctor --fix` antes de editar."));
+							return _el$128;
 						}
 					}), null);
 					(0, solid_js_web.effect)((_p$) => {
-						var _v$19 = cardStyle, _v$20 = rowStyle;
-						_p$.e = (0, solid_js_web.style)(_el$87, _v$19, _p$.e);
-						_p$.t = (0, solid_js_web.style)(_el$88, _v$20, _p$.t);
+						var _v$41 = cardStyle, _v$42 = rowStyle;
+						_p$.e = (0, solid_js_web.style)(_el$124, _v$41, _p$.e);
+						_p$.t = (0, solid_js_web.style)(_el$125, _v$42, _p$.t);
 						return _p$;
 					}, {
 						e: void 0,
 						t: void 0
 					});
-					return _el$87;
+					return _el$124;
 				})(), (0, solid_js_web.memo)(() => ["install", "runtime"].map((kind) => (() => {
-					var _el$209 = _tmpl$26(), _el$210 = _el$209.firstChild;
-					(0, solid_js_web.insert)(_el$210, () => kind === "install" ? tr("Install Skills", "Skills Instaladas") : tr("Runtime Gates", "Portões de Execução"));
-					(0, solid_js_web.insert)(_el$209, (0, solid_js_web.createComponent)(solid_js.For, {
+					var _el$238 = _tmpl$36(), _el$239 = _el$238.firstChild;
+					(0, solid_js_web.insert)(_el$239, () => kind === "install" ? tr("Install Skills", "Skills Instaladas") : tr("Runtime Gates", "Portões de Execução"));
+					(0, solid_js_web.insert)(_el$238, (0, solid_js_web.createComponent)(solid_js.For, {
 						get each() {
 							return scopedBehaviors().filter((b) => b.kind === kind);
 						},
 						children: (beh) => {
 							const blockedByProject = () => gateScope() === "global" && beh.projectOverride;
 							return (() => {
-								var _el$211 = _tmpl$38(), _el$212 = _el$211.firstChild, _el$213 = _el$212.firstChild, _el$215 = _el$213.nextSibling, _el$216 = _el$212.nextSibling;
-								(0, solid_js_web.insert)(_el$213, () => beh.title, null);
-								(0, solid_js_web.insert)(_el$213, (0, solid_js_web.createComponent)(solid_js.Show, {
+								var _el$240 = _tmpl$49(), _el$241 = _el$240.firstChild, _el$242 = _el$241.firstChild, _el$244 = _el$242.nextSibling, _el$245 = _el$241.nextSibling;
+								(0, solid_js_web.insert)(_el$242, () => beh.title, null);
+								(0, solid_js_web.insert)(_el$242, (0, solid_js_web.createComponent)(solid_js.Show, {
 									get when() {
 										return beh.projectOverride;
 									},
 									get children() {
-										var _el$214 = _tmpl$14();
-										(0, solid_js_web.insert)(_el$214, () => tr(" (project)", " (projeto)"));
-										return _el$214;
+										var _el$243 = _tmpl$48();
+										(0, solid_js_web.insert)(_el$243, () => tr(" (project)", " (projeto)"));
+										return _el$243;
 									}
 								}), null);
-								(0, solid_js_web.insert)(_el$215, () => beh.description);
-								_el$216.$$click = () => void savePatch({ overrideToggle: {
+								(0, solid_js_web.insert)(_el$244, () => beh.description);
+								_el$245.$$click = () => void savePatch({ overrideToggle: {
 									id: beh.id,
 									scope: gateScope(),
 									enabled: !beh.enabled
 								} });
-								(0, solid_js_web.insert)(_el$216, (() => {
-									var _c$15 = (0, solid_js_web.memo)(() => !!beh.enabled);
-									return () => _c$15() ? tr("enabled", "ativado") : tr("disabled", "desativado");
+								(0, solid_js_web.insert)(_el$245, (() => {
+									var _c$16 = (0, solid_js_web.memo)(() => !!beh.enabled);
+									return () => _c$16() ? tr("enabled", "ativado") : tr("disabled", "desativado");
 								})());
 								(0, solid_js_web.effect)((_p$) => {
-									var _v$66 = rowStyle, _v$67 = blockedByProject(), _v$68 = {
+									var _v$88 = rowStyle, _v$89 = blockedByProject(), _v$90 = {
 										...pillButtonStyle(false),
 										opacity: blockedByProject() ? .45 : 1,
 										cursor: blockedByProject() ? "not-allowed" : "pointer",
 										color: beh.enabled ? "#4ade80" : "#f87171"
 									};
-									_p$.e = (0, solid_js_web.style)(_el$211, _v$66, _p$.e);
-									_v$67 !== _p$.t && (_el$216.disabled = _p$.t = _v$67);
-									_p$.a = (0, solid_js_web.style)(_el$216, _v$68, _p$.a);
+									_p$.e = (0, solid_js_web.style)(_el$240, _v$88, _p$.e);
+									_v$89 !== _p$.t && (_el$245.disabled = _p$.t = _v$89);
+									_p$.a = (0, solid_js_web.style)(_el$245, _v$90, _p$.a);
 									return _p$;
 								}, {
 									e: void 0,
 									t: void 0,
 									a: void 0
 								});
-								return _el$211;
+								return _el$240;
 							})();
 						}
 					}), null);
-					(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$209, cardStyle, _$p));
-					return _el$209;
+					(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$238, cardStyle, _$p));
+					return _el$238;
 				})()))];
 			}
 		}), null);
-		(0, solid_js_web.insert)(_el$64, (0, solid_js_web.createComponent)(solid_js.Show, {
+		(0, solid_js_web.insert)(_el$101, (0, solid_js_web.createComponent)(solid_js.Show, {
 			get when() {
 				return section() === "preset";
 			},
 			get children() {
 				return [
 					(() => {
-						var _el$92 = _tmpl$25(), _el$93 = _el$92.firstChild, _el$94 = _el$93.firstChild, _el$95 = _el$94.nextSibling, _el$96 = _el$93.nextSibling;
-						(0, solid_js_web.insert)(_el$94, () => tr("Model Preset (Global)", "Preset de Modelo (Global)"));
-						(0, solid_js_web.insert)(_el$95, (() => {
-							var _c$4 = (0, solid_js_web.memo)(() => !!sharedSnapshot().presetProjectOverride);
-							return () => _c$4() ? `${tr("project wins", "projeto prevalece")}: ${sharedSnapshot().presetProjectOverride}` : sharedSnapshot().activePreset;
+						var _el$129 = _tmpl$35(), _el$130 = _el$129.firstChild, _el$131 = _el$130.firstChild, _el$132 = _el$131.nextSibling, _el$133 = _el$130.nextSibling;
+						(0, solid_js_web.insert)(_el$131, () => tr("Model Preset (Global)", "Preset de Modelo (Global)"));
+						(0, solid_js_web.insert)(_el$132, (() => {
+							var _c$5 = (0, solid_js_web.memo)(() => !!sharedSnapshot().presetProjectOverride);
+							return () => _c$5() ? `${tr("project wins", "projeto prevalece")}: ${sharedSnapshot().presetProjectOverride}` : sharedSnapshot().activePreset;
 						})());
-						(0, solid_js_web.insert)(_el$96, () => [PRESET_NONE, ...PRESET_NAMES].map((preset) => (() => {
-							var _el$217 = _tmpl$17();
-							_el$217.$$click = () => void savePatch({ preset }, tr(`Global preset set to ${preset}`, `Preset global definido para ${preset}`));
-							(0, solid_js_web.insert)(_el$217, preset);
-							(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$217, pillButtonStyle(sharedSnapshot().activePreset === preset), _$p));
-							return _el$217;
+						(0, solid_js_web.insert)(_el$133, () => [PRESET_NONE, ...PRESET_NAMES].map((preset) => (() => {
+							var _el$246 = _tmpl$27();
+							_el$246.$$click = () => void savePatch({ preset }, tr(`Global preset set to ${preset}`, `Preset global definido para ${preset}`));
+							(0, solid_js_web.insert)(_el$246, preset);
+							(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$246, pillButtonStyle(sharedSnapshot().activePreset === preset), _$p));
+							return _el$246;
 						})()));
 						(0, solid_js_web.effect)((_p$) => {
-							var _v$21 = cardStyle, _v$22 = rowStyle;
-							_p$.e = (0, solid_js_web.style)(_el$92, _v$21, _p$.e);
-							_p$.t = (0, solid_js_web.style)(_el$93, _v$22, _p$.t);
+							var _v$43 = cardStyle, _v$44 = rowStyle;
+							_p$.e = (0, solid_js_web.style)(_el$129, _v$43, _p$.e);
+							_p$.t = (0, solid_js_web.style)(_el$130, _v$44, _p$.t);
 							return _p$;
 						}, {
 							e: void 0,
 							t: void 0
 						});
-						return _el$92;
+						return _el$129;
 					})(),
 					(() => {
-						var _el$97 = _tmpl$25(), _el$98 = _el$97.firstChild, _el$99 = _el$98.firstChild, _el$100 = _el$99.nextSibling, _el$101 = _el$98.nextSibling;
-						(0, solid_js_web.insert)(_el$99, () => tr("Vision Model (vision_describe)", "Modelo de Visão (vision_describe)"));
-						(0, solid_js_web.insert)(_el$100, () => sharedSnapshot().visionModel);
-						(0, solid_js_web.insert)(_el$101, () => VISION_MODEL_OPTIONS.map((vm) => (() => {
-							var _el$218 = _tmpl$17();
-							_el$218.$$click = () => void savePatch({ visionModel: vm }, tr(`Vision model set to ${vm}`, `Modelo de visão definido para ${vm}`));
-							(0, solid_js_web.insert)(_el$218, vm);
-							(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$218, pillButtonStyle(sharedSnapshot().visionModel === vm), _$p));
-							return _el$218;
+						var _el$134 = _tmpl$35(), _el$135 = _el$134.firstChild, _el$136 = _el$135.firstChild, _el$137 = _el$136.nextSibling, _el$138 = _el$135.nextSibling;
+						(0, solid_js_web.insert)(_el$136, () => tr("Vision Model (vision_describe)", "Modelo de Visão (vision_describe)"));
+						(0, solid_js_web.insert)(_el$137, () => sharedSnapshot().visionModel);
+						(0, solid_js_web.insert)(_el$138, () => VISION_MODEL_OPTIONS.map((vm) => (() => {
+							var _el$247 = _tmpl$27();
+							_el$247.$$click = () => void savePatch({ visionModel: vm }, tr(`Vision model set to ${vm}`, `Modelo de visão definido para ${vm}`));
+							(0, solid_js_web.insert)(_el$247, vm);
+							(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$247, pillButtonStyle(sharedSnapshot().visionModel === vm), _$p));
+							return _el$247;
 						})()));
 						(0, solid_js_web.effect)((_p$) => {
-							var _v$23 = cardStyle, _v$24 = rowStyle;
-							_p$.e = (0, solid_js_web.style)(_el$97, _v$23, _p$.e);
-							_p$.t = (0, solid_js_web.style)(_el$98, _v$24, _p$.t);
+							var _v$45 = cardStyle, _v$46 = rowStyle;
+							_p$.e = (0, solid_js_web.style)(_el$134, _v$45, _p$.e);
+							_p$.t = (0, solid_js_web.style)(_el$135, _v$46, _p$.t);
 							return _p$;
 						}, {
 							e: void 0,
 							t: void 0
 						});
-						return _el$97;
+						return _el$134;
 					})(),
 					(() => {
-						var _el$102 = _tmpl$26(), _el$103 = _el$102.firstChild;
-						(0, solid_js_web.insert)(_el$103, () => tr("Per-Agent Model Overrides (.pantheon/active-preset.json)", "Modelos por Agente (.pantheon/active-preset.json)"));
-						(0, solid_js_web.insert)(_el$102, (0, solid_js_web.createComponent)(solid_js.For, {
+						var _el$139 = _tmpl$36(), _el$140 = _el$139.firstChild;
+						(0, solid_js_web.insert)(_el$140, () => tr("Per-Agent Model Overrides (.pantheon/active-preset.json)", "Modelos por Agente (.pantheon/active-preset.json)"));
+						(0, solid_js_web.insert)(_el$139, (0, solid_js_web.createComponent)(solid_js.For, {
 							get each() {
 								return sharedSnapshot().agentModels;
 							},
 							children: (item) => (() => {
-								var _el$219 = _tmpl$40(), _el$220 = _el$219.firstChild, _el$221 = _el$220.firstChild, _el$223 = _el$221.nextSibling.firstChild, _el$224 = _el$223.nextSibling;
-								(0, solid_js_web.insert)(_el$221, () => item.agent);
-								(0, solid_js_web.insert)(_el$223, (() => {
-									var _c$16 = (0, solid_js_web.memo)(() => !!item.model);
-									return () => _c$16() ? `${item.model} (${item.variant})` : tr("preset default", "padrão do preset");
+								var _el$248 = _tmpl$51(), _el$249 = _el$248.firstChild, _el$250 = _el$249.firstChild, _el$252 = _el$250.nextSibling.firstChild, _el$253 = _el$252.nextSibling;
+								(0, solid_js_web.insert)(_el$250, () => item.agent);
+								(0, solid_js_web.insert)(_el$252, (() => {
+									var _c$17 = (0, solid_js_web.memo)(() => !!item.model);
+									return () => _c$17() ? `${item.model} (${item.variant})` : tr("preset default", "padrão do preset");
 								})());
-								_el$224.$$click = () => {
+								_el$253.$$click = () => {
 									if (editingAgent() === item.agent) setEditingAgent(null);
 									else {
 										setEditingAgent(item.agent);
@@ -4894,19 +5598,19 @@ function PantheonSettingsControls(props) {
 										setAgentVariantInput(item.variant || "default");
 									}
 								};
-								(0, solid_js_web.insert)(_el$224, (() => {
-									var _c$17 = (0, solid_js_web.memo)(() => editingAgent() === item.agent);
-									return () => _c$17() ? tr("Cancel", "Cancelar") : tr("Edit", "Editar");
+								(0, solid_js_web.insert)(_el$253, (() => {
+									var _c$18 = (0, solid_js_web.memo)(() => editingAgent() === item.agent);
+									return () => _c$18() ? tr("Cancel", "Cancelar") : tr("Edit", "Editar");
 								})());
-								(0, solid_js_web.insert)(_el$219, (0, solid_js_web.createComponent)(solid_js.Show, {
+								(0, solid_js_web.insert)(_el$248, (0, solid_js_web.createComponent)(solid_js.Show, {
 									get when() {
 										return editingAgent() === item.agent;
 									},
 									get children() {
-										var _el$225 = _tmpl$39(), _el$226 = _el$225.firstChild, _el$227 = _el$226.nextSibling, _el$228 = _el$227.nextSibling;
-										_el$226.$$input = (e) => setAgentModelInput(e.currentTarget.value);
-										_el$227.addEventListener("change", (e) => setAgentVariantInput(e.currentTarget.value));
-										_el$228.$$click = () => {
+										var _el$254 = _tmpl$50(), _el$255 = _el$254.firstChild, _el$256 = _el$255.nextSibling, _el$257 = _el$256.nextSibling;
+										_el$255.$$input = (e) => setAgentModelInput(e.currentTarget.value);
+										_el$256.addEventListener("change", (e) => setAgentVariantInput(e.currentTarget.value));
+										_el$257.$$click = () => {
 											const agent = item.agent;
 											const model = agentModelInput();
 											const variant = agentVariantInput();
@@ -4917,114 +5621,114 @@ function PantheonSettingsControls(props) {
 												variant
 											} }, tr(`Updated ${agent} model override`, `Modelo de ${agent} atualizado`));
 										};
-										(0, solid_js_web.insert)(_el$228, () => tr("Save", "Salvar"));
+										(0, solid_js_web.insert)(_el$257, () => tr("Save", "Salvar"));
 										(0, solid_js_web.effect)((_p$) => {
-											var _v$69 = tr("provider/model-id (empty = clear)", "provedor/id-modelo (vazio = limpar)"), _v$70 = pillButtonStyle(true);
-											_v$69 !== _p$.e && (0, solid_js_web.setAttribute)(_el$226, "placeholder", _p$.e = _v$69);
-											_p$.t = (0, solid_js_web.style)(_el$228, _v$70, _p$.t);
+											var _v$91 = tr("provider/model-id (empty = clear)", "provedor/id-modelo (vazio = limpar)"), _v$92 = pillButtonStyle(true);
+											_v$91 !== _p$.e && (0, solid_js_web.setAttribute)(_el$255, "placeholder", _p$.e = _v$91);
+											_p$.t = (0, solid_js_web.style)(_el$257, _v$92, _p$.t);
 											return _p$;
 										}, {
 											e: void 0,
 											t: void 0
 										});
-										(0, solid_js_web.effect)(() => _el$226.value = agentModelInput());
-										(0, solid_js_web.effect)(() => _el$227.value = agentVariantInput());
-										return _el$225;
+										(0, solid_js_web.effect)(() => _el$255.value = agentModelInput());
+										(0, solid_js_web.effect)(() => _el$256.value = agentVariantInput());
+										return _el$254;
 									}
 								}), null);
 								(0, solid_js_web.effect)((_p$) => {
-									var _v$71 = rowStyle, _v$72 = pillButtonStyle(editingAgent() === item.agent);
-									_p$.e = (0, solid_js_web.style)(_el$220, _v$71, _p$.e);
-									_p$.t = (0, solid_js_web.style)(_el$224, _v$72, _p$.t);
+									var _v$93 = rowStyle, _v$94 = pillButtonStyle(editingAgent() === item.agent);
+									_p$.e = (0, solid_js_web.style)(_el$249, _v$93, _p$.e);
+									_p$.t = (0, solid_js_web.style)(_el$253, _v$94, _p$.t);
 									return _p$;
 								}, {
 									e: void 0,
 									t: void 0
 								});
-								return _el$219;
+								return _el$248;
 							})()
 						}), null);
-						(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$102, cardStyle, _$p));
-						return _el$102;
+						(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$139, cardStyle, _$p));
+						return _el$139;
 					})()
 				];
 			}
 		}), null);
-		(0, solid_js_web.insert)(_el$64, (0, solid_js_web.createComponent)(solid_js.Show, {
+		(0, solid_js_web.insert)(_el$101, (0, solid_js_web.createComponent)(solid_js.Show, {
 			get when() {
 				return section() === "decision";
 			},
 			get children() {
 				return [(() => {
-					var _el$104 = _tmpl$28(), _el$105 = _el$104.firstChild, _el$107 = _el$105.nextSibling, _el$108 = _el$107.firstChild, _el$109 = _el$108.nextSibling, _el$110 = _el$107.nextSibling, _el$111 = _el$110.firstChild, _el$112 = _el$111.nextSibling, _el$113 = _el$110.nextSibling, _el$114 = _el$113.firstChild, _el$115 = _el$114.firstChild, _el$116 = _el$115.nextSibling, _el$117 = _el$114.nextSibling, _el$118 = _el$113.nextSibling, _el$119 = _el$118.firstChild, _el$120 = _el$119.nextSibling;
-					(0, solid_js_web.insert)(_el$105, () => tr("Decision Assistant (Jev)", "Assistente de Decisão (Jev)"));
-					(0, solid_js_web.insert)(_el$104, (0, solid_js_web.createComponent)(solid_js.Show, {
+					var _el$141 = _tmpl$38(), _el$142 = _el$141.firstChild, _el$144 = _el$142.nextSibling, _el$145 = _el$144.firstChild, _el$146 = _el$145.nextSibling, _el$147 = _el$144.nextSibling, _el$148 = _el$147.firstChild, _el$149 = _el$148.nextSibling, _el$150 = _el$147.nextSibling, _el$151 = _el$150.firstChild, _el$152 = _el$151.firstChild, _el$153 = _el$152.nextSibling, _el$154 = _el$151.nextSibling, _el$155 = _el$150.nextSibling, _el$156 = _el$155.firstChild, _el$157 = _el$156.nextSibling;
+					(0, solid_js_web.insert)(_el$142, () => tr("Decision Assistant (Jev)", "Assistente de Decisão (Jev)"));
+					(0, solid_js_web.insert)(_el$141, (0, solid_js_web.createComponent)(solid_js.Show, {
 						get when() {
 							return sharedSnapshot().decisionCorrupt;
 						},
 						get children() {
-							var _el$106 = _tmpl$23();
-							(0, solid_js_web.insert)(_el$106, () => tr("decision-router.json is corrupt — repair via `decision-router setup-model`.", "decision-router.json está corrompido — repare via `decision-router setup-model`."));
-							return _el$106;
+							var _el$143 = _tmpl$33();
+							(0, solid_js_web.insert)(_el$143, () => tr("decision-router.json is corrupt — repair via `decision-router setup-model`.", "decision-router.json está corrompido — repare via `decision-router setup-model`."));
+							return _el$143;
 						}
-					}), _el$107);
-					(0, solid_js_web.insert)(_el$108, () => tr("Jev Assistant", "Assistente Jev"));
-					_el$109.$$click = () => void savePatch({ decisionEnabled: !sharedSnapshot().decisionEnabled });
-					(0, solid_js_web.insert)(_el$109, (() => {
-						var _c$5 = (0, solid_js_web.memo)(() => !!sharedSnapshot().decisionEnabled);
-						return () => _c$5() ? tr("enabled", "ativado") : tr("disabled", "desativado");
+					}), _el$144);
+					(0, solid_js_web.insert)(_el$145, () => tr("Jev Assistant", "Assistente Jev"));
+					_el$146.$$click = () => void savePatch({ decisionEnabled: !sharedSnapshot().decisionEnabled });
+					(0, solid_js_web.insert)(_el$146, (() => {
+						var _c$6 = (0, solid_js_web.memo)(() => !!sharedSnapshot().decisionEnabled);
+						return () => _c$6() ? tr("enabled", "ativado") : tr("disabled", "desativado");
 					})());
-					(0, solid_js_web.insert)(_el$111, () => tr("Operation Mode", "Modo de Operação"));
-					(0, solid_js_web.insert)(_el$112, () => DECISION_SELECTION_CYCLE.map((mode) => (() => {
-						var _el$229 = _tmpl$17();
-						_el$229.$$click = () => void savePatch({ decisionMode: mode });
-						(0, solid_js_web.insert)(_el$229, mode);
-						(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$229, pillButtonStyle(sharedSnapshot().decisionMode === mode), _$p));
-						return _el$229;
+					(0, solid_js_web.insert)(_el$148, () => tr("Operation Mode", "Modo de Operação"));
+					(0, solid_js_web.insert)(_el$149, () => DECISION_SELECTION_CYCLE.map((mode) => (() => {
+						var _el$258 = _tmpl$27();
+						_el$258.$$click = () => void savePatch({ decisionMode: mode });
+						(0, solid_js_web.insert)(_el$258, mode);
+						(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$258, pillButtonStyle(sharedSnapshot().decisionMode === mode), _$p));
+						return _el$258;
 					})()));
-					(0, solid_js_web.insert)(_el$115, () => tr("Decision Model Target", "Modelo de Decisão Alvo"));
-					(0, solid_js_web.insert)(_el$116, (() => {
-						var _c$6 = (0, solid_js_web.memo)(() => sharedSnapshot().decisionMode === "local");
-						return () => _c$6() ? tr("local (on-device)", "local (no dispositivo)") : sharedSnapshot().decisionTarget;
+					(0, solid_js_web.insert)(_el$152, () => tr("Decision Model Target", "Modelo de Decisão Alvo"));
+					(0, solid_js_web.insert)(_el$153, (() => {
+						var _c$7 = (0, solid_js_web.memo)(() => sharedSnapshot().decisionMode === "local");
+						return () => _c$7() ? tr("local (on-device)", "local (no dispositivo)") : sharedSnapshot().decisionTarget;
 					})());
-					(0, solid_js_web.insert)(_el$117, () => DECISION_TARGET_CYCLE.map((target) => (() => {
-						var _el$230 = _tmpl$17();
-						_el$230.$$click = () => void savePatch({ decisionTarget: target });
-						(0, solid_js_web.insert)(_el$230, target);
-						(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$230, pillButtonStyle(sharedSnapshot().decisionTarget === target), _$p));
-						return _el$230;
+					(0, solid_js_web.insert)(_el$154, () => DECISION_TARGET_CYCLE.map((target) => (() => {
+						var _el$259 = _tmpl$27();
+						_el$259.$$click = () => void savePatch({ decisionTarget: target });
+						(0, solid_js_web.insert)(_el$259, target);
+						(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$259, pillButtonStyle(sharedSnapshot().decisionTarget === target), _$p));
+						return _el$259;
 					})()));
-					(0, solid_js_web.insert)(_el$119, () => tr("Cloud API Egress Consent", "Consentimento de API na Nuvem (Egress)"));
-					_el$120.$$click = () => void savePatch({ decisionConsent: !sharedSnapshot().decisionConsent });
-					(0, solid_js_web.insert)(_el$120, (() => {
-						var _c$7 = (0, solid_js_web.memo)(() => !!sharedSnapshot().decisionConsent);
-						return () => _c$7() ? tr("granted", "permitido") : tr("not granted", "não permitido");
+					(0, solid_js_web.insert)(_el$156, () => tr("Cloud API Egress Consent", "Consentimento de API na Nuvem (Egress)"));
+					_el$157.$$click = () => void savePatch({ decisionConsent: !sharedSnapshot().decisionConsent });
+					(0, solid_js_web.insert)(_el$157, (() => {
+						var _c$8 = (0, solid_js_web.memo)(() => !!sharedSnapshot().decisionConsent);
+						return () => _c$8() ? tr("granted", "permitido") : tr("not granted", "não permitido");
 					})());
-					(0, solid_js_web.insert)(_el$104, (0, solid_js_web.createComponent)(solid_js.Show, {
+					(0, solid_js_web.insert)(_el$141, (0, solid_js_web.createComponent)(solid_js.Show, {
 						get when() {
 							return sharedSnapshot().decisionCandidates.length > 0;
 						},
 						get children() {
-							var _el$121 = _tmpl$27();
-							(0, solid_js_web.insert)(_el$121, () => `${tr("Candidates", "Candidatos")}: ${sharedSnapshot().decisionCandidates.map((c) => `${c.provider}/${c.model}`).join(", ")}`);
-							return _el$121;
+							var _el$158 = _tmpl$37();
+							(0, solid_js_web.insert)(_el$158, () => `${tr("Candidates", "Candidatos")}: ${sharedSnapshot().decisionCandidates.map((c) => `${c.provider}/${c.model}`).join(", ")}`);
+							return _el$158;
 						}
 					}), null);
 					(0, solid_js_web.effect)((_p$) => {
-						var _v$25 = cardStyle, _v$26 = rowStyle, _v$27 = {
+						var _v$47 = cardStyle, _v$48 = rowStyle, _v$49 = {
 							...pillButtonStyle(sharedSnapshot().decisionEnabled),
 							color: sharedSnapshot().decisionEnabled ? "#111" : "inherit"
-						}, _v$28 = rowStyle, _v$29 = rowStyle, _v$30 = rowStyle, _v$31 = {
+						}, _v$50 = rowStyle, _v$51 = rowStyle, _v$52 = rowStyle, _v$53 = {
 							...pillButtonStyle(false),
 							color: sharedSnapshot().decisionConsent ? "#4ade80" : "#f87171"
 						};
-						_p$.e = (0, solid_js_web.style)(_el$104, _v$25, _p$.e);
-						_p$.t = (0, solid_js_web.style)(_el$107, _v$26, _p$.t);
-						_p$.a = (0, solid_js_web.style)(_el$109, _v$27, _p$.a);
-						_p$.o = (0, solid_js_web.style)(_el$110, _v$28, _p$.o);
-						_p$.i = (0, solid_js_web.style)(_el$114, _v$29, _p$.i);
-						_p$.n = (0, solid_js_web.style)(_el$118, _v$30, _p$.n);
-						_p$.s = (0, solid_js_web.style)(_el$120, _v$31, _p$.s);
+						_p$.e = (0, solid_js_web.style)(_el$141, _v$47, _p$.e);
+						_p$.t = (0, solid_js_web.style)(_el$144, _v$48, _p$.t);
+						_p$.a = (0, solid_js_web.style)(_el$146, _v$49, _p$.a);
+						_p$.o = (0, solid_js_web.style)(_el$147, _v$50, _p$.o);
+						_p$.i = (0, solid_js_web.style)(_el$151, _v$51, _p$.i);
+						_p$.n = (0, solid_js_web.style)(_el$155, _v$52, _p$.n);
+						_p$.s = (0, solid_js_web.style)(_el$157, _v$53, _p$.s);
 						return _p$;
 					}, {
 						e: void 0,
@@ -5035,88 +5739,88 @@ function PantheonSettingsControls(props) {
 						n: void 0,
 						s: void 0
 					});
-					return _el$104;
+					return _el$141;
 				})(), (() => {
-					var _el$122 = _tmpl$26(), _el$123 = _el$122.firstChild;
-					(0, solid_js_web.insert)(_el$123, () => tr("Provider Credentials (Status Only)", "Credenciais de Provedores (Apenas Status)"));
-					(0, solid_js_web.insert)(_el$122, (0, solid_js_web.createComponent)(solid_js.For, {
+					var _el$159 = _tmpl$36(), _el$160 = _el$159.firstChild;
+					(0, solid_js_web.insert)(_el$160, () => tr("Provider Credentials (Status Only)", "Credenciais de Provedores (Apenas Status)"));
+					(0, solid_js_web.insert)(_el$159, (0, solid_js_web.createComponent)(solid_js.For, {
 						get each() {
 							return sharedSnapshot().credentials;
 						},
 						children: (cred) => (() => {
-							var _el$231 = _tmpl$41(), _el$232 = _el$231.firstChild, _el$233 = _el$232.firstChild, _el$234 = _el$233.nextSibling, _el$235 = _el$232.nextSibling;
-							(0, solid_js_web.insert)(_el$233, () => cred.provider);
-							(0, solid_js_web.insert)(_el$234, () => cred.note);
-							(0, solid_js_web.insert)(_el$235, () => cred.status);
+							var _el$260 = _tmpl$52(), _el$261 = _el$260.firstChild, _el$262 = _el$261.firstChild, _el$263 = _el$262.nextSibling, _el$264 = _el$261.nextSibling;
+							(0, solid_js_web.insert)(_el$262, () => cred.provider);
+							(0, solid_js_web.insert)(_el$263, () => cred.note);
+							(0, solid_js_web.insert)(_el$264, () => cred.status);
 							(0, solid_js_web.effect)((_p$) => {
-								var _v$73 = rowStyle, _v$74 = cred.status === "MISSING" ? "#f87171" : "#4ade80";
-								_p$.e = (0, solid_js_web.style)(_el$231, _v$73, _p$.e);
-								_v$74 !== _p$.t && (0, solid_js_web.setStyleProperty)(_el$235, "color", _p$.t = _v$74);
+								var _v$95 = rowStyle, _v$96 = cred.status === "MISSING" ? "#f87171" : "#4ade80";
+								_p$.e = (0, solid_js_web.style)(_el$260, _v$95, _p$.e);
+								_v$96 !== _p$.t && (0, solid_js_web.setStyleProperty)(_el$264, "color", _p$.t = _v$96);
 								return _p$;
 							}, {
 								e: void 0,
 								t: void 0
 							});
-							return _el$231;
+							return _el$260;
 						})()
 					}), null);
-					(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$122, cardStyle, _$p));
-					return _el$122;
+					(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$159, cardStyle, _$p));
+					return _el$159;
 				})()];
 			}
 		}), null);
-		(0, solid_js_web.insert)(_el$64, (0, solid_js_web.createComponent)(solid_js.Show, {
+		(0, solid_js_web.insert)(_el$101, (0, solid_js_web.createComponent)(solid_js.Show, {
 			get when() {
 				return section() === "autonomy";
 			},
 			get children() {
 				return [
 					(() => {
-						var _el$124 = _tmpl$30(), _el$125 = _el$124.firstChild, _el$126 = _el$125.firstChild, _el$128 = _el$125.nextSibling, _el$129 = _el$128.firstChild, _el$130 = _el$129.nextSibling, _el$131 = _el$128.nextSibling, _el$132 = _el$131.firstChild, _el$133 = _el$132.nextSibling, _el$134 = _el$131.nextSibling, _el$135 = _el$134.firstChild, _el$136 = _el$135.nextSibling;
-						(0, solid_js_web.insert)(_el$126, () => tr("Auto-Continue Loop (goal_loop)", "Loop de Continuação Automática (goal_loop)"));
-						(0, solid_js_web.insert)(_el$125, (0, solid_js_web.createComponent)(solid_js.Show, {
+						var _el$161 = _tmpl$40(), _el$162 = _el$161.firstChild, _el$163 = _el$162.firstChild, _el$165 = _el$162.nextSibling, _el$166 = _el$165.firstChild, _el$167 = _el$166.nextSibling, _el$168 = _el$165.nextSibling, _el$169 = _el$168.firstChild, _el$170 = _el$169.nextSibling, _el$171 = _el$168.nextSibling, _el$172 = _el$171.firstChild, _el$173 = _el$172.nextSibling;
+						(0, solid_js_web.insert)(_el$163, () => tr("Auto-Continue Loop (goal_loop)", "Loop de Continuação Automática (goal_loop)"));
+						(0, solid_js_web.insert)(_el$162, (0, solid_js_web.createComponent)(solid_js.Show, {
 							get when() {
 								return sharedSnapshot().goalLoopRestartPending;
 							},
 							get children() {
-								var _el$127 = _tmpl$29();
-								(0, solid_js_web.insert)(_el$127, () => tr("Restart OpenCode to apply", "Reinicie o OpenCode para aplicar"));
-								return _el$127;
+								var _el$164 = _tmpl$39();
+								(0, solid_js_web.insert)(_el$164, () => tr("Restart OpenCode to apply", "Reinicie o OpenCode para aplicar"));
+								return _el$164;
 							}
 						}), null);
-						(0, solid_js_web.insert)(_el$129, () => tr("Enabled", "Ativado"));
-						_el$130.$$click = () => void savePatch({ goalLoop: { enabled: !sharedSnapshot().goalLoop.enabled } });
-						(0, solid_js_web.insert)(_el$130, (() => {
-							var _c$8 = (0, solid_js_web.memo)(() => !!sharedSnapshot().goalLoop.enabled);
-							return () => _c$8() ? tr("enabled", "ativado") : tr("disabled", "desativado");
+						(0, solid_js_web.insert)(_el$166, () => tr("Enabled", "Ativado"));
+						_el$167.$$click = () => void savePatch({ goalLoop: { enabled: !sharedSnapshot().goalLoop.enabled } });
+						(0, solid_js_web.insert)(_el$167, (() => {
+							var _c$9 = (0, solid_js_web.memo)(() => !!sharedSnapshot().goalLoop.enabled);
+							return () => _c$9() ? tr("enabled", "ativado") : tr("disabled", "desativado");
 						})());
-						(0, solid_js_web.insert)(_el$132, () => tr("Max Continuations", "Limite de Continuações"));
-						(0, solid_js_web.insert)(_el$133, () => MAX_CONTINUATIONS_CYCLE.map((val) => (() => {
-							var _el$236 = _tmpl$17();
-							_el$236.$$click = () => void savePatch({ goalLoop: { maxContinuations: Number(val) } });
-							(0, solid_js_web.insert)(_el$236, val);
-							(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$236, pillButtonStyle(String(sharedSnapshot().goalLoop.maxContinuations) === val), _$p));
-							return _el$236;
+						(0, solid_js_web.insert)(_el$169, () => tr("Max Continuations", "Limite de Continuações"));
+						(0, solid_js_web.insert)(_el$170, () => MAX_CONTINUATIONS_CYCLE.map((val) => (() => {
+							var _el$265 = _tmpl$27();
+							_el$265.$$click = () => void savePatch({ goalLoop: { maxContinuations: Number(val) } });
+							(0, solid_js_web.insert)(_el$265, val);
+							(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$265, pillButtonStyle(String(sharedSnapshot().goalLoop.maxContinuations) === val), _$p));
+							return _el$265;
 						})()));
-						(0, solid_js_web.insert)(_el$135, () => tr("Cooldown (ms)", "Intervalo (ms)"));
-						(0, solid_js_web.insert)(_el$136, () => COOLDOWN_MS_CYCLE.map((val) => (() => {
-							var _el$237 = _tmpl$17();
-							_el$237.$$click = () => void savePatch({ goalLoop: { cooldownMs: Number(val) } });
-							(0, solid_js_web.insert)(_el$237, val);
-							(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$237, pillButtonStyle(String(sharedSnapshot().goalLoop.cooldownMs) === val), _$p));
-							return _el$237;
+						(0, solid_js_web.insert)(_el$172, () => tr("Cooldown (ms)", "Intervalo (ms)"));
+						(0, solid_js_web.insert)(_el$173, () => COOLDOWN_MS_CYCLE.map((val) => (() => {
+							var _el$266 = _tmpl$27();
+							_el$266.$$click = () => void savePatch({ goalLoop: { cooldownMs: Number(val) } });
+							(0, solid_js_web.insert)(_el$266, val);
+							(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$266, pillButtonStyle(String(sharedSnapshot().goalLoop.cooldownMs) === val), _$p));
+							return _el$266;
 						})()));
 						(0, solid_js_web.effect)((_p$) => {
-							var _v$32 = cardStyle, _v$33 = rowStyle, _v$34 = rowStyle, _v$35 = {
+							var _v$54 = cardStyle, _v$55 = rowStyle, _v$56 = rowStyle, _v$57 = {
 								...pillButtonStyle(false),
 								color: sharedSnapshot().goalLoop.enabled ? "#4ade80" : "#f87171"
-							}, _v$36 = rowStyle, _v$37 = rowStyle;
-							_p$.e = (0, solid_js_web.style)(_el$124, _v$32, _p$.e);
-							_p$.t = (0, solid_js_web.style)(_el$125, _v$33, _p$.t);
-							_p$.a = (0, solid_js_web.style)(_el$128, _v$34, _p$.a);
-							_p$.o = (0, solid_js_web.style)(_el$130, _v$35, _p$.o);
-							_p$.i = (0, solid_js_web.style)(_el$131, _v$36, _p$.i);
-							_p$.n = (0, solid_js_web.style)(_el$134, _v$37, _p$.n);
+							}, _v$58 = rowStyle, _v$59 = rowStyle;
+							_p$.e = (0, solid_js_web.style)(_el$161, _v$54, _p$.e);
+							_p$.t = (0, solid_js_web.style)(_el$162, _v$55, _p$.t);
+							_p$.a = (0, solid_js_web.style)(_el$165, _v$56, _p$.a);
+							_p$.o = (0, solid_js_web.style)(_el$167, _v$57, _p$.o);
+							_p$.i = (0, solid_js_web.style)(_el$168, _v$58, _p$.i);
+							_p$.n = (0, solid_js_web.style)(_el$171, _v$59, _p$.n);
 							return _p$;
 						}, {
 							e: void 0,
@@ -5126,59 +5830,59 @@ function PantheonSettingsControls(props) {
 							i: void 0,
 							n: void 0
 						});
-						return _el$124;
+						return _el$161;
 					})(),
 					(() => {
-						var _el$137 = _tmpl$31(), _el$138 = _el$137.firstChild, _el$139 = _el$138.nextSibling, _el$140 = _el$139.firstChild, _el$141 = _el$140.nextSibling, _el$142 = _el$139.nextSibling, _el$143 = _el$142.firstChild, _el$144 = _el$143.nextSibling;
-						(0, solid_js_web.insert)(_el$138, () => tr("Decision Budgets (Jev)", "Orçamentos de Decisão (Jev)"));
-						(0, solid_js_web.insert)(_el$140, () => tr("Monthly Cap (USD)", "Teto Mensal (USD)"));
-						(0, solid_js_web.insert)(_el$141, () => MONTHLY_USD_CYCLE.map((val) => (() => {
-							var _el$238 = _tmpl$17();
-							_el$238.$$click = () => void savePatch({ budgetMonthly: val });
-							(0, solid_js_web.insert)(_el$238, val);
-							(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$238, pillButtonStyle(formatUsd(sharedSnapshot().budgets.monthlyUsd) === val), _$p));
-							return _el$238;
+						var _el$174 = _tmpl$41(), _el$175 = _el$174.firstChild, _el$176 = _el$175.nextSibling, _el$177 = _el$176.firstChild, _el$178 = _el$177.nextSibling, _el$179 = _el$176.nextSibling, _el$180 = _el$179.firstChild, _el$181 = _el$180.nextSibling;
+						(0, solid_js_web.insert)(_el$175, () => tr("Decision Budgets (Jev)", "Orçamentos de Decisão (Jev)"));
+						(0, solid_js_web.insert)(_el$177, () => tr("Monthly Cap (USD)", "Teto Mensal (USD)"));
+						(0, solid_js_web.insert)(_el$178, () => MONTHLY_USD_CYCLE.map((val) => (() => {
+							var _el$267 = _tmpl$27();
+							_el$267.$$click = () => void savePatch({ budgetMonthly: val });
+							(0, solid_js_web.insert)(_el$267, val);
+							(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$267, pillButtonStyle(formatUsd(sharedSnapshot().budgets.monthlyUsd) === val), _$p));
+							return _el$267;
 						})()));
-						(0, solid_js_web.insert)(_el$143, () => tr("Per-Decision Cap", "Teto por Decisão"));
-						(0, solid_js_web.insert)(_el$144, () => PER_DECISION_USD_CYCLE.map((val) => (() => {
-							var _el$239 = _tmpl$17();
-							_el$239.$$click = () => void savePatch({ budgetPerDecision: val });
-							(0, solid_js_web.insert)(_el$239, val);
-							(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$239, pillButtonStyle(formatUsd(sharedSnapshot().budgets.perDecisionUsd) === val), _$p));
-							return _el$239;
+						(0, solid_js_web.insert)(_el$180, () => tr("Per-Decision Cap", "Teto por Decisão"));
+						(0, solid_js_web.insert)(_el$181, () => PER_DECISION_USD_CYCLE.map((val) => (() => {
+							var _el$268 = _tmpl$27();
+							_el$268.$$click = () => void savePatch({ budgetPerDecision: val });
+							(0, solid_js_web.insert)(_el$268, val);
+							(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$268, pillButtonStyle(formatUsd(sharedSnapshot().budgets.perDecisionUsd) === val), _$p));
+							return _el$268;
 						})()));
 						(0, solid_js_web.effect)((_p$) => {
-							var _v$38 = cardStyle, _v$39 = rowStyle, _v$40 = rowStyle;
-							_p$.e = (0, solid_js_web.style)(_el$137, _v$38, _p$.e);
-							_p$.t = (0, solid_js_web.style)(_el$139, _v$39, _p$.t);
-							_p$.a = (0, solid_js_web.style)(_el$142, _v$40, _p$.a);
+							var _v$60 = cardStyle, _v$61 = rowStyle, _v$62 = rowStyle;
+							_p$.e = (0, solid_js_web.style)(_el$174, _v$60, _p$.e);
+							_p$.t = (0, solid_js_web.style)(_el$176, _v$61, _p$.t);
+							_p$.a = (0, solid_js_web.style)(_el$179, _v$62, _p$.a);
 							return _p$;
 						}, {
 							e: void 0,
 							t: void 0,
 							a: void 0
 						});
-						return _el$137;
+						return _el$174;
 					})(),
 					(() => {
-						var _el$145 = _tmpl$32(), _el$146 = _el$145.firstChild, _el$147 = _el$146.nextSibling, _el$148 = _el$147.firstChild, _el$149 = _el$148.nextSibling, _el$150 = _el$147.nextSibling, _el$151 = _el$150.firstChild, _el$152 = _el$151.nextSibling, _el$153 = _el$150.nextSibling, _el$154 = _el$153.firstChild, _el$155 = _el$154.nextSibling, _el$156 = _el$153.nextSibling;
-						(0, solid_js_web.insert)(_el$146, () => tr("J1 Safety Risk Gate (Startup Env)", "Portão de Risco J1 (Startup Env)"));
-						(0, solid_js_web.insert)(_el$148, () => tr("Operation Mode", "Modo de Operação"));
-						(0, solid_js_web.insert)(_el$149, () => sharedSnapshot().j1Mode);
-						(0, solid_js_web.insert)(_el$151, () => tr("Enforce Threshold", "Limite de Bloqueio"));
-						(0, solid_js_web.insert)(_el$152, () => sharedSnapshot().j1Threshold);
-						(0, solid_js_web.insert)(_el$154, () => tr("Gate Status", "Status do Portão"));
-						(0, solid_js_web.insert)(_el$155, (() => {
-							var _c$9 = (0, solid_js_web.memo)(() => !!sharedSnapshot().j1DisabledByOverride);
-							return () => _c$9() ? tr("disabled via overrides", "desativado via substituições") : (0, solid_js_web.memo)(() => sharedSnapshot().j1Mode === "off")() ? tr("off (env unset)", "desligado (env não definida)") : tr("active", "ativo");
+						var _el$182 = _tmpl$42(), _el$183 = _el$182.firstChild, _el$184 = _el$183.nextSibling, _el$185 = _el$184.firstChild, _el$186 = _el$185.nextSibling, _el$187 = _el$184.nextSibling, _el$188 = _el$187.firstChild, _el$189 = _el$188.nextSibling, _el$190 = _el$187.nextSibling, _el$191 = _el$190.firstChild, _el$192 = _el$191.nextSibling, _el$193 = _el$190.nextSibling;
+						(0, solid_js_web.insert)(_el$183, () => tr("J1 Safety Risk Gate (Startup Env)", "Portão de Risco J1 (Startup Env)"));
+						(0, solid_js_web.insert)(_el$185, () => tr("Operation Mode", "Modo de Operação"));
+						(0, solid_js_web.insert)(_el$186, () => sharedSnapshot().j1Mode);
+						(0, solid_js_web.insert)(_el$188, () => tr("Enforce Threshold", "Limite de Bloqueio"));
+						(0, solid_js_web.insert)(_el$189, () => sharedSnapshot().j1Threshold);
+						(0, solid_js_web.insert)(_el$191, () => tr("Gate Status", "Status do Portão"));
+						(0, solid_js_web.insert)(_el$192, (() => {
+							var _c$0 = (0, solid_js_web.memo)(() => !!sharedSnapshot().j1DisabledByOverride);
+							return () => _c$0() ? tr("disabled via overrides", "desativado via substituições") : (0, solid_js_web.memo)(() => sharedSnapshot().j1Mode === "off")() ? tr("off (env unset)", "desligado (env não definida)") : tr("active", "ativo");
 						})());
-						(0, solid_js_web.insert)(_el$156, () => `${J1_FLAG_ENV} / ${J1_THRESHOLD_ENV} · ${tr("read once at startup", "lido uma vez na inicialização")}`);
+						(0, solid_js_web.insert)(_el$193, () => `${J1_FLAG_ENV} / ${J1_THRESHOLD_ENV} · ${tr("read once at startup", "lido uma vez na inicialização")}`);
 						(0, solid_js_web.effect)((_p$) => {
-							var _v$41 = cardStyle, _v$42 = rowStyle, _v$43 = rowStyle, _v$44 = rowStyle;
-							_p$.e = (0, solid_js_web.style)(_el$145, _v$41, _p$.e);
-							_p$.t = (0, solid_js_web.style)(_el$147, _v$42, _p$.t);
-							_p$.a = (0, solid_js_web.style)(_el$150, _v$43, _p$.a);
-							_p$.o = (0, solid_js_web.style)(_el$153, _v$44, _p$.o);
+							var _v$63 = cardStyle, _v$64 = rowStyle, _v$65 = rowStyle, _v$66 = rowStyle;
+							_p$.e = (0, solid_js_web.style)(_el$182, _v$63, _p$.e);
+							_p$.t = (0, solid_js_web.style)(_el$184, _v$64, _p$.t);
+							_p$.a = (0, solid_js_web.style)(_el$187, _v$65, _p$.a);
+							_p$.o = (0, solid_js_web.style)(_el$190, _v$66, _p$.o);
 							return _p$;
 						}, {
 							e: void 0,
@@ -5186,110 +5890,51 @@ function PantheonSettingsControls(props) {
 							a: void 0,
 							o: void 0
 						});
-						return _el$145;
+						return _el$182;
 					})()
 				];
 			}
 		}), null);
-		(0, solid_js_web.insert)(_el$64, (0, solid_js_web.createComponent)(solid_js.Show, {
-			get when() {
-				return section() === "tui";
-			},
-			get children() {
-				return [
-					(() => {
-						var _el$157 = _tmpl$26(), _el$158 = _el$157.firstChild;
-						(0, solid_js_web.insert)(_el$158, () => tr("Preset & Layout", "Predefinição & Layout"));
-						(0, solid_js_web.insert)(_el$157, () => renderTuiCycle("tui.layout.preset", tr("Layout Preset", "Predefinição de Layout"), tui().layout.preset, LAYOUT_PRESETS_CYCLE), null);
-						(0, solid_js_web.insert)(_el$157, () => renderTuiCycle("tui.layout.separator", tr("Separator", "Separador"), tui().layout.separator, SEPARATOR_STYLES_CYCLE), null);
-						(0, solid_js_web.insert)(_el$157, () => renderTuiCycle("tui.layout.settingsView", tr("Settings Surface", "Superfície de Configurações"), tui().layout.settingsView ?? "docked", SETTINGS_VIEW_MODES), null);
-						(0, solid_js_web.insert)(_el$157, () => renderTuiCycle("tui.layout.language", tr("Language / Idioma", "Idioma / Language"), tui().layout.language ?? "auto", LANGUAGE_CYCLE), null);
-						(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$157, cardStyle, _$p));
-						return _el$157;
-					})(),
-					(() => {
-						var _el$159 = _tmpl$26(), _el$160 = _el$159.firstChild;
-						(0, solid_js_web.insert)(_el$160, () => tr("Colors & Theme", "Cores & Tema"));
-						(0, solid_js_web.insert)(_el$159, () => renderTuiCycle("tui.theme.mode", tr("Theme Mode", "Modo do Tema"), tui().theme?.mode ?? "auto", THEME_MODES_CYCLE), null);
-						(0, solid_js_web.insert)(_el$159, () => renderTuiCycle("tui.theme.accent", tr("Accent Color", "Cor de Destaque"), tui().theme?.accent ?? "host", ACCENT_COLORS_CYCLE), null);
-						(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$159, cardStyle, _$p));
-						return _el$159;
-					})(),
-					(() => {
-						var _el$161 = _tmpl$26(), _el$162 = _el$161.firstChild;
-						(0, solid_js_web.insert)(_el$162, () => tr("Bars & Gauges", "Barras & Medidores"));
-						(0, solid_js_web.insert)(_el$161, () => renderTuiCycle("tui.sidebar.context.barShape", tr("Bar Shape", "Formato da Barra"), tui().sidebar.context.barShape, BAR_SHAPES_CYCLE), null);
-						(0, solid_js_web.insert)(_el$161, () => renderTuiCycle("tui.sidebar.context.barWidth", tr("Bar Width", "Largura da Barra"), tui().sidebar.context.barWidth, BAR_WIDTHS_CYCLE), null);
-						(0, solid_js_web.insert)(_el$161, () => renderTuiCycle("tui.sidebar.context.gauge", tr("Gauge Style", "Estilo do Medidor"), tui().sidebar.context.gauge, GAUGE_STYLES), null);
-						(0, solid_js_web.insert)(_el$161, () => renderTuiToggle("tui.sidebar.context.evenMark", tr("Even-Use Mark (50%)", "Marca Central (50%)"), tui().sidebar.context.evenMark), null);
-						(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$161, cardStyle, _$p));
-						return _el$161;
-					})(),
-					(() => {
-						var _el$163 = _tmpl$26(), _el$164 = _el$163.firstChild;
-						(0, solid_js_web.insert)(_el$164, () => tr("Sidebar Header, Blocks & Footers", "Cabeçalho, Blocos & Rodapés da Barra Lateral"));
-						(0, solid_js_web.insert)(_el$163, () => renderTuiToggle("tui.sidebar.header.version", tr("Header: Version", "Cabeçalho: Versão"), tui().sidebar.header.version), null);
-						(0, solid_js_web.insert)(_el$163, () => renderTuiToggle("tui.sidebar.header.preset", tr("Header: Preset", "Cabeçalho: Preset"), tui().sidebar.header.preset), null);
-						(0, solid_js_web.insert)(_el$163, () => renderTuiToggle("tui.sidebar.header.session", tr("Header: Session", "Cabeçalho: Sessão"), tui().sidebar.header.session), null);
-						(0, solid_js_web.insert)(_el$163, () => renderTuiToggle("tui.sidebar.block.context", tr("Block: Context", "Bloco: Contexto"), tui().sidebar.blocks.context), null);
-						(0, solid_js_web.insert)(_el$163, () => renderTuiToggle("tui.sidebar.block.git", tr("Block: Git", "Bloco: Git"), tui().sidebar.blocks.git), null);
-						(0, solid_js_web.insert)(_el$163, () => renderTuiToggle("tui.sidebar.block.todo", tr("Block: Todo", "Bloco: Tarefas (Todo)"), tui().sidebar.blocks.todo ?? true), null);
-						(0, solid_js_web.insert)(_el$163, () => renderTuiToggle("tui.sidebar.block.dispatch", tr("Block: Dispatch", "Bloco: Dispatch"), tui().sidebar.blocks.dispatch), null);
-						(0, solid_js_web.insert)(_el$163, () => renderTuiToggle("tui.sidebar.context.tokens", tr("Context: Tokens Row", "Contexto: Linha de Tokens"), tui().sidebar.context.tokens), null);
-						(0, solid_js_web.insert)(_el$163, () => renderTuiToggle("tui.sidebar.context.spent", tr("Context: Spent Row", "Contexto: Linha de Custo"), tui().sidebar.context.spent), null);
-						(0, solid_js_web.insert)(_el$163, () => renderTuiToggle("tui.sidebar.context.modelUsage", tr("Context: Model Usage", "Contexto: Uso de Modelos"), tui().sidebar.context.modelUsage), null);
-						(0, solid_js_web.insert)(_el$163, () => renderTuiToggle("tui.sidebar.context.performance", tr("Context: Performance", "Contexto: Desempenho"), tui().sidebar.context.performance), null);
-						(0, solid_js_web.insert)(_el$163, () => renderTuiToggle("tui.sidebar.context.turnCost", tr("Context: Turn Cost", "Contexto: Custo do Turno"), tui().sidebar.context.turnCost), null);
-						(0, solid_js_web.insert)(_el$163, () => renderTuiToggle("tui.sidebar.context.tokenAnatomy", tr("Context: Token Anatomy", "Contexto: Anatomia de Tokens"), tui().sidebar.context.tokenAnatomy), null);
-						(0, solid_js_web.insert)(_el$163, () => renderTuiToggle("tui.sidebar.context.localSpend", tr("Context: Local Spend", "Contexto: Gasto Local"), tui().sidebar.context.localSpend), null);
-						(0, solid_js_web.insert)(_el$163, () => renderTuiToggle("tui.footer.prompt", tr("Footer: Prompt", "Rodapé: Prompt"), tui().footer.prompt), null);
-						(0, solid_js_web.insert)(_el$163, () => renderTuiToggle("tui.footer.home", tr("Footer: Home Status", "Rodapé: Status Inicial"), tui().footer.home), null);
-						(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$163, cardStyle, _$p));
-						return _el$163;
-					})()
-				];
-			}
-		}), null);
-		(0, solid_js_web.insert)(_el$64, (0, solid_js_web.createComponent)(solid_js.Show, {
+		(0, solid_js_web.insert)(_el$101, (0, solid_js_web.createComponent)(solid_js.Show, {
 			get when() {
 				return section() === "updates";
 			},
 			get children() {
 				return [(() => {
-					var _el$165 = _tmpl$33(), _el$166 = _el$165.firstChild, _el$167 = _el$166.nextSibling, _el$168 = _el$167.firstChild, _el$169 = _el$168.nextSibling, _el$170 = _el$167.nextSibling, _el$171 = _el$170.firstChild, _el$172 = _el$171.nextSibling, _el$174 = _el$170.nextSibling.firstChild, _el$175 = _el$174.nextSibling;
-					(0, solid_js_web.insert)(_el$166, () => tr("Plugin Updates", "Atualizações do Plugin"));
-					(0, solid_js_web.insert)(_el$168, () => tr("Channel", "Canal"));
-					(0, solid_js_web.insert)(_el$169, () => ["stable", "beta"].map((ch) => (() => {
-						var _el$240 = _tmpl$17();
-						_el$240.$$click = () => void savePatch({ updateChannel: ch });
-						(0, solid_js_web.insert)(_el$240, ch);
-						(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$240, pillButtonStyle(sharedSnapshot().updateChannel === ch), _$p));
-						return _el$240;
+					var _el$194 = _tmpl$43(), _el$195 = _el$194.firstChild, _el$196 = _el$195.nextSibling, _el$197 = _el$196.firstChild, _el$198 = _el$197.nextSibling, _el$199 = _el$196.nextSibling, _el$200 = _el$199.firstChild, _el$201 = _el$200.nextSibling, _el$203 = _el$199.nextSibling.firstChild, _el$204 = _el$203.nextSibling;
+					(0, solid_js_web.insert)(_el$195, () => tr("Plugin Updates", "Atualizações do Plugin"));
+					(0, solid_js_web.insert)(_el$197, () => tr("Channel", "Canal"));
+					(0, solid_js_web.insert)(_el$198, () => ["stable", "beta"].map((ch) => (() => {
+						var _el$269 = _tmpl$27();
+						_el$269.$$click = () => void savePatch({ updateChannel: ch });
+						(0, solid_js_web.insert)(_el$269, ch);
+						(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$269, pillButtonStyle(sharedSnapshot().updateChannel === ch), _$p));
+						return _el$269;
 					})()));
-					(0, solid_js_web.insert)(_el$171, () => tr("Latest Registry Version", "Última Versão no Registro"));
-					(0, solid_js_web.insert)(_el$172, (() => {
-						var _c$0 = (0, solid_js_web.memo)(() => !!sharedSnapshot().latestVersion);
-						return () => _c$0() ? `v${sharedSnapshot().latestVersion}` : tr("not checked", "não verificado");
+					(0, solid_js_web.insert)(_el$200, () => tr("Latest Registry Version", "Última Versão no Registro"));
+					(0, solid_js_web.insert)(_el$201, (() => {
+						var _c$1 = (0, solid_js_web.memo)(() => !!sharedSnapshot().latestVersion);
+						return () => _c$1() ? `v${sharedSnapshot().latestVersion}` : tr("not checked", "não verificado");
 					})());
-					_el$174.$$click = () => void triggerAction("update-check");
-					(0, solid_js_web.insert)(_el$174, (() => {
-						var _c$1 = (0, solid_js_web.memo)(() => busyAction() === "update-check");
-						return () => _c$1() ? tr("Checking…", "Verificando…") : tr("Check Now", "Verificar Agora");
+					_el$203.$$click = () => void triggerAction("update-check");
+					(0, solid_js_web.insert)(_el$203, (() => {
+						var _c$10 = (0, solid_js_web.memo)(() => busyAction() === "update-check");
+						return () => _c$10() ? tr("Checking…", "Verificando…") : tr("Check Now", "Verificar Agora");
 					})());
-					_el$175.$$click = () => void triggerAction("update-run");
-					(0, solid_js_web.insert)(_el$175, (() => {
-						var _c$10 = (0, solid_js_web.memo)(() => busyAction() === "update-run");
-						return () => _c$10() ? tr("Updating…", "Atualizando…") : tr("Update / Refresh Plugin", "Atualizar / Recarregar Plugin");
+					_el$204.$$click = () => void triggerAction("update-run");
+					(0, solid_js_web.insert)(_el$204, (() => {
+						var _c$11 = (0, solid_js_web.memo)(() => busyAction() === "update-run");
+						return () => _c$11() ? tr("Updating…", "Atualizando…") : tr("Update / Refresh Plugin", "Atualizar / Recarregar Plugin");
 					})());
 					(0, solid_js_web.effect)((_p$) => {
-						var _v$45 = cardStyle, _v$46 = rowStyle, _v$47 = rowStyle, _v$48 = busyAction() !== null, _v$49 = pillButtonStyle(false), _v$50 = busyAction() !== null, _v$51 = pillButtonStyle(true);
-						_p$.e = (0, solid_js_web.style)(_el$165, _v$45, _p$.e);
-						_p$.t = (0, solid_js_web.style)(_el$167, _v$46, _p$.t);
-						_p$.a = (0, solid_js_web.style)(_el$170, _v$47, _p$.a);
-						_v$48 !== _p$.o && (_el$174.disabled = _p$.o = _v$48);
-						_p$.i = (0, solid_js_web.style)(_el$174, _v$49, _p$.i);
-						_v$50 !== _p$.n && (_el$175.disabled = _p$.n = _v$50);
-						_p$.s = (0, solid_js_web.style)(_el$175, _v$51, _p$.s);
+						var _v$67 = cardStyle, _v$68 = rowStyle, _v$69 = rowStyle, _v$70 = busyAction() !== null, _v$71 = pillButtonStyle(false), _v$72 = busyAction() !== null, _v$73 = pillButtonStyle(true);
+						_p$.e = (0, solid_js_web.style)(_el$194, _v$67, _p$.e);
+						_p$.t = (0, solid_js_web.style)(_el$196, _v$68, _p$.t);
+						_p$.a = (0, solid_js_web.style)(_el$199, _v$69, _p$.a);
+						_v$70 !== _p$.o && (_el$203.disabled = _p$.o = _v$70);
+						_p$.i = (0, solid_js_web.style)(_el$203, _v$71, _p$.i);
+						_v$72 !== _p$.n && (_el$204.disabled = _p$.n = _v$72);
+						_p$.s = (0, solid_js_web.style)(_el$204, _v$73, _p$.s);
 						return _p$;
 					}, {
 						e: void 0,
@@ -5300,44 +5945,44 @@ function PantheonSettingsControls(props) {
 						n: void 0,
 						s: void 0
 					});
-					return _el$165;
+					return _el$194;
 				})(), (() => {
-					var _el$176 = _tmpl$34(), _el$177 = _el$176.firstChild, _el$178 = _el$177.nextSibling, _el$179 = _el$178.firstChild, _el$180 = _el$179.nextSibling, _el$182 = _el$178.nextSibling.firstChild, _el$183 = _el$182.nextSibling, _el$184 = _el$183.nextSibling;
-					(0, solid_js_web.insert)(_el$177, () => tr("Legacy, Drift & Cleanup", "Legado, Drift & Limpeza"));
-					(0, solid_js_web.insert)(_el$179, () => tr("Audit Status", "Status da Auditoria"));
-					(0, solid_js_web.insert)(_el$180, (() => {
-						var _c$11 = (0, solid_js_web.memo)(() => !!sharedSnapshot().legacyAudit);
-						return () => _c$11() ? (0, solid_js_web.memo)(() => sharedSnapshot().legacyAudit?.total === 0)() ? tr("clean (0 obsolete)", "limpo (0 obsoletos)") : `${sharedSnapshot().legacyAudit?.total ?? 0} ${tr("item(s)", "item(ns)")} (${formatBytes(sharedSnapshot().legacyAudit?.totalBytes ?? 0)})` : tr("not scanned", "não verificado");
+					var _el$205 = _tmpl$44(), _el$206 = _el$205.firstChild, _el$207 = _el$206.nextSibling, _el$208 = _el$207.firstChild, _el$209 = _el$208.nextSibling, _el$211 = _el$207.nextSibling.firstChild, _el$212 = _el$211.nextSibling, _el$213 = _el$212.nextSibling;
+					(0, solid_js_web.insert)(_el$206, () => tr("Legacy, Drift & Cleanup", "Legado, Drift & Limpeza"));
+					(0, solid_js_web.insert)(_el$208, () => tr("Audit Status", "Status da Auditoria"));
+					(0, solid_js_web.insert)(_el$209, (() => {
+						var _c$12 = (0, solid_js_web.memo)(() => !!sharedSnapshot().legacyAudit);
+						return () => _c$12() ? (0, solid_js_web.memo)(() => sharedSnapshot().legacyAudit?.total === 0)() ? tr("clean (0 obsolete)", "limpo (0 obsoletos)") : `${sharedSnapshot().legacyAudit?.total ?? 0} ${tr("item(s)", "item(ns)")} (${formatBytes(sharedSnapshot().legacyAudit?.totalBytes ?? 0)})` : tr("not scanned", "não verificado");
 					})());
-					_el$182.$$click = () => void triggerAction("legacy-scan");
-					(0, solid_js_web.insert)(_el$182, (() => {
-						var _c$12 = (0, solid_js_web.memo)(() => busyAction() === "legacy-scan");
-						return () => _c$12() ? tr("Scanning…", "Verificando…") : tr("Scan Legacy & Drift", "Verificar Legado & Drift");
+					_el$211.$$click = () => void triggerAction("legacy-scan");
+					(0, solid_js_web.insert)(_el$211, (() => {
+						var _c$13 = (0, solid_js_web.memo)(() => busyAction() === "legacy-scan");
+						return () => _c$13() ? tr("Scanning…", "Verificando…") : tr("Scan Legacy & Drift", "Verificar Legado & Drift");
 					})());
-					_el$183.$$click = () => void triggerAction("legacy-clean");
-					(0, solid_js_web.insert)(_el$183, (() => {
-						var _c$13 = (0, solid_js_web.memo)(() => busyAction() === "legacy-clean");
-						return () => _c$13() ? tr("Cleaning…", "Limpando…") : tr("Migrate & Clean Obsolete", "Migrar & Limpar Obsoletos");
+					_el$212.$$click = () => void triggerAction("legacy-clean");
+					(0, solid_js_web.insert)(_el$212, (() => {
+						var _c$14 = (0, solid_js_web.memo)(() => busyAction() === "legacy-clean");
+						return () => _c$14() ? tr("Cleaning…", "Limpando…") : tr("Migrate & Clean Obsolete", "Migrar & Limpar Obsoletos");
 					})());
-					_el$184.$$click = () => void triggerAction("legacy-purge");
-					(0, solid_js_web.insert)(_el$184, (() => {
-						var _c$14 = (0, solid_js_web.memo)(() => busyAction() === "legacy-purge");
-						return () => _c$14() ? tr("Purging…", "Apagando…") : (0, solid_js_web.memo)(() => !!confirmPurge())() ? tr("Confirm Purge (.pantheon)", "Confirmar Limpeza Total (.pantheon)") : tr("Purge Pantheon Data", "Apagar Dados do Pantheon");
+					_el$213.$$click = () => void triggerAction("legacy-purge");
+					(0, solid_js_web.insert)(_el$213, (() => {
+						var _c$15 = (0, solid_js_web.memo)(() => busyAction() === "legacy-purge");
+						return () => _c$15() ? tr("Purging…", "Apagando…") : (0, solid_js_web.memo)(() => !!confirmPurge())() ? tr("Confirm Purge (.pantheon)", "Confirmar Limpeza Total (.pantheon)") : tr("Purge Pantheon Data", "Apagar Dados do Pantheon");
 					})());
 					(0, solid_js_web.effect)((_p$) => {
-						var _v$52 = cardStyle, _v$53 = rowStyle, _v$54 = busyAction() !== null, _v$55 = pillButtonStyle(false), _v$56 = busyAction() !== null, _v$57 = pillButtonStyle(false), _v$58 = busyAction() !== null, _v$59 = {
+						var _v$74 = cardStyle, _v$75 = rowStyle, _v$76 = busyAction() !== null, _v$77 = pillButtonStyle(false), _v$78 = busyAction() !== null, _v$79 = pillButtonStyle(false), _v$80 = busyAction() !== null, _v$81 = {
 							...pillButtonStyle(confirmPurge()),
 							color: confirmPurge() ? "#111" : "#fca5a5",
 							background: confirmPurge() ? "#ef4444" : "transparent"
 						};
-						_p$.e = (0, solid_js_web.style)(_el$176, _v$52, _p$.e);
-						_p$.t = (0, solid_js_web.style)(_el$178, _v$53, _p$.t);
-						_v$54 !== _p$.a && (_el$182.disabled = _p$.a = _v$54);
-						_p$.o = (0, solid_js_web.style)(_el$182, _v$55, _p$.o);
-						_v$56 !== _p$.i && (_el$183.disabled = _p$.i = _v$56);
-						_p$.n = (0, solid_js_web.style)(_el$183, _v$57, _p$.n);
-						_v$58 !== _p$.s && (_el$184.disabled = _p$.s = _v$58);
-						_p$.h = (0, solid_js_web.style)(_el$184, _v$59, _p$.h);
+						_p$.e = (0, solid_js_web.style)(_el$205, _v$74, _p$.e);
+						_p$.t = (0, solid_js_web.style)(_el$207, _v$75, _p$.t);
+						_v$76 !== _p$.a && (_el$211.disabled = _p$.a = _v$76);
+						_p$.o = (0, solid_js_web.style)(_el$211, _v$77, _p$.o);
+						_v$78 !== _p$.i && (_el$212.disabled = _p$.i = _v$78);
+						_p$.n = (0, solid_js_web.style)(_el$212, _v$79, _p$.n);
+						_v$80 !== _p$.s && (_el$213.disabled = _p$.s = _v$80);
+						_p$.h = (0, solid_js_web.style)(_el$213, _v$81, _p$.h);
 						return _p$;
 					}, {
 						e: void 0,
@@ -5349,35 +5994,35 @@ function PantheonSettingsControls(props) {
 						s: void 0,
 						h: void 0
 					});
-					return _el$176;
+					return _el$205;
 				})()];
 			}
 		}), null);
-		(0, solid_js_web.insert)(_el$64, (0, solid_js_web.createComponent)(solid_js.Show, {
+		(0, solid_js_web.insert)(_el$101, (0, solid_js_web.createComponent)(solid_js.Show, {
 			get when() {
 				return section() === "doctor";
 			},
 			get children() {
 				return [
 					(() => {
-						var _el$185 = _tmpl$35(), _el$186 = _el$185.firstChild, _el$187 = _el$186.nextSibling, _el$188 = _el$187.firstChild, _el$189 = _el$188.nextSibling, _el$190 = _el$187.nextSibling, _el$191 = _el$190.firstChild, _el$192 = _el$191.nextSibling, _el$193 = _el$190.nextSibling, _el$194 = _el$193.firstChild, _el$195 = _el$194.nextSibling, _el$196 = _el$193.nextSibling, _el$197 = _el$196.firstChild, _el$198 = _el$197.nextSibling;
-						(0, solid_js_web.insert)(_el$186, () => tr("Doctor Health (File-Derived)", "Saúde Doctor (Baseado em Arquivos)"));
-						(0, solid_js_web.insert)(_el$188, () => tr("Install Version", "Versão Instalada"));
-						(0, solid_js_web.insert)(_el$189, () => `${sharedSnapshot().doctor.installVersion} (${sharedSnapshot().doctor.installStatus})`);
-						(0, solid_js_web.insert)(_el$191, () => `${tr("Node Runtime", "Runtime Node")} (>= ${MIN_SUPPORTED_NODE_VERSION})`);
-						(0, solid_js_web.insert)(_el$192, () => `v${sharedSnapshot().doctor.nodeVersion}`);
-						(0, solid_js_web.insert)(_el$194, () => tr("Overrides Health", "Saúde das Substituições"));
-						(0, solid_js_web.insert)(_el$195, () => sharedSnapshot().doctor.overridesStatus);
-						(0, solid_js_web.insert)(_el$197, () => tr("Decision Config", "Configuração de Decisão"));
-						(0, solid_js_web.insert)(_el$198, () => sharedSnapshot().doctor.decisionStatus);
+						var _el$214 = _tmpl$45(), _el$215 = _el$214.firstChild, _el$216 = _el$215.nextSibling, _el$217 = _el$216.firstChild, _el$218 = _el$217.nextSibling, _el$219 = _el$216.nextSibling, _el$220 = _el$219.firstChild, _el$221 = _el$220.nextSibling, _el$222 = _el$219.nextSibling, _el$223 = _el$222.firstChild, _el$224 = _el$223.nextSibling, _el$225 = _el$222.nextSibling, _el$226 = _el$225.firstChild, _el$227 = _el$226.nextSibling;
+						(0, solid_js_web.insert)(_el$215, () => tr("Doctor Health (File-Derived)", "Saúde Doctor (Baseado em Arquivos)"));
+						(0, solid_js_web.insert)(_el$217, () => tr("Install Version", "Versão Instalada"));
+						(0, solid_js_web.insert)(_el$218, () => `${sharedSnapshot().doctor.installVersion} (${sharedSnapshot().doctor.installStatus})`);
+						(0, solid_js_web.insert)(_el$220, () => `${tr("Node Runtime", "Runtime Node")} (>= ${MIN_SUPPORTED_NODE_VERSION})`);
+						(0, solid_js_web.insert)(_el$221, () => `v${sharedSnapshot().doctor.nodeVersion}`);
+						(0, solid_js_web.insert)(_el$223, () => tr("Overrides Health", "Saúde das Substituições"));
+						(0, solid_js_web.insert)(_el$224, () => sharedSnapshot().doctor.overridesStatus);
+						(0, solid_js_web.insert)(_el$226, () => tr("Decision Config", "Configuração de Decisão"));
+						(0, solid_js_web.insert)(_el$227, () => sharedSnapshot().doctor.decisionStatus);
 						(0, solid_js_web.effect)((_p$) => {
-							var _v$60 = cardStyle, _v$61 = rowStyle, _v$62 = rowStyle, _v$63 = sharedSnapshot().doctor.nodeSupported ? "#4ade80" : "#f87171", _v$64 = rowStyle, _v$65 = rowStyle;
-							_p$.e = (0, solid_js_web.style)(_el$185, _v$60, _p$.e);
-							_p$.t = (0, solid_js_web.style)(_el$187, _v$61, _p$.t);
-							_p$.a = (0, solid_js_web.style)(_el$190, _v$62, _p$.a);
-							_v$63 !== _p$.o && (0, solid_js_web.setStyleProperty)(_el$192, "color", _p$.o = _v$63);
-							_p$.i = (0, solid_js_web.style)(_el$193, _v$64, _p$.i);
-							_p$.n = (0, solid_js_web.style)(_el$196, _v$65, _p$.n);
+							var _v$82 = cardStyle, _v$83 = rowStyle, _v$84 = rowStyle, _v$85 = sharedSnapshot().doctor.nodeSupported ? "#4ade80" : "#f87171", _v$86 = rowStyle, _v$87 = rowStyle;
+							_p$.e = (0, solid_js_web.style)(_el$214, _v$82, _p$.e);
+							_p$.t = (0, solid_js_web.style)(_el$216, _v$83, _p$.t);
+							_p$.a = (0, solid_js_web.style)(_el$219, _v$84, _p$.a);
+							_v$85 !== _p$.o && (0, solid_js_web.setStyleProperty)(_el$221, "color", _p$.o = _v$85);
+							_p$.i = (0, solid_js_web.style)(_el$222, _v$86, _p$.i);
+							_p$.n = (0, solid_js_web.style)(_el$225, _v$87, _p$.n);
 							return _p$;
 						}, {
 							e: void 0,
@@ -5387,53 +6032,53 @@ function PantheonSettingsControls(props) {
 							i: void 0,
 							n: void 0
 						});
-						return _el$185;
+						return _el$214;
 					})(),
 					(0, solid_js_web.createComponent)(solid_js.Show, {
 						get when() {
 							return sharedSnapshot().changelogHighlights.length > 0;
 						},
 						get children() {
-							var _el$199 = _tmpl$26(), _el$200 = _el$199.firstChild;
-							(0, solid_js_web.insert)(_el$200, () => `${tr("What's New in v", "Novidades na v")}${resolveRunningVersion()}`);
-							(0, solid_js_web.insert)(_el$199, (0, solid_js_web.createComponent)(solid_js.For, {
+							var _el$228 = _tmpl$36(), _el$229 = _el$228.firstChild;
+							(0, solid_js_web.insert)(_el$229, () => `${tr("What's New in v", "Novidades na v")}${resolveRunningVersion()}`);
+							(0, solid_js_web.insert)(_el$228, (0, solid_js_web.createComponent)(solid_js.For, {
 								get each() {
 									return sharedSnapshot().changelogHighlights.slice(0, 8);
 								},
 								children: (hl) => (() => {
-									var _el$241 = _tmpl$42(), _el$242 = _el$241.firstChild, _el$243 = _el$242.nextSibling;
-									(0, solid_js_web.insert)(_el$242, () => hl.title);
-									(0, solid_js_web.insert)(_el$243, () => `: ${hl.detail}`);
-									return _el$241;
+									var _el$270 = _tmpl$53(), _el$271 = _el$270.firstChild, _el$272 = _el$271.nextSibling;
+									(0, solid_js_web.insert)(_el$271, () => hl.title);
+									(0, solid_js_web.insert)(_el$272, () => `: ${hl.detail}`);
+									return _el$270;
 								})()
 							}), null);
-							(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$199, cardStyle, _$p));
-							return _el$199;
+							(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$228, cardStyle, _$p));
+							return _el$228;
 						}
 					}),
 					(() => {
-						var _el$201 = _tmpl$26(), _el$202 = _el$201.firstChild;
-						(0, solid_js_web.insert)(_el$202, () => tr("Native Tools (30)", "Ferramentas Nativas (30)"));
-						(0, solid_js_web.insert)(_el$201, (0, solid_js_web.createComponent)(solid_js.For, {
+						var _el$230 = _tmpl$36(), _el$231 = _el$230.firstChild;
+						(0, solid_js_web.insert)(_el$231, () => tr("Native Tools (30)", "Ferramentas Nativas (30)"));
+						(0, solid_js_web.insert)(_el$230, (0, solid_js_web.createComponent)(solid_js.For, {
 							get each() {
 								return sharedSnapshot().aboutToolGroups;
 							},
 							children: (grp) => (() => {
-								var _el$244 = _tmpl$43(), _el$245 = _el$244.firstChild, _el$246 = _el$245.firstChild, _el$247 = _el$246.nextSibling, _el$248 = _el$245.nextSibling;
-								(0, solid_js_web.insert)(_el$246, () => grp.name);
-								(0, solid_js_web.insert)(_el$247, () => grp.value);
-								(0, solid_js_web.insert)(_el$248, () => grp.note);
-								(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$245, rowStyle, _$p));
-								return _el$244;
+								var _el$273 = _tmpl$54(), _el$274 = _el$273.firstChild, _el$275 = _el$274.firstChild, _el$276 = _el$275.nextSibling, _el$277 = _el$274.nextSibling;
+								(0, solid_js_web.insert)(_el$275, () => grp.name);
+								(0, solid_js_web.insert)(_el$276, () => grp.value);
+								(0, solid_js_web.insert)(_el$277, () => grp.note);
+								(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$274, rowStyle, _$p));
+								return _el$273;
 							})()
 						}), null);
-						(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$201, cardStyle, _$p));
-						return _el$201;
+						(0, solid_js_web.effect)((_$p) => (0, solid_js_web.style)(_el$230, cardStyle, _$p));
+						return _el$230;
 					})()
 				];
 			}
 		}), null);
-		return _el$64;
+		return _el$101;
 	})();
 }
 function PantheonSettingsView(props) {
@@ -5453,29 +6098,29 @@ function PantheonSettingsView(props) {
 		refresh();
 	});
 	return (() => {
-		var _el$249 = _tmpl$45(), _el$250 = _el$249.firstChild, _el$251 = _el$250.firstChild, _el$252 = _el$251.nextSibling, _el$254 = _el$250.nextSibling;
-		(0, solid_js_web.insert)(_el$251, () => `Pantheon v${resolveRunningVersion()}`);
-		_el$252.$$click = () => void refresh();
-		(0, solid_js_web.insert)(_el$252, () => tr("Refresh", "Atualizar"));
-		(0, solid_js_web.insert)(_el$249, (0, solid_js_web.createComponent)(solid_js.Show, {
+		var _el$278 = _tmpl$56(), _el$279 = _el$278.firstChild, _el$280 = _el$279.firstChild, _el$281 = _el$280.nextSibling, _el$283 = _el$279.nextSibling;
+		(0, solid_js_web.insert)(_el$280, () => `Pantheon v${resolveRunningVersion()}`);
+		_el$281.$$click = () => void refresh();
+		(0, solid_js_web.insert)(_el$281, () => tr("Refresh", "Atualizar"));
+		(0, solid_js_web.insert)(_el$278, (0, solid_js_web.createComponent)(solid_js.Show, {
 			get when() {
 				return uiError() !== null;
 			},
 			get children() {
-				var _el$253 = _tmpl$44();
-				(0, solid_js_web.insert)(_el$253, uiError);
-				return _el$253;
+				var _el$282 = _tmpl$55();
+				(0, solid_js_web.insert)(_el$282, uiError);
+				return _el$282;
 			}
-		}), _el$254);
-		(0, solid_js_web.insert)(_el$249, (0, solid_js_web.createComponent)(PantheonSettingsControls, {
+		}), _el$283);
+		(0, solid_js_web.insert)(_el$278, (0, solid_js_web.createComponent)(PantheonSettingsControls, {
 			get ctx() {
 				return props.ctx;
 			},
 			directory: effectiveDirectory,
 			onSaved: refresh
-		}), _el$254);
-		(0, solid_js_web.insert)(_el$254, () => tr("Olympus Topology, interactive Agora Board, and Ephemeral Worker telemetry are active in the Pantheon side panel.", "Topologia Olympus, Board Agora interativo e telemetria de Workers Efêmeros estão ativos no painel lateral do Pantheon."));
-		return _el$249;
+		}), _el$283);
+		(0, solid_js_web.insert)(_el$283, () => tr("Olympus Topology, interactive Agora Board, and Ephemeral Worker telemetry are active in the Pantheon side panel.", "Topologia Olympus, Board Agora interativo e telemetria de Workers Efêmeros estão ativos no painel lateral do Pantheon."));
+		return _el$278;
 	})();
 }
 var gui_default = _opencode_plugin_gui.Plugin.define({
@@ -5497,14 +6142,14 @@ var gui_default = _opencode_plugin_gui.Plugin.define({
 			const session = ctx.sessions.current();
 			if (session) ctx.layout.open(`${ctx.id}:pantheon-cockpit`, session, { tab: "open" });
 			else ctx.dialogs.open((dialog) => (() => {
-				var _el$255 = _tmpl$46(), _el$258 = _el$255.firstChild.firstChild.nextSibling;
-				_el$258.$$click = () => dialog.close();
-				(0, solid_js_web.insert)(_el$258, () => tr("Close", "Fechar"));
-				(0, solid_js_web.insert)(_el$255, (0, solid_js_web.createComponent)(PantheonCockpitView, {
+				var _el$284 = _tmpl$57(), _el$287 = _el$284.firstChild.firstChild.nextSibling;
+				_el$287.$$click = () => dialog.close();
+				(0, solid_js_web.insert)(_el$287, () => tr("Close", "Fechar"));
+				(0, solid_js_web.insert)(_el$284, (0, solid_js_web.createComponent)(PantheonCockpitView, {
 					ctx,
 					directory: () => resolveActiveDirectory(ctx)
 				}), null);
-				return _el$255;
+				return _el$284;
 			})());
 		};
 		ctx.add(_opencode_plugin_gui.Panel, () => ({

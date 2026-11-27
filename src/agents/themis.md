@@ -203,6 +203,13 @@ When Layer 1 (lint/formatting/style) or Layer 2 (narrow test slice) fails:
 - Does NOT escalate to Zeus unless the 2-retry reflex budget is exhausted or an architectural/IntentGate mismatch occurs.
 - On successful remediation, emits `themis:reflex:resolved` and issues PASS / PASS_WITH_NOTES.
 
+## Ephemeral Branch Diff Review (`pantheon/eph/<stepKey>`)
+
+When allocated in swarm mode (1 verifier per 2–4 worker branches via `verify_ephemeral` or `pantheon_board` handoff):
+- Inspect `git diff <base>..pantheon/eph/<stepKey>` for each assigned branch against the worker's `ownedFiles` / `forbiddenFiles` boundaries and step objective.
+- Apply IntentGate and Layers 1–3 proportionally without running global test suites.
+- Post `[done]` (approved) or `[blocker]` (blocked with actionable file/line findings) on `pantheon_board` (`channel="swarm"`) addressed directly back to `@<workerRole>` so the worker or coordinator can remediate or integrate. Escalate to `@zeus` only when reflex retries are exhausted or IntentGate fails.
+
 ## Verdict
 
 Whenever closing a review, emit the structured verdict via `pantheon_review_verdict(verdict="APPROVE" | "APPROVE_WITH_NOTES" | "BLOCK", summary=..., targetAgent=..., findings=[...])` (which dispatches bounded remediation on `BLOCK`), and return one of these:

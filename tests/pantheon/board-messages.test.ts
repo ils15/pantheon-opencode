@@ -9,6 +9,11 @@ import {
   createBoardTool,
   getBoardStatus,
   readBoardMessages,
+  registerBoardIdentity,
+  registerBoardMentionWakeup,
+  resolveBoardIdentity,
+  unregisterBoardIdentity,
+  unregisterBoardMentionWakeup,
   upsertBoardChannel,
 } from '../../src/pantheon/board-messages.ts'
 import { getSharedBus } from '../../src/pantheon/bus.ts'
@@ -200,6 +205,214 @@ test('pantheon_board tool handles channel, post, read, status and cockpit-events
     assert.equal(boardEv.severity, 'warn')
   } finally {
     stopCockpit()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('registerBoardIdentity enforces non-falsifiable context.sessionID sender on pantheon_board post', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-board-id-'))
+  const sessionID = 'ses-board-identity-1'
+  try {
+    registerBoardIdentity(sessionID, '@Hermes')
+    assert.equal(resolveBoardIdentity(sessionID), 'hermes')
+
+    const tool = createBoardTool(dir)
+    const spoofed = JSON.parse(
+      (
+        await tool.execute(
+          {
+            action: 'post',
+            from: 'zeus',
+            body: '[note] attempting to spoof zeus',
+          },
+          { directory: dir, sessionID, agent: 'zeus' },
+        )
+      ).output,
+    ) as { ok: boolean; message: { from: string } }
+    assert.equal(spoofed.ok, true)
+    assert.equal(spoofed.message.from, 'hermes')
+
+    unregisterBoardIdentity(sessionID)
+    assert.equal(resolveBoardIdentity(sessionID), undefined)
+
+    const fallback = JSON.parse(
+      (
+        await tool.execute(
+          {
+            action: 'post',
+            from: 'apollo',
+            body: '[note] unregistered session falls back',
+          },
+          { directory: dir, sessionID, agent: 'zeus' },
+        )
+      ).output,
+    ) as { ok: boolean; message: { from: string } }
+    assert.equal(fallback.ok, true)
+    assert.equal(fallback.message.from, 'apollo')
+  } finally {
+    unregisterBoardIdentity(sessionID)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('pantheon_board action=wait resolves reactively on matching @mention, supports existing messages and timeout', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-board-wait-'))
+  try {
+    const tool = createBoardTool(dir)
+
+    // 1. Timeout when no matching message arrives
+    const timedOutRes = JSON.parse(
+      (
+        await tool.execute(
+          {
+            action: 'wait',
+            since: 0,
+            target: 'themis',
+            timeoutMs: 30,
+          },
+          { directory: dir, agent: 'themis' },
+        )
+      ).output,
+    ) as { ok: boolean; timedOut: boolean; messages: unknown[] }
+    assert.equal(timedOutRes.ok, true)
+    assert.equal(timedOutRes.timedOut, true)
+    assert.deepEqual(timedOutRes.messages, [])
+
+    // 2. Reactive wakeup on PantheonBus board:message event (ignoring non-matching messages)
+    const waitPromise = tool.execute(
+      {
+        action: 'wait',
+        since: 0,
+        channel: 'council',
+        target: 'themis',
+        mentions_only: true,
+        timeoutMs: 2_000,
+      },
+      { directory: dir, agent: 'themis' },
+    )
+
+    // Non-matching channel and non-matching mention should not wake
+    await appendBoardMessage(dir, {
+      channel: 'swarm',
+      from: 'hermes',
+      body: '@themis wrong channel',
+    })
+    await appendBoardMessage(dir, {
+      channel: 'council',
+      from: 'hermes',
+      body: '@apollo wrong target',
+    })
+
+    // Matching message wakes immediately
+    await appendBoardMessage(dir, {
+      channel: 'council',
+      from: 'zeus',
+      body: '@themis [question] review seq 3',
+    })
+
+    const waitRes = JSON.parse((await waitPromise).output) as {
+      ok: boolean
+      timedOut: boolean
+      messages: Array<{ seq: number; from: string; channel: string }>
+    }
+    assert.equal(waitRes.ok, true)
+    assert.equal(waitRes.timedOut, false)
+    assert.equal(waitRes.messages.length, 1)
+    assert.equal(waitRes.messages[0]?.seq, 3)
+    assert.equal(waitRes.messages[0]?.from, 'zeus')
+    assert.equal(waitRes.messages[0]?.channel, 'council')
+
+    // 3. Immediate return if matching message already exists with seq > since
+    const immediateRes = JSON.parse(
+      (
+        await tool.execute(
+          {
+            action: 'wait',
+            since: 2,
+            channel: 'council',
+            target: 'themis',
+            timeoutMs: 500,
+          },
+          { directory: dir, agent: 'themis' },
+        )
+      ).output,
+    ) as { ok: boolean; timedOut: boolean; messages: Array<{ seq: number }> }
+    assert.equal(immediateRes.ok, true)
+    assert.equal(immediateRes.timedOut, false)
+    assert.equal(immediateRes.messages[0]?.seq, 3)
+
+    // 4. mentions_only=false wakes on any message on the channel
+    const anyWait = tool.execute(
+      {
+        action: 'wait',
+        since: 3,
+        channel: 'swarm',
+        mentions_only: false,
+        timeoutMs: 2_000,
+      },
+      { directory: dir, agent: 'themis' },
+    )
+    await appendBoardMessage(dir, {
+      channel: 'swarm',
+      from: 'apollo',
+      body: '[note] general broadcast without mention',
+    })
+    const anyRes = JSON.parse((await anyWait).output) as {
+      ok: boolean
+      timedOut: boolean
+      messages: Array<{ seq: number; from: string }>
+    }
+    assert.equal(anyRes.ok, true)
+    assert.equal(anyRes.timedOut, false)
+    assert.equal(anyRes.messages[0]?.seq, 4)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('registerBoardMentionWakeup notifies idle sessions on @mention or @all and unregisters cleanly', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-board-wakeup-'))
+  const wokeEvents: Array<{ seq: number; from: string }> = []
+  const sessionID = 'ses-idle-worker-1'
+  try {
+    registerBoardMentionWakeup(sessionID, 'hermes', (ev) => {
+      wokeEvents.push({ seq: ev.seq, from: ev.from })
+    })
+
+    // Self-mention from hermes should NOT wake hermes
+    await appendBoardMessage(dir, {
+      from: 'hermes',
+      body: '@hermes talking to myself',
+    })
+    // Mention to someone else should NOT wake hermes
+    await appendBoardMessage(dir, {
+      from: 'zeus',
+      body: '@apollo check DB',
+    })
+    // Direct @mention from zeus SHOULD wake hermes
+    await appendBoardMessage(dir, {
+      from: 'zeus',
+      body: '@hermes please take slice B',
+    })
+    // @all SHOULD wake hermes
+    await appendBoardMessage(dir, {
+      from: 'zeus',
+      body: '@all standup update',
+    })
+
+    assert.deepEqual(wokeEvents, [
+      { seq: 3, from: 'zeus' },
+      { seq: 4, from: 'zeus' },
+    ])
+
+    unregisterBoardMentionWakeup(sessionID)
+    await appendBoardMessage(dir, {
+      from: 'zeus',
+      body: '@hermes after unregister',
+    })
+    assert.equal(wokeEvents.length, 2)
+  } finally {
+    unregisterBoardMentionWakeup(sessionID)
     rmSync(dir, { recursive: true, force: true })
   }
 })

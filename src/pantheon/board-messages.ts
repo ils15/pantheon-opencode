@@ -17,7 +17,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { appendFile, mkdir, readFile } from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
 import type { BackgroundJobBoard, BackgroundJobRecord } from './background-job-board.ts'
-import { type BoardMessageTag, getSharedBus } from './bus.ts'
+import { type BoardMessageEventPayload, type BoardMessageTag, getSharedBus } from './bus.ts'
 import { getSharedBoard } from './shared-board.ts'
 import { resolveSharedPantheonRoot, resolveToolCwd } from './tool-context.ts'
 import type { PantheonToolDef, PantheonToolResult } from './tools.ts'
@@ -123,10 +123,14 @@ const VALID_TAGS: ReadonlySet<BoardMessageTag> = new Set([
 
 const QUEUE_KEY = '__pantheonBoardMessageQueues'
 const SEQ_CACHE_KEY = '__pantheonBoardMessageSeqCache'
+const IDENTITY_REGISTRY_KEY = '__pantheonBoardIdentityRegistry'
+const MENTION_WAKEUP_KEY = '__pantheonBoardMentionWakeups'
+const MENTION_WAKEUP_BUS_UNSUB_KEY = '__pantheonBoardMentionWakeupBusUnsub'
 const DEFAULT_CHANNEL = 'swarm'
 const DEFAULT_THREAD_ID = 'main'
 const DEFAULT_READ_LIMIT = 20
 const MAX_READ_LIMIT = 100
+const DEFAULT_WAIT_TIMEOUT_MS = 30_000
 
 function getWriteQueues(): Map<string, Promise<unknown>> {
   const host = globalThis as { [QUEUE_KEY]?: Map<string, Promise<unknown>> }
@@ -142,6 +146,101 @@ function getSeqCache(): Map<string, number> {
   const map = new Map<string, number>()
   host[SEQ_CACHE_KEY] = map
   return map
+}
+
+function getIdentityRegistry(): Map<string, string> {
+  const host = globalThis as { [IDENTITY_REGISTRY_KEY]?: Map<string, string> }
+  if (host[IDENTITY_REGISTRY_KEY] instanceof Map) return host[IDENTITY_REGISTRY_KEY]
+  const map = new Map<string, string>()
+  host[IDENTITY_REGISTRY_KEY] = map
+  return map
+}
+
+/** Register a non-falsifiable `sessionID -> role` identity for `pantheon_board` posts. */
+export function registerBoardIdentity(sessionID: string, role: string): void {
+  const sid = typeof sessionID === 'string' ? sessionID.trim() : ''
+  const normalizedRole = typeof role === 'string' ? normalizeAgentToken(role) : ''
+  if (!sid || !normalizedRole) return
+  getIdentityRegistry().set(sid, normalizedRole)
+}
+
+/** Unregister a session's board identity. */
+export function unregisterBoardIdentity(sessionID: string): void {
+  const sid = typeof sessionID === 'string' ? sessionID.trim() : ''
+  if (!sid) return
+  getIdentityRegistry().delete(sid)
+}
+
+/** Resolve the registered board role for `sessionID`, if any. */
+export function resolveBoardIdentity(sessionID: string): string | undefined {
+  const sid = typeof sessionID === 'string' ? sessionID.trim() : ''
+  if (!sid) return undefined
+  return getIdentityRegistry().get(sid)
+}
+
+export type BoardMentionWakeupFn = (event: BoardMessageEventPayload) => void | Promise<void>
+
+interface MentionWakeupEntry {
+  readonly sessionID: string
+  readonly role: string
+  readonly wakeFn: BoardMentionWakeupFn
+}
+
+function getMentionWakeupRegistry(): Map<string, MentionWakeupEntry> {
+  const host = globalThis as { [MENTION_WAKEUP_KEY]?: Map<string, MentionWakeupEntry> }
+  if (host[MENTION_WAKEUP_KEY] instanceof Map) return host[MENTION_WAKEUP_KEY]
+  const map = new Map<string, MentionWakeupEntry>()
+  host[MENTION_WAKEUP_KEY] = map
+  return map
+}
+
+function ensureMentionWakeupBusListener(): void {
+  const host = globalThis as { [MENTION_WAKEUP_BUS_UNSUB_KEY]?: (() => void) | null }
+  if (host[MENTION_WAKEUP_BUS_UNSUB_KEY]) return
+  const bus = getSharedBus()
+  host[MENTION_WAKEUP_BUS_UNSUB_KEY] = bus.on('board:message', (ev) => {
+    const registry = getMentionWakeupRegistry()
+    if (registry.size === 0) return
+    const sender = normalizeAgentToken(ev.from)
+    for (const entry of Array.from(registry.values())) {
+      if (sender && sender === entry.role) continue
+      if (!ev.mentions.includes(entry.role) && !ev.mentions.includes('all')) continue
+      try {
+        const res = entry.wakeFn(ev)
+        if (res instanceof Promise) {
+          res.catch(() => {})
+        }
+      } catch {
+        /* wake callback errors must not break bus delivery */
+      }
+    }
+  })
+}
+
+/** Register a reactive `@mention` / `@all` wakeup callback for an idle sub-session. */
+export function registerBoardMentionWakeup(
+  sessionID: string,
+  role: string,
+  wakeFn: BoardMentionWakeupFn,
+): void {
+  const sid = typeof sessionID === 'string' ? sessionID.trim() : ''
+  const normalizedRole = typeof role === 'string' ? normalizeAgentToken(role) : ''
+  if (!sid || !normalizedRole || typeof wakeFn !== 'function') return
+  getMentionWakeupRegistry().set(sid, { sessionID: sid, role: normalizedRole, wakeFn })
+  ensureMentionWakeupBusListener()
+}
+
+/** Unregister a session's reactive `@mention` wakeup callback. */
+export function unregisterBoardMentionWakeup(sessionID: string): void {
+  const sid = typeof sessionID === 'string' ? sessionID.trim() : ''
+  if (!sid) return
+  const registry = getMentionWakeupRegistry()
+  registry.delete(sid)
+  if (registry.size === 0) {
+    const host = globalThis as { [MENTION_WAKEUP_BUS_UNSUB_KEY]?: (() => void) | null }
+    host[MENTION_WAKEUP_BUS_UNSUB_KEY]?.()
+    host[MENTION_WAKEUP_BUS_UNSUB_KEY] = null
+  }
 }
 
 function enqueueSerialized<T>(key: string, task: () => Promise<T>): Promise<T> {
@@ -613,18 +712,124 @@ export function getBoardStatus(
   return { head, channels, threads, activeJobs, recentAlerts }
 }
 
+export interface WaitBoardMessagesOptions {
+  readonly since?: number
+  readonly mentions_only?: boolean
+  readonly timeoutMs?: number
+  readonly channel?: string
+  readonly target?: string
+}
+
+export interface WaitBoardMessagesResult {
+  readonly timedOut: boolean
+  readonly head: number
+  readonly messages: BoardMessage[]
+}
+
+/**
+ * Reactively wait on `PantheonBus` (`board:message`) for a matching message
+ * without polling, resolving immediately if one already exists with `seq > since`.
+ */
+export function waitForBoardMessages(
+  workspaceDir: string,
+  options: WaitBoardMessagesOptions = {},
+): Promise<WaitBoardMessagesResult> {
+  const channelFilter =
+    typeof options.channel === 'string' && options.channel.trim()
+      ? options.channel.trim()
+      : undefined
+  const targetToken =
+    typeof options.target === 'string' && options.target.trim()
+      ? normalizeAgentToken(options.target)
+      : undefined
+  const mentionsOnly = options.mentions_only !== false
+  const mentionFilter = mentionsOnly ? targetToken : undefined
+  const timeoutMs =
+    typeof options.timeoutMs === 'number' &&
+    Number.isFinite(options.timeoutMs) &&
+    options.timeoutMs >= 0
+      ? options.timeoutMs
+      : DEFAULT_WAIT_TIMEOUT_MS
+
+  const initialHead = readBoardMessages(workspaceDir, { limit: 1 }).head
+  const effectiveSince =
+    typeof options.since === 'number' && Number.isInteger(options.since) && options.since >= 0
+      ? options.since
+      : initialHead
+
+  return new Promise((resolveWait) => {
+    let settled = false
+    let timer: NodeJS.Timeout | null = null
+    let unsubscribe: (() => void) | null = null
+
+    const finish = (result: WaitBoardMessagesResult): void => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      unsubscribe?.()
+      resolveWait(result)
+    }
+
+    const matchesEvent = (ev: BoardMessageEventPayload): boolean => {
+      if (ev.seq <= effectiveSince) return false
+      if (channelFilter !== undefined && ev.channel !== channelFilter) return false
+      if (
+        mentionFilter !== undefined &&
+        !ev.mentions.includes(mentionFilter) &&
+        !ev.mentions.includes('all')
+      ) {
+        return false
+      }
+      return true
+    }
+
+    // Subscribe before checking disk so concurrent posts cannot slip between check and listen.
+    unsubscribe = getSharedBus().on('board:message', (ev) => {
+      if (!matchesEvent(ev)) return
+      const result = readBoardMessages(workspaceDir, {
+        since: effectiveSince,
+        ...(channelFilter !== undefined ? { channel: channelFilter } : {}),
+        ...(mentionFilter !== undefined ? { mention: mentionFilter } : {}),
+      })
+      if (result.messages.length > 0) {
+        finish({ timedOut: false, head: result.head, messages: result.messages })
+      }
+    })
+
+    const existing = readBoardMessages(workspaceDir, {
+      since: effectiveSince,
+      ...(channelFilter !== undefined ? { channel: channelFilter } : {}),
+      ...(mentionFilter !== undefined ? { mention: mentionFilter } : {}),
+    })
+    if (existing.messages.length > 0) {
+      finish({ timedOut: false, head: existing.head, messages: existing.messages })
+      return
+    }
+
+    if (timeoutMs === 0) {
+      finish({ timedOut: true, head: existing.head, messages: [] })
+      return
+    }
+
+    timer = setTimeout(() => {
+      const currentHead = readBoardMessages(workspaceDir, { limit: 1 }).head
+      finish({ timedOut: true, head: currentHead, messages: [] })
+    }, timeoutMs)
+  })
+}
+
 function jsonResult(payload: unknown): PantheonToolResult {
   return { output: JSON.stringify(payload) }
 }
 
-/** Expose `pantheon_board` tool (`post | read | status | channel`) for V2 agents. */
+/** Expose `pantheon_board` tool (`post | read | status | channel | wait`) for V2 agents. */
 export function createBoardTool(fallbackDir?: string): PantheonToolDef {
   return {
     name: 'pantheon_board',
     description:
-      'Persistent #seq-indexed Swarm & Council Board (actions: post | read | status | channel). ' +
+      'Persistent #seq-indexed Swarm & Council Board (actions: post | read | status | channel | wait). ' +
       'Supports @mentions, replyToSeq citations, semantic tags ([claim], [handoff], [question], ' +
-      '[rebuttal], [consensus], [deadlock], [done], [blocker], [alert], [note]), and thread metadata.',
+      '[rebuttal], [consensus], [deadlock], [done], [blocker], [alert], [note]), reactive wait, and thread metadata.',
     input: {
       type: 'object',
       additionalProperties: false,
@@ -632,7 +837,7 @@ export function createBoardTool(fallbackDir?: string): PantheonToolDef {
       properties: {
         action: {
           type: 'string',
-          enum: ['post', 'read', 'status', 'channel'],
+          enum: ['post', 'read', 'status', 'channel', 'wait'],
           description: 'Board operation to execute',
         },
         body: { type: 'string', description: 'Message content for action=post' },
@@ -677,7 +882,7 @@ export function createBoardTool(fallbackDir?: string): PantheonToolDef {
         since: {
           type: 'integer',
           minimum: 0,
-          description: 'Return messages with seq > since (for action=read)',
+          description: 'Return messages with seq > since (for action=read or action=wait)',
         },
         seqs: {
           type: 'array',
@@ -694,6 +899,19 @@ export function createBoardTool(fallbackDir?: string): PantheonToolDef {
           maximum: 100,
           description: 'Maximum messages to return (1..100, default 20)',
         },
+        mentions_only: {
+          type: 'boolean',
+          description: 'For action=wait: wake only on @target or @all mentions (default true)',
+        },
+        timeoutMs: {
+          type: 'integer',
+          minimum: 0,
+          description: 'For action=wait: maximum milliseconds to wait before timing out',
+        },
+        target: {
+          type: 'string',
+          description: 'For action=wait: target agent role to match @mentions against',
+        },
       },
     },
     output: {},
@@ -705,12 +923,18 @@ export function createBoardTool(fallbackDir?: string): PantheonToolDef {
           typeof (context as { agent?: unknown } | null | undefined)?.agent === 'string'
             ? (context as { agent: string }).agent.trim() || 'unknown'
             : 'unknown'
+        const ctxSessionID =
+          typeof (context as { sessionID?: unknown } | null | undefined)?.sessionID === 'string'
+            ? (context as { sessionID: string }).sessionID.trim()
+            : ''
+        const registeredRole = ctxSessionID ? resolveBoardIdentity(ctxSessionID) : undefined
 
         if (action === 'post') {
           const body = typeof input.body === 'string' ? input.body.trim() : ''
           if (!body) return jsonResult({ ok: false, error: 'body is required for action=post' })
           const from =
-            typeof input.from === 'string' && input.from.trim() ? input.from.trim() : ctxAgent
+            registeredRole ??
+            (typeof input.from === 'string' && input.from.trim() ? input.from.trim() : ctxAgent)
           const to = Array.isArray(input.to)
             ? input.to.filter((x): x is string => typeof x === 'string')
             : undefined
@@ -749,6 +973,25 @@ export function createBoardTool(fallbackDir?: string): PantheonToolDef {
               : {}),
           })
           return jsonResult({ ok: true, ...result })
+        }
+
+        if (action === 'wait') {
+          const target =
+            typeof input.target === 'string' && input.target.trim()
+              ? input.target.trim()
+              : (registeredRole ?? (ctxAgent !== 'unknown' ? ctxAgent : undefined))
+          const waitResult = await waitForBoardMessages(cwd, {
+            ...(typeof input.since === 'number' && Number.isInteger(input.since)
+              ? { since: input.since }
+              : {}),
+            ...(typeof input.mentions_only === 'boolean'
+              ? { mentions_only: input.mentions_only }
+              : {}),
+            ...(typeof input.timeoutMs === 'number' ? { timeoutMs: input.timeoutMs } : {}),
+            ...(typeof input.channel === 'string' ? { channel: input.channel } : {}),
+            ...(target !== undefined ? { target } : {}),
+          })
+          return jsonResult({ ok: true, ...waitResult })
         }
 
         if (action === 'status') {
