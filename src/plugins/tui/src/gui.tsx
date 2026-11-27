@@ -173,6 +173,8 @@ interface CockpitEvent {
   type?: string
   timestamp: number
   agent?: string
+  baseAgent?: string
+  role?: string
   status?: string
   detail?: string
   severity?: string
