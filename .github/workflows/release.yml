@@ -693,6 +693,38 @@ jobs:
           RELEASE_TAG: ${{ inputs.recovery_version != '' && 'beta' || inputs.release_channel == 'beta' && 'beta' || 'latest' }}
         run: npm publish "$PACKAGE" --ignore-scripts --tag "$RELEASE_TAG" --access public --provenance --registry https://registry.npmjs.org
 
+      # `npm publish` exits before the registry serves the new version
+      # document, so reconciling dist-tags immediately can fail on a write the
+      # registry is not ready to accept (observed as a spurious E401 0.69 s
+      # after a successful publish). Wait for the exact version to resolve.
+      - name: Wait for npm registry visibility
+        if: steps.idem.outputs.npm_exists != 'true'
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+          TARGET_VER="${VERSION#v}"
+          REGISTRY="https://registry.npmjs.org"
+          ATTEMPTS=120
+          INTERVAL=5
+          LAST_RESPONSE=''
+          attempt=1
+          while [ "$attempt" -le "$ATTEMPTS" ]; do
+            if LAST_RESPONSE=$(npm view "pantheon-opencode@${TARGET_VER}" version --json --registry "$REGISTRY" 2>&1); then
+              SERVED=$(printf '%s' "$LAST_RESPONSE" | tr -d '"[:space:]')
+              if [ "$SERVED" = "$TARGET_VER" ]; then
+                echo "npm registry serves pantheon-opencode@${TARGET_VER} (attempt ${attempt}/${ATTEMPTS})."
+                exit 0
+              fi
+            fi
+            attempt=$((attempt + 1))
+            if [ "$attempt" -le "$ATTEMPTS" ]; then
+              sleep "$INTERVAL"
+            fi
+          done
+          echo "::error::pantheon-opencode@${TARGET_VER} was still not resolvable on the npm registry after ${ATTEMPTS} attempts (~$((ATTEMPTS * INTERVAL))s). Last registry response: ${LAST_RESPONSE}"
+          exit 1
+
       - name: Reconcile and assert npm dist-tags
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -702,6 +734,39 @@ jobs:
           set -euo pipefail
           TARGET_VER="${VERSION#v}"
           REGISTRY="https://registry.npmjs.org"
+          # Dist-tag writes right after a publish can transiently fail with
+          # E401/E404/E409 while the registry finishes accepting the version.
+          # Retry those only when the version is confirmed present, and let
+          # every other failure surface immediately.
+          retryable_error() {
+            case "$1" in
+              *E401*|*E404*|*E409*) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+          version_present() {
+            npm view "pantheon-opencode@${TARGET_VER}" version --json --registry "$REGISTRY" >/dev/null 2>&1
+          }
+          dist_tag_write() {
+            local attempt=1
+            local output=''
+            while [ "$attempt" -le 5 ]; do
+              if output=$("$@" 2>&1); then
+                return 0
+              fi
+              if retryable_error "$output" && version_present; then
+                if [ "$attempt" -lt 5 ]; then
+                  echo "npm $* failed with a retryable registry error (attempt ${attempt}/5); retrying in 5s: ${output}" >&2
+                  sleep 5
+                  attempt=$((attempt + 1))
+                  continue
+                fi
+              fi
+              echo "::error::npm $* failed: ${output}" >&2
+              return 1
+            done
+            return 1
+          }
           BEFORE_JSON=$(npm view pantheon-opencode dist-tags --json --registry "$REGISTRY")
           ACTIONS=$(BEFORE_JSON="$BEFORE_JSON" TARGET_VER="$TARGET_VER" RELEASE_TAG="$RELEASE_TAG" node <<'NODE'
           const tags = JSON.parse(process.env.BEFORE_JSON || '{}');
@@ -736,9 +801,9 @@ jobs:
             OP=${line%% *}
             TAG=${line#* }
             if [ "$OP" = "add" ]; then
-              npm dist-tag add "pantheon-opencode@${TARGET_VER}" "$TAG" --registry "$REGISTRY"
+              dist_tag_write npm dist-tag add "pantheon-opencode@${TARGET_VER}" "$TAG" --registry "$REGISTRY"
             elif [ "$OP" = "rm" ]; then
-              npm dist-tag rm pantheon-opencode "$TAG" --registry "$REGISTRY"
+              dist_tag_write npm dist-tag rm pantheon-opencode "$TAG" --registry "$REGISTRY"
             fi
           done <<< "$ACTIONS"
           AFTER_JSON=$(npm view pantheon-opencode dist-tags --json --registry "$REGISTRY")
