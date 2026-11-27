@@ -313,6 +313,19 @@ Two consequences a maintainer must know before touching it:
   gate. Update both overrides, regenerate both locks, rebuild `dist`, and
   review the generated diff together.
 
+`tsdown` stayed at `0.23.0` in the 2.3.4 dependency refresh on purpose. Every
+later release needs a newer Rolldown, verified with
+`npm view tsdown@<v> dependencies.rolldown`: `0.23.1` → `~1.2.13`, `0.23.2`–`0.23.4`
+→ `~1.2.15`, `0.23.5` → `~1.2.16`, `0.23.7` → `~1.3.0`. The pinned `1.2.7`
+satisfies none of those, so bumping `tsdown` is a four-part change: both
+manifests, both locks, the committed `dist` (the 0.23.7 declaration bundler adds
+`/** @jsxImportSource @opentui/solid */` to `tui.d.ts` and constant-folds ~79
+lines of `tui.js`), and the `want='1.2.7'` literal in the
+`Assert rolldown override resolved to the pinned version` step in
+`.github/workflows/ci.yml`. The 0.23.7 + `rolldown@1.3.4` build itself was
+verified green (`tsc` + `tsdown` both pass); only the CI literal and the dist
+churn block it, and those belong in a toolchain PR, not a dependency refresh.
+
 ## TUI production security overrides
 
 The root and standalone TUI manifests override `@babel/core` to `7.29.7`
