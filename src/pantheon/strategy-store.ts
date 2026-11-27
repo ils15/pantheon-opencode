@@ -765,8 +765,11 @@ export function pruneStrategyRuns(
 
     db.exec('BEGIN IMMEDIATE')
     try {
+      // `created_at` is always canonical ISO-8601 UTC (normalized on write), so a
+      // lexicographic comparison is order-equivalent to the julian day and lets
+      // idx_strategy_runs_created answer the age window instead of scanning.
       const byAge = db
-        .prepare('DELETE FROM strategy_runs WHERE julianday(created_at) < julianday(?)')
+        .prepare('DELETE FROM strategy_runs WHERE created_at < ?')
         .run(cutoff)
       const remainingAfterAge = Number(
         (db.prepare('SELECT count(*) AS n FROM strategy_runs').get() as { n?: number })?.n ?? 0,

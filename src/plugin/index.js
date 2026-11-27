@@ -17145,7 +17145,7 @@ function pruneStrategyRuns(workspaceDir, options = {}) {
     const cutoff = new Date(now.getTime() - retention.maxAgeDays * DAY_MS).toISOString();
     db.exec("BEGIN IMMEDIATE");
     try {
-      const byAge = db.prepare("DELETE FROM strategy_runs WHERE julianday(created_at) < julianday(?)").run(cutoff);
+      const byAge = db.prepare("DELETE FROM strategy_runs WHERE created_at < ?").run(cutoff);
       const remainingAfterAge = Number(
         db.prepare("SELECT count(*) AS n FROM strategy_runs").get()?.n ?? 0
       );
@@ -18024,7 +18024,9 @@ function recordStepStrategyOutcome(workspaceDir, ledger, entry, params) {
     taskType: entry.taskType ?? null,
     stepKey: entry.stepKey,
     wave: waveIndex,
-    sliceCount: entry.mutatedFiles.length,
+    // Slice count is not tracked by the ledger; reporting mutated files as
+    // "slices" would be a fabricated metric, so it stays unknown.
+    sliceCount: null,
     parallel,
     durationMs: entry.lastMutationAt !== null ? Math.max(0, params.now - entry.lastMutationAt) : null,
     filesTouched: entry.mutatedFiles.length,

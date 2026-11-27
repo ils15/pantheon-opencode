@@ -15,9 +15,6 @@ import {
   pruneStrategyRuns,
   queryStrategies,
   recordStrategyRunSafe,
-  resolveRetentionPolicy,
-  resolveStrategyPolicy,
-  type StrategyQueryHit,
   type StrategyRunInput,
   type StrategyStatus,
   strategyStats,
@@ -174,13 +171,3 @@ export function createStrategyTool(fallbackDir?: string): PantheonToolDef {
     },
   }
 }
-
-/** Exported for tests and docs that need the resolved knobs without a DB. */
-export function describeStrategyPolicy(env: NodeJS.ProcessEnv = process.env): {
-  policy: ReturnType<typeof resolveStrategyPolicy>
-  retention: ReturnType<typeof resolveRetentionPolicy>
-} {
-  return { policy: resolveStrategyPolicy(env), retention: resolveRetentionPolicy(env) }
-}
-
-export type { StrategyQueryHit }

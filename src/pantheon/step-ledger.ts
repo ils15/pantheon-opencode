@@ -861,7 +861,9 @@ function recordStepStrategyOutcome(
     taskType: entry.taskType ?? null,
     stepKey: entry.stepKey,
     wave: waveIndex,
-    sliceCount: entry.mutatedFiles.length,
+    // Slice count is not tracked by the ledger; reporting mutated files as
+    // "slices" would be a fabricated metric, so it stays unknown.
+    sliceCount: null,
     parallel,
     durationMs:
       entry.lastMutationAt !== null ? Math.max(0, params.now - entry.lastMutationAt) : null,

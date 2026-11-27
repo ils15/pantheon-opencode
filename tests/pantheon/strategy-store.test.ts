@@ -248,6 +248,21 @@ test('S4-2 three successes promote to proven, three failures above 0.6 become an
     assert.equal(policy.promotionMinSource, 'default')
   })
 
+  // Failure == 0.6 exactly is NOT an anti-pattern (> 0.6 is the rule).
+  const boundaryFailure = 'edge-failure-0.6'
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    recordStrategyRun(dir, {
+      strategyId: boundaryFailure,
+      agent: 'athena',
+      success: attempt <= 2,
+      createdAt: iso(now),
+    })
+  }
+  assert.equal(
+    queryStrategies(dir, { strategyId: boundaryFailure, now }).results[0]?.status,
+    'candidate',
+  )
+
   // Pure ladder: mutually exclusive by construction, candidate below 3 attempts.
   const policy = resolveStrategyPolicy({})
   assert.equal(computeEffectiveStatus(3, 3, policy), 'proven')
@@ -256,10 +271,10 @@ test('S4-2 three successes promote to proven, three failures above 0.6 become an
 
   // Aggregate rows survive as one per (strategy_id, agent).
   const stats = strategyStats(dir, { now })
-  assert.equal(stats.strategies, 4)
+  assert.equal(stats.strategies, 5)
   assert.equal(stats.by_status.proven, 2)
   assert.equal(stats.by_status.anti_pattern, 1)
-  assert.equal(stats.by_status.candidate, 1)
+  assert.equal(stats.by_status.candidate, 2)
 })
 
 // ── S4-3: decay ───────────────────────────────────────────────────────────
