@@ -39,6 +39,44 @@ test('Criterion 2: mapFileToSlice identifies mapping gaps with bounded fallback'
   assert.match(gap.selection, /mapping gap/)
 })
 
+test('Criterion 1: contract-coupled files map to the test that asserts about them', () => {
+  // These files are pinned by a differently-named contract test; without the
+  // table the selector reports a gap and falls back to the repo suite (which is
+  // how the PR #508 workflow/hook/packaging contract failures slipped through).
+  assert.deepEqual(mapFileToSlice('.github/workflows/ci.yml'), {
+    command: 'node --test tests/ci-workflow-fail-closed.test.mjs',
+    testFile: null,
+    type: 'contract-slice',
+    selection:
+      'contract slice for .github/workflows/ci.yml: workflow contract (fail-closed CI assertions)',
+  })
+  assert.equal(
+    mapFileToSlice('scripts/check-generated-hook.mjs').command,
+    'node --test tests/generated-artifacts-drift.test.mjs',
+  )
+  assert.equal(
+    mapFileToSlice('.pre-commit-config.yaml').command,
+    'node --test tests/generated-artifacts-drift.test.mjs',
+  )
+  assert.equal(
+    mapFileToSlice('scripts/check-tui-dist.mjs').command,
+    'node --test tests/ci-workflow-fail-closed.test.mjs',
+  )
+  assert.equal(
+    mapFileToSlice('scripts/hooks/check-pantheon-runtime-staged.mjs').command,
+    'node --test tests/pantheon/precommit-runtime-guard.test.mjs',
+  )
+  assert.equal(
+    mapFileToSlice('scripts/verify-step-ledger-mutations.mjs').command,
+    'node scripts/redaction-gate.mjs scripts/verify-step-ledger-mutations.mjs',
+  )
+  // A single contract-mapped file is not filtered out by extension.
+  assert.equal(
+    resolveTestSlice(['.github/workflows/ci.yml']).command,
+    'node --test tests/ci-workflow-fail-closed.test.mjs',
+  )
+})
+
 test('Criterion 1 & 2: resolveTestSlice uses repo selector when multiple files change', () => {
   const plan = resolveTestSlice(['src/foo.ts', 'src/bar.ts', 'src/baz.ts'])
   assert.equal(plan.type, 'repo-selector')
