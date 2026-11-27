@@ -6,7 +6,7 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
 });
 
 // src/plugin.ts
-import { appendFileSync as appendFileSync3, existsSync as existsSync26, mkdirSync as mkdirSync15, readdirSync as readdirSync8, readFileSync as readFileSync22 } from "node:fs";
+import { appendFileSync as appendFileSync3, existsSync as existsSync27, mkdirSync as mkdirSync15, readdirSync as readdirSync8, readFileSync as readFileSync22 } from "node:fs";
 import { realpath as realpathAsync } from "node:fs/promises";
 import path5 from "node:path";
 import { fileURLToPath as fileURLToPath6 } from "node:url";
@@ -14548,14 +14548,35 @@ async function runAtomicStepSubSession(input) {
         `objective: ${objective}`,
         `Finish verification via pantheon_step_ledger(action="record_verification") and complete via pantheon_step_ledger(action="complete_step", stepKey="${stepKey}").`
       ].join("\n");
-      await sessionDomain.prompt({
-        sessionID: activeSessionId,
-        text: text2,
-        agents: [{ name: agent }],
-        resume: true
+      const remainingMs = Math.max(1, wallClockMs - (Date.now() - startedAt));
+      const runTurn = async () => {
+        await sessionDomain.prompt?.({
+          sessionID: activeSessionId,
+          text: text2,
+          agents: [{ name: agent }],
+          resume: true
+        });
+        if (typeof sessionDomain.wait === "function") {
+          await sessionDomain.wait({ sessionID: activeSessionId });
+        }
+        return "ok";
+      };
+      let timerId;
+      const turnOutcome = await Promise.race([
+        runTurn(),
+        new Promise((resolve25) => {
+          timerId = setTimeout(() => resolve25("timeout"), remainingMs);
+          if (typeof timerId === "object" && "unref" in timerId) timerId.unref();
+        })
+      ]).finally(() => {
+        if (timerId !== void 0) clearTimeout(timerId);
       });
-      if (typeof sessionDomain.wait === "function") {
-        await sessionDomain.wait({ sessionID: activeSessionId });
+      if (turnOutcome === "timeout") {
+        await sessionDomain.abort?.({ sessionID: activeSessionId }).catch(() => {
+        });
+        haltedReason = "wall_clock_exceeded";
+        haltError = `wall-clock timeout exceeded (${Date.now() - startedAt}ms >= ${wallClockMs}ms)`;
+        break;
       }
       const snapshot = readStepLedger(ledgerRoot).steps[stepKey];
       const isTerminal = snapshot?.state === "done" || snapshot?.state === "blocked" || snapshot?.state === "rolled_back";
@@ -15781,6 +15802,23 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
           };
           store2.steps[key] = entry;
           writeStepLedger(cwd, store2);
+          const ownedFiles = Array.isArray(input.ownedFiles) ? input.ownedFiles.filter(
+            (f) => typeof f === "string" && f.trim().length > 0
+          ) : [];
+          const forbiddenFiles = Array.isArray(input.forbiddenFiles) ? input.forbiddenFiles.filter(
+            (f) => typeof f === "string" && f.trim().length > 0
+          ) : [];
+          const callerSid = typeof context?.sessionID === "string" ? context.sessionID : void 0;
+          const leaseHook = globalThis.__pantheonFileLeases;
+          if (callerSid && leaseHook?.acquireFileLease && (ownedFiles.length > 0 || forbiddenFiles.length > 0)) {
+            await leaseHook.acquireFileLease({
+              sessionID: callerSid,
+              holder: agent,
+              ownedFiles,
+              forbiddenFiles,
+              cwd
+            });
+          }
           return jsonResult3({ ok: true, step: entry });
         }
         if (action === "execute_step") {
@@ -15893,6 +15931,11 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             step.updatedAt = nowIso;
             writeStepLedger(cwd, store2);
           }
+          const callerSidRb = typeof context?.sessionID === "string" ? context.sessionID : void 0;
+          const releaseHookRb = globalThis.__pantheonFileLeases?.releaseFileLease;
+          if (callerSidRb && releaseHookRb) {
+            await releaseHookRb({ sessionID: callerSidRb, holder: step.agent });
+          }
           getSharedBus().emit("step:rollback", {
             stepKey: key,
             reason: "manual_rollback_step",
@@ -15975,6 +16018,11 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
           step.state = "done";
           step.updatedAt = nowIso;
           writeStepLedger(cwd, store2);
+          const callerSidDone = typeof context?.sessionID === "string" ? context.sessionID : void 0;
+          const releaseHookDone = globalThis.__pantheonFileLeases?.releaseFileLease;
+          if (callerSidDone && releaseHookDone) {
+            await releaseHookDone({ sessionID: callerSidDone, holder: step.agent });
+          }
           return jsonResult3({ ok: true, status: "done", receiptId: step.receiptId, step });
         }
         return jsonResult3({ ok: false, error: `Unsupported action: ${action}` });
@@ -17201,6 +17249,7 @@ var TodoEnforcer = class {
 
 // src/pantheon/tools.ts
 import { exec } from "node:child_process";
+import { existsSync as existsSync26 } from "node:fs";
 import { promisify as promisify6 } from "node:util";
 
 // src/pantheon/agent-forge-tool.ts
@@ -23489,6 +23538,20 @@ var todoreadTool = {
 };
 var execAsync = promisify6(exec);
 var SHELL_TIMEOUT_MS = 12e4;
+function resolveShellBin() {
+  if (process.platform === "win32") {
+    const gitBashCandidates = [
+      "C:\\Program Files\\Git\\bin\\bash.exe",
+      "C:\\Program Files (x86)\\Git\\bin\\bash.exe"
+    ];
+    for (const candidate of gitBashCandidates) {
+      if (existsSync26(candidate)) return candidate;
+    }
+    return process.env.COMSPEC || "cmd.exe";
+  }
+  return existsSync26("/bin/bash") ? "/bin/bash" : "/bin/sh";
+}
+var SHELL_BIN = resolveShellBin();
 var SHELL_INPUT = {
   type: "object",
   required: ["command"],
@@ -23527,7 +23590,7 @@ function createShellTool(fallbackDir) {
           cwd,
           maxBuffer: 10 * 1024 * 1024,
           timeout: SHELL_TIMEOUT_MS,
-          shell: "/bin/bash"
+          shell: SHELL_BIN
         });
         const output = [stdout, stderr].filter(Boolean).join("\n");
         return { output, ok: true };
@@ -23780,7 +23843,7 @@ function readCanonicalRoster() {
       path5.join(process.cwd(), "src", "agents", "roster.json")
     ];
     for (const p of candidates) {
-      if (existsSync26(p)) {
+      if (existsSync27(p)) {
         const raw = readFileSync22(p, "utf8");
         const data = JSON.parse(raw);
         if (data && typeof data.agents === "object") return data.agents;
@@ -23958,7 +24021,7 @@ function resolveCanonicalCommandsDir() {
     path5.join(activeHostWorkspaceDir ?? process.cwd(), "src", "commands")
   ];
   for (const candidate of candidates) {
-    if (existsSync26(candidate)) return candidate;
+    if (existsSync27(candidate)) return candidate;
   }
   return void 0;
 }
@@ -23967,7 +24030,7 @@ function readCanonicalCommandTemplate(commandName, fallbackDescription) {
     const dir = resolveCanonicalCommandsDir();
     if (dir) {
       const mdPath = path5.join(dir, `${commandName}.md`);
-      if (existsSync26(mdPath)) {
+      if (existsSync27(mdPath)) {
         const raw = readFileSync22(mdPath, "utf8");
         const body = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
         if (body) return body;
@@ -24059,7 +24122,7 @@ function transformReferences(draft) {
     fileURLToPath6(new URL("../../AGENTS.md", import.meta.url)),
     fileURLToPath6(new URL("../../../AGENTS.md", import.meta.url))
   ];
-  const resolvedPath = candidates.find((p) => existsSync26(p)) ?? fileURLToPath6(new URL("../AGENTS.md", import.meta.url));
+  const resolvedPath = candidates.find((p) => existsSync27(p)) ?? fileURLToPath6(new URL("../AGENTS.md", import.meta.url));
   draft.add("pantheon-agents", {
     type: "local",
     path: resolvedPath,
@@ -24076,7 +24139,7 @@ function resolveCanonicalSkillsDir() {
     path5.join(activeHostWorkspaceDir ?? process.cwd(), "src", "skills")
   ];
   for (const candidate of candidates) {
-    if (existsSync26(candidate)) return candidate;
+    if (existsSync27(candidate)) return candidate;
   }
   return void 0;
 }
@@ -24107,7 +24170,7 @@ function transformSkills(draft) {
         if (!entry.isDirectory()) continue;
         const skillId = entry.name;
         const skillMdPath = path5.join(skillsDir, skillId, "SKILL.md");
-        if (!existsSync26(skillMdPath)) continue;
+        if (!existsSync27(skillMdPath)) continue;
         try {
           if (typeof editor.get === "function" && editor.get(skillId)) continue;
           const content = readFileSync22(skillMdPath, "utf8");

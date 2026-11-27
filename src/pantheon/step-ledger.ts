@@ -346,6 +346,46 @@ export function createStepLedgerTool(
           }
           store.steps[key] = entry
           writeStepLedger(cwd, store)
+          const ownedFiles = Array.isArray(input.ownedFiles)
+            ? input.ownedFiles.filter(
+                (f): f is string => typeof f === 'string' && f.trim().length > 0,
+              )
+            : []
+          const forbiddenFiles = Array.isArray(input.forbiddenFiles)
+            ? input.forbiddenFiles.filter(
+                (f): f is string => typeof f === 'string' && f.trim().length > 0,
+              )
+            : []
+          const callerSid =
+            typeof (context as { sessionID?: unknown } | undefined)?.sessionID === 'string'
+              ? (context as { sessionID: string }).sessionID
+              : undefined
+          const leaseHook = (
+            globalThis as {
+              __pantheonFileLeases?: {
+                acquireFileLease?: (opts: {
+                  sessionID: string
+                  holder: string
+                  ownedFiles?: readonly string[]
+                  forbiddenFiles?: readonly string[]
+                  cwd?: string
+                }) => Promise<void> | void
+              }
+            }
+          ).__pantheonFileLeases
+          if (
+            callerSid &&
+            leaseHook?.acquireFileLease &&
+            (ownedFiles.length > 0 || forbiddenFiles.length > 0)
+          ) {
+            await leaseHook.acquireFileLease({
+              sessionID: callerSid,
+              holder: agent,
+              ownedFiles,
+              forbiddenFiles,
+              cwd,
+            })
+          }
           return jsonResult({ ok: true, step: entry })
         }
 
@@ -523,6 +563,23 @@ export function createStepLedgerTool(
             step.updatedAt = nowIso
             writeStepLedger(cwd, store)
           }
+          const callerSidRb =
+            typeof (context as { sessionID?: unknown } | undefined)?.sessionID === 'string'
+              ? (context as { sessionID: string }).sessionID
+              : undefined
+          const releaseHookRb = (
+            globalThis as {
+              __pantheonFileLeases?: {
+                releaseFileLease?: (opts: {
+                  sessionID: string
+                  holder: string
+                }) => Promise<void> | void
+              }
+            }
+          ).__pantheonFileLeases?.releaseFileLease
+          if (callerSidRb && releaseHookRb) {
+            await releaseHookRb({ sessionID: callerSidRb, holder: step.agent })
+          }
           getSharedBus().emit('step:rollback', {
             stepKey: key,
             reason: 'manual_rollback_step',
@@ -611,6 +668,23 @@ export function createStepLedgerTool(
           step.state = 'done'
           step.updatedAt = nowIso
           writeStepLedger(cwd, store)
+          const callerSidDone =
+            typeof (context as { sessionID?: unknown } | undefined)?.sessionID === 'string'
+              ? (context as { sessionID: string }).sessionID
+              : undefined
+          const releaseHookDone = (
+            globalThis as {
+              __pantheonFileLeases?: {
+                releaseFileLease?: (opts: {
+                  sessionID: string
+                  holder: string
+                }) => Promise<void> | void
+              }
+            }
+          ).__pantheonFileLeases?.releaseFileLease
+          if (callerSidDone && releaseHookDone) {
+            await releaseHookDone({ sessionID: callerSidDone, holder: step.agent })
+          }
           return jsonResult({ ok: true, status: 'done', receiptId: step.receiptId, step })
         }
 

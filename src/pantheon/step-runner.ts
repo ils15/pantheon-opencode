@@ -31,6 +31,7 @@ export interface SubSessionDomainLike {
     resume?: boolean
   }) => Promise<unknown>
   wait?: (input: { readonly sessionID: string }) => Promise<unknown>
+  abort?: (input: { readonly sessionID: string }) => Promise<unknown>
   messages?: (input: { readonly sessionID: string }) => Promise<unknown>
   remove?: (input: { readonly sessionID: string }) => Promise<unknown>
 }
@@ -461,14 +462,34 @@ export async function runAtomicStepSubSession(
               `Finish verification via pantheon_step_ledger(action="record_verification") and complete via pantheon_step_ledger(action="complete_step", stepKey="${stepKey}").`,
             ].join('\n')
 
-      await sessionDomain.prompt({
-        sessionID: activeSessionId,
-        text,
-        agents: [{ name: agent }],
-        resume: true,
+      const remainingMs = Math.max(1, wallClockMs - (Date.now() - startedAt))
+      const runTurn = async (): Promise<'ok'> => {
+        await sessionDomain.prompt?.({
+          sessionID: activeSessionId,
+          text,
+          agents: [{ name: agent }],
+          resume: true,
+        })
+        if (typeof sessionDomain.wait === 'function') {
+          await sessionDomain.wait({ sessionID: activeSessionId })
+        }
+        return 'ok'
+      }
+      let timerId: ReturnType<typeof setTimeout> | undefined
+      const turnOutcome = await Promise.race([
+        runTurn(),
+        new Promise<'timeout'>((resolve) => {
+          timerId = setTimeout(() => resolve('timeout'), remainingMs)
+          if (typeof timerId === 'object' && 'unref' in timerId) timerId.unref()
+        }),
+      ]).finally(() => {
+        if (timerId !== undefined) clearTimeout(timerId)
       })
-      if (typeof sessionDomain.wait === 'function') {
-        await sessionDomain.wait({ sessionID: activeSessionId })
+      if (turnOutcome === 'timeout') {
+        await sessionDomain.abort?.({ sessionID: activeSessionId }).catch(() => {})
+        haltedReason = 'wall_clock_exceeded'
+        haltError = `wall-clock timeout exceeded (${Date.now() - startedAt}ms >= ${wallClockMs}ms)`
+        break
       }
 
       const snapshot = readStepLedger(ledgerRoot).steps[stepKey]

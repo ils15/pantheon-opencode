@@ -47,6 +47,7 @@
  */
 
 import { exec } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { promisify } from 'node:util'
 import { createAgentForgeTool } from './agent-forge-tool.ts'
 import { createAstTools } from './ast-tools.ts'
@@ -589,6 +590,23 @@ const todoreadTool: V2ToolDef = {
 const execAsync = promisify(exec)
 const SHELL_TIMEOUT_MS = 120_000
 
+/** Resolve a cross-platform shell executable (Git Bash or COMSPEC on Windows, /bin/bash on POSIX). */
+export function resolveShellBin(): string {
+  if (process.platform === 'win32') {
+    const gitBashCandidates = [
+      'C:\\Program Files\\Git\\bin\\bash.exe',
+      'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
+    ]
+    for (const candidate of gitBashCandidates) {
+      if (existsSync(candidate)) return candidate
+    }
+    return process.env.COMSPEC || 'cmd.exe'
+  }
+  return existsSync('/bin/bash') ? '/bin/bash' : '/bin/sh'
+}
+
+const SHELL_BIN = resolveShellBin()
+
 const SHELL_INPUT = {
   type: 'object',
   required: ['command'],
@@ -634,7 +652,7 @@ export function createShellTool(fallbackDir?: string): V2ToolDef {
           cwd,
           maxBuffer: 10 * 1024 * 1024,
           timeout: SHELL_TIMEOUT_MS,
-          shell: '/bin/bash',
+          shell: SHELL_BIN,
         })
         const output = [stdout, stderr].filter(Boolean).join('\n')
         return { output, ok: true }
