@@ -111,6 +111,18 @@ A step may declare prerequisites with `dependsOn`:
   from the current tree), so the step must be re-mutated and re-verified. If the
   entry must be preserved, repair the offending `dependsOn` edge in
   `.pantheon/ledger/step-ledger.json` instead.
+- **Checkpoints never carry runtime state.** `captureGitCheckpoint` writes a
+  temporary-index tree (no commit, no ref — a dangling tree object referenced only
+  by the ledger's `baselineTree`) and drops `.pantheon/` before `write-tree`;
+  `restoreGitCheckpoint` drops it from the index before `checkout-index`, so even a
+  checkpoint written by an older version cannot roll back the ledger, board,
+  memory DB, or deepwork state. Nothing legitimately needs `.pantheon/` inside a
+  checkpoint: the ledger drives the rollback itself, and board/memory/deepwork are
+  append-only runtime records. Checkpoints from before this exclusion can be
+  repaired in place with `pantheon_step_ledger(action="scrub_checkpoints")`
+  (`dryRun: true` reports first): each referenced tree is rewritten without
+  `.pantheon/`, the ledger's `baselineTree` is updated, and the old tree plus its
+  blobs are left unreachable for `git gc` to reclaim.
 - **Concurrency.** The ledger is a single JSON file, so every mutation goes through
   `updateStepLedger`: a lock file `.pantheon/ledger/.step-ledger.lock` holding a
   unique `<pid>:<uuid>` owner token, acquired with `open(..., 'wx')`. A stale lock

@@ -38,7 +38,11 @@ import {
   verifyEphemeralBranches,
 } from './ephemeral-worker.ts'
 import { createExecutionReceipt } from './execution-receipt.ts'
-import { captureGitCheckpoint, restoreGitCheckpoint } from './git-checkpoint.ts'
+import {
+  captureGitCheckpoint,
+  restoreGitCheckpoint,
+  stripPantheonFromTree,
+} from './git-checkpoint.ts'
 import {
   buildDependencyGraph,
   cascadeBlock,
@@ -324,7 +328,8 @@ function acquireLedgerLock(lockPath: string): string {
 
     const observedToken = readLockToken(lockPath)
     if (observedToken !== undefined && lockOwnerPid(observedToken) === process.pid) {
-      throw new Error(
+      throw new StepLedgerLockError(
+        'lock_reentrant',
         `step-ledger lock ${lockPath} is held by this process: re-entrant updateStepLedger is not supported. Move the nested write outside the mutator.`,
       )
     }
@@ -341,7 +346,8 @@ function acquireLedgerLock(lockPath: string): string {
     }
 
     if (Date.now() >= deadline) {
-      throw new Error(
+      throw new StepLedgerLockError(
+        'lock_timeout',
         `step-ledger lock timeout after ${LOCK_WAIT_BUDGET_MS}ms waiting on ${lockPath} (held by pid ${observedToken ?? 'unknown'}). If that writer crashed, remove the file: rm -f ${lockPath}`,
       )
     }
@@ -360,6 +366,20 @@ function releaseLedgerLock(lockPath: string, token: string): void {
 }
 
 /**
+ * Typed lock failure so the tool surface can answer with a structured result
+ * (and a recovery hint) instead of a raw exception.
+ */
+export class StepLedgerLockError extends Error {
+  readonly code: 'lock_lost' | 'lock_timeout' | 'lock_reentrant'
+
+  constructor(code: 'lock_lost' | 'lock_timeout' | 'lock_reentrant', message: string) {
+    super(message)
+    this.name = 'StepLedgerLockError'
+    this.code = code
+  }
+}
+
+/**
  * Re-verify ownership immediately before the write-and-rename commit.
  *
  * A stale-break can evict a live lock (rename + link-back): the path then
@@ -369,7 +389,8 @@ function releaseLedgerLock(lockPath: string, token: string): void {
  */
 function assertLockStillOwned(lockPath: string, token: string): void {
   if (readLockToken(lockPath) === token) return
-  throw new Error(
+  throw new StepLedgerLockError(
+    'lock_lost',
     `step-ledger lock ${lockPath} is no longer owned by this writer (token mismatch): another writer took over mid-mutation. Aborting before commit; re-run the action.`,
   )
 }
@@ -542,8 +563,92 @@ function dependencyFailurePayload(
   }
 }
 
-/** Apply a rollback cascade, stamping every invalidated dependent with its reason. */
-function applyCascade(
+export interface CheckpointScrubOutcome {
+  readonly ok: boolean
+  readonly dryRun: boolean
+  /** Ledger entries that carry a `baselineTree`. */
+  readonly scanned: number
+  /** Checkpoints rewritten without `.pantheon/` (old -> new tree SHA). */
+  readonly rewritten: Array<{ stepKey: string; from: string; to: string }>
+  /** Checkpoints that were already clean. */
+  readonly clean: number
+  /** Trees no longer referenced by the ledger; reclaim with `git gc --prune=now`. */
+  readonly orphanedTrees: string[]
+  /** Checkpoints that STILL contain `.pantheon/` (must be empty after a scrub). */
+  readonly remaining: Array<{ stepKey: string; treeHash: string; reason: string }>
+}
+
+/**
+ * Retroactive scrub (L3): remove `.pantheon/` from every checkpoint the ledger
+ * still references.
+ *
+ * Checkpoints are dangling Git tree objects with no commit and no ref, so the
+ * only index of "checkpoints" is the ledger's `baselineTree`. Each such tree is
+ * rewritten without `.pantheon/` and the new SHA is persisted; the old tree and
+ * its blobs become unreachable and are reclaimed by `git gc`. Idempotent, and
+ * reversible only in the sense that the rewritten work-tree content is
+ * identical minus runtime state (the old SHAs are reported for auditing).
+ *
+ * Checkpoints whose ledger entry was already deleted are unreachable from the
+ * ledger (nothing can restore them) and are likewise left to Git GC.
+ */
+export async function scrubCheckpointHistory(
+  cwd: string,
+  options: { dryRun?: boolean } = {},
+): Promise<CheckpointScrubOutcome> {
+  const dryRun = options.dryRun === true
+  const store = readStepLedger(cwd)
+  const targets = Object.values(store.steps).filter(
+    (entry): entry is StepLedgerEntry & { baselineTree: string } =>
+      typeof entry.baselineTree === 'string' && entry.baselineTree.length > 0,
+  )
+
+  const rewritten: Array<{ stepKey: string; from: string; to: string }> = []
+  const remaining: Array<{ stepKey: string; treeHash: string; reason: string }> = []
+  let clean = 0
+
+  for (const entry of targets) {
+    const stripped = await stripPantheonFromTree(cwd, entry.baselineTree)
+    if (!stripped.ok || !stripped.treeHash) {
+      remaining.push({
+        stepKey: entry.stepKey,
+        treeHash: entry.baselineTree,
+        reason: stripped.reason ?? 'strip_failed',
+      })
+      continue
+    }
+    if (!stripped.changed) {
+      clean += 1
+      continue
+    }
+    rewritten.push({ stepKey: entry.stepKey, from: entry.baselineTree, to: stripped.treeHash })
+  }
+
+  if (!dryRun && rewritten.length > 0) {
+    const updates = new Map(rewritten.map((item) => [item.stepKey, item.to]))
+    const nowIso = new Date().toISOString()
+    updateStepLedger(cwd, (ledger) => {
+      for (const [stepKey, treeHash] of updates) {
+        const entry = ledger.steps[stepKey]
+        if (!entry) continue
+        entry.baselineTree = treeHash
+        entry.updatedAt = nowIso
+      }
+    })
+  }
+
+  return {
+    ok: remaining.length === 0,
+    dryRun,
+    scanned: targets.length,
+    rewritten,
+    clean,
+    orphanedTrees: rewritten.map((item) => item.from),
+    remaining,
+  }
+}
+
+/** Apply a rollback cascade, stamping every invalidated dependent with its reason. */ function applyCascade(
   store: StepLedgerStore,
   rootStepKey: string,
   reason: string,
@@ -609,20 +714,89 @@ function compensationPayload(compensation: RollbackCompensation): Record<string,
 }
 
 /**
- * Run an async tree restoration while keeping the ledger file's bytes intact.
+ * Merge a ledger snapshot back under the lock, through the atomic write path.
  *
- * `restoreGitCheckpoint` restores every file in the captured tree — including
- * `.pantheon/ledger/step-ledger.json` when the checkpoint postdates the ledger.
- * A compensating restore must not roll runtime state back with the work tree:
- * the ledger is owned by the lock protocol, not by the Git tree.
+ * Used only by restore-protection: entries the restore deleted are re-added
+ * from the snapshot while the on-disk store wins for keys it still has, so a
+ * writer that committed during the restore's git operations is not clobbered.
+ * The write is token-checked and lands via `writeLedgerFileAtomic`.
  */
-async function preserveLedgerBytes<T>(cwd: string, fn: () => Promise<T>): Promise<T> {
+function restoreLedgerSnapshotUnderLock(workspaceDir: string, snapshot: StepLedgerStore): void {
+  const filePath = resolveLedgerPath(workspaceDir)
+  const lockPath = resolveLockPath(filePath)
+  const token = acquireLedgerLock(lockPath)
+  try {
+    let current: StepLedgerStore = { version: 1, steps: {} }
+    try {
+      current = readLedgerFileAtPath(filePath)
+    } catch {
+      /* an unreadable (restored) file: the snapshot wins */
+    }
+    assertLockStillOwned(lockPath, token)
+    writeLedgerFileAtomic(filePath, {
+      version: 1,
+      steps: { ...snapshot.steps, ...current.steps },
+    })
+  } finally {
+    releaseLedgerLock(lockPath, token)
+  }
+}
+
+/**
+ * Translate a lock failure into a structured tool result (D3): a raw exception
+ * would leak internals and give the caller no recovery path.
+ */
+export function describeLedgerError(
+  err: unknown,
+): { ok: false; error: string; hint: string; detail: string } | undefined {
+  if (!(err instanceof StepLedgerLockError)) return undefined
+  const hints: Record<StepLedgerLockError['code'], string> = {
+    lock_lost:
+      'Re-run the action; another writer took over the ledger lock mid-mutation and nothing was committed.',
+    lock_timeout:
+      'Another writer is holding the ledger lock. Retry once it finishes, or free a crashed lock with `rm -f .pantheon/ledger/.step-ledger.lock`.',
+    lock_reentrant:
+      'Move the nested ledger write outside the current mutator — updateStepLedger must not be called from inside another one.',
+  }
+  const error =
+    err.code === 'lock_lost'
+      ? 'lock lost mid-mutation'
+      : err.code === 'lock_timeout'
+        ? 'ledger_lock_timeout'
+        : 'reentrant_ledger_write'
+  return { ok: false, error, hint: hints[err.code], detail: err.message }
+}
+
+/**
+ * Run an async tree restoration and guarantee it cannot roll the ledger back.
+ *
+ * `captureGitCheckpoint` no longer captures `.pantheon/` (source fix), so in the
+ * normal case the ledger is untouched and this is a no-op. It stays as the
+ * second layer for checkpoints captured by older versions, where restoring a
+ * tree would otherwise overwrite the live ledger with a stale snapshot — which
+ * silently deletes every step created after that checkpoint.
+ *
+ * Exported for the restore-protection test; call it only from the rollback path.
+ */
+export async function preserveLedgerBytes<T>(cwd: string, fn: () => Promise<T>): Promise<T> {
   const filePath = resolveLedgerPath(cwd)
-  const before = existsSync(filePath) ? readFileSync(filePath, 'utf8') : undefined
+  const beforeText = existsSync(filePath) ? readFileSync(filePath, 'utf8') : undefined
+  let snapshot: StepLedgerStore | undefined
+  if (beforeText !== undefined) {
+    try {
+      const parsed = JSON.parse(beforeText) as Partial<StepLedgerStore>
+      if (parsed && typeof parsed.steps === 'object' && parsed.steps !== null) {
+        snapshot = { version: 1, steps: parsed.steps as Record<string, StepLedgerEntry> }
+      }
+    } catch {
+      snapshot = undefined
+    }
+  }
   const result = await fn()
-  if (before === undefined) return result
-  const after = existsSync(filePath) ? readFileSync(filePath, 'utf8') : undefined
-  if (after !== before) writeFileSync(filePath, before, 'utf8')
+  if (!snapshot) return result
+  const afterText = existsSync(filePath) ? readFileSync(filePath, 'utf8') : undefined
+  if (afterText === beforeText) return result
+  restoreLedgerSnapshotUnderLock(cwd, snapshot)
   return result
 }
 
@@ -664,10 +838,11 @@ export function createStepLedgerTool(
             'complete_step',
             'rollback_step',
             'unblock_step',
+            'scrub_checkpoints',
             'status',
           ],
           description:
-            'Ledger operation (init_step | execute_step | spawn_ephemeral | verify_ephemeral | record_reproduction | record_mutation | record_verification | complete_step | rollback_step | unblock_step | status)',
+            'Ledger operation (init_step | execute_step | spawn_ephemeral | verify_ephemeral | record_reproduction | record_mutation | record_verification | complete_step | rollback_step | unblock_step | scrub_checkpoints | status)',
         },
         stepKey: {
           type: 'string',
@@ -786,6 +961,10 @@ export function createStepLedgerTool(
           description:
             'rollback_step: also invalidate transitive dependents (blocked with blockedBy + cascadeReason)',
         },
+        dryRun: {
+          type: 'boolean',
+          description: 'scrub_checkpoints: report what would be rewritten without persisting',
+        },
       },
     },
     output: {},
@@ -844,6 +1023,11 @@ export function createStepLedgerTool(
             ...(parentSid ? { parentSessionID: parentSid } : {}),
           })
           return jsonResult(verifyOut)
+        }
+
+        if (action === 'scrub_checkpoints') {
+          const outcome = await scrubCheckpointHistory(cwd, { dryRun: input.dryRun === true })
+          return jsonResult(outcome)
         }
 
         const key = assertSafeStepKey(input.stepKey)
@@ -1187,7 +1371,10 @@ export function createStepLedgerTool(
           // Snapshot the pre-rollback tree so a late refusal can be undone and
           // the caller always has a recovery handle.
           const preRollback = await captureGitCheckpoint(cwd, `${key}-pre-rollback`)
-          const rb = await restoreGitCheckpoint(cwd, step.baselineTree)
+          // The primary restore is protected too: a checkpoint captured before
+          // `.pantheon/` was excluded would otherwise roll the live ledger back.
+          const baselineTree = step.baselineTree
+          const rb = await preserveLedgerBytes(cwd, () => restoreGitCheckpoint(cwd, baselineTree))
           const cascadeReason = `Step "${key}" was rolled back; dependent invalidated by cascade`
           const outcome = updateStepLedger(cwd, (ledger) => {
             const entry = ledger.steps[key]
@@ -1556,6 +1743,8 @@ export function createStepLedgerTool(
 
         return jsonResult({ ok: false, error: `Unsupported action: ${action}` })
       } catch (err) {
+        const structured = describeLedgerError(err)
+        if (structured) return jsonResult(structured)
         return jsonResult({
           ok: false,
           error: err instanceof Error ? err.message : String(err),

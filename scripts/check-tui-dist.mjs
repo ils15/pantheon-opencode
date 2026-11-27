@@ -56,16 +56,22 @@ function lines(text) {
   return text.split('\n').filter(Boolean)
 }
 
-// 1) Untracked files cannot be compared with a fresh build.
-const untracked = lines(
-  gitResult(['ls-files', '--others', '--exclude-standard', '--', DIST]).stdout,
-)
-if (untracked.length > 0) {
-  console.error(`[tui-dist] untracked file(s) under ${DIST}:`)
-  for (const file of untracked) console.error(`[tui-dist]   - ${file}`)
+// 1) Untracked files cannot be compared with a fresh build — check before the
+//    rebuild AND after it, because a new chunk/hashed asset emitted by the
+//    build would otherwise slip past `git diff` (which ignores untracked paths).
+function untrackedUnderDist() {
+  return lines(gitResult(['ls-files', '--others', '--exclude-standard', '--', DIST]).stdout)
+}
+
+function rejectUntracked(files, when) {
+  if (files.length === 0) return
+  console.error(`[tui-dist] untracked file(s) under ${DIST} ${when}:`)
+  for (const file of files) console.error(`[tui-dist]   - ${file}`)
   console.error('[tui-dist] stage them if intentional, otherwise remove them.')
   process.exit(1)
 }
+
+rejectUntracked(untrackedUnderDist(), 'before the rebuild')
 
 // 2) Never silently destroy uncommitted local edits.
 const dirty = lines(gitResult(['diff', '--name-only', '--', DIST]).stdout)
@@ -94,7 +100,11 @@ if (existsSync(distPath)) {
   }
 }
 
-// 5) Compare the rebuilt bundle with the staged content.
+// 5) A fresh build may have emitted a new file; `git diff` ignores untracked
+//    paths, so re-run the untracked guard before comparing.
+rejectUntracked(untrackedUnderDist(), 'emitted by the rebuild')
+
+// 6) Compare the rebuilt bundle with the staged content.
 const diff = gitResult(['diff', '--exit-code', '--', DIST])
 if (diff.status !== 0) {
   console.error('[tui-dist] rebuilt bundle differs from the staged content:')

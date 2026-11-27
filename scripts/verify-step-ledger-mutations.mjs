@@ -28,8 +28,17 @@ const TSX = join(root, 'node_modules', 'tsx', 'dist', 'cli.mjs')
 
 const LEDGER = 'src/pantheon/step-ledger.ts'
 const DEPS = 'src/pantheon/step-dependencies.ts'
+const CHECKPOINT = 'src/pantheon/git-checkpoint.ts'
 
-/** @type {Array<{id: string, description: string, expect: string, edits: Array<{file: string, from: string, to: string}>}>} */
+/**
+ * @type {Array<{
+ *   id: string,
+ *   description: string,
+ *   /** Named test that must go red, or `null` when another layer must absorb the mutant. *\/
+ *   expect: string | null,
+ *   edits: Array<{file: string, from: string, to: string}>,
+ * }>}
+ */
 const MUTANTS = [
   {
     id: 'validation-disabled',
@@ -172,6 +181,96 @@ const MUTANTS = [
       },
     ],
   },
+  {
+    id: 'both-ledger-restore-protections-removed',
+    description:
+      'checkpoints capture .pantheon again AND the primary restore is unprotected (the reviewer repro)',
+    expect: 'D1 rollback keeps every ledger step',
+    edits: [
+      {
+        file: CHECKPOINT,
+        from: "    await runGit(root, ['add', '-A'], { GIT_INDEX_FILE: tmpIndex })\n    // `.pantheon/` is runtime state, never work-tree state: a checkpoint must\n    // not capture the ledger (or board/memory/deepwork) it would later restore.\n    await dropPantheonRuntimeState(root, tmpIndex)\n",
+        to: "    await runGit(root, ['add', '-A'], { GIT_INDEX_FILE: tmpIndex })\n",
+      },
+      {
+        file: CHECKPOINT,
+        from: "    await runGit(root, ['read-tree', treeHash], { GIT_INDEX_FILE: tmpIndex })\n    await dropPantheonRuntimeState(root, tmpIndex)\n",
+        to: "    await runGit(root, ['read-tree', treeHash], { GIT_INDEX_FILE: tmpIndex })\n",
+      },
+      {
+        file: LEDGER,
+        from: 'const rb = await preserveLedgerBytes(cwd, () => restoreGitCheckpoint(cwd, baselineTree))',
+        to: 'const rb = await restoreGitCheckpoint(cwd, baselineTree)',
+      },
+    ],
+  },
+  {
+    id: 'primary-restore-ledger-preservation-removed',
+    description:
+      'the primary restore loses its byte-preservation (the checkpoint exclusion still protects)',
+    expect: null,
+    edits: [
+      {
+        file: LEDGER,
+        from: 'const rb = await preserveLedgerBytes(cwd, () => restoreGitCheckpoint(cwd, baselineTree))',
+        to: 'const rb = await restoreGitCheckpoint(cwd, baselineTree)',
+      },
+    ],
+  },
+  {
+    id: 'checkpoint-includes-pantheon',
+    description:
+      'checkpoints and restores handle .pantheon again (the D1 tree assertion catches it)',
+    expect: 'D1 rollback keeps every ledger step',
+    edits: [
+      {
+        file: CHECKPOINT,
+        from: "    await runGit(root, ['add', '-A'], { GIT_INDEX_FILE: tmpIndex })\n    // `.pantheon/` is runtime state, never work-tree state: a checkpoint must\n    // not capture the ledger (or board/memory/deepwork) it would later restore.\n    await dropPantheonRuntimeState(root, tmpIndex)\n",
+        to: "    await runGit(root, ['add', '-A'], { GIT_INDEX_FILE: tmpIndex })\n",
+      },
+      {
+        file: CHECKPOINT,
+        from: "    await runGit(root, ['read-tree', treeHash], { GIT_INDEX_FILE: tmpIndex })\n    await dropPantheonRuntimeState(root, tmpIndex)\n",
+        to: "    await runGit(root, ['read-tree', treeHash], { GIT_INDEX_FILE: tmpIndex })\n",
+      },
+    ],
+  },
+  {
+    id: 'L1-restore-pantheon-exclusion-removed',
+    description: 'restore applies .pantheon/ from a legacy checkpoint again',
+    expect: 'L1 a legacy checkpoint cannot roll back',
+    edits: [
+      {
+        file: CHECKPOINT,
+        from: "    await runGit(root, ['read-tree', treeHash], { GIT_INDEX_FILE: tmpIndex })\n    await dropPantheonRuntimeState(root, tmpIndex)\n    await runGit(root, ['checkout-index', '--all', '--force'], { GIT_INDEX_FILE: tmpIndex })",
+        to: "    await runGit(root, ['read-tree', treeHash], { GIT_INDEX_FILE: tmpIndex })\n    await runGit(root, ['checkout-index', '--all', '--force'], { GIT_INDEX_FILE: tmpIndex })",
+      },
+    ],
+  },
+  {
+    id: 'L2-capture-pantheon-exclusion-removed',
+    description: 'capture includes .pantheon/ again',
+    expect: 'L2 capture excludes .pantheon',
+    edits: [
+      {
+        file: CHECKPOINT,
+        from: "    await runGit(root, ['add', '-A'], { GIT_INDEX_FILE: tmpIndex })\n    // `.pantheon/` is runtime state, never work-tree state: a checkpoint must\n    // not capture the ledger (or board/memory/deepwork) it would later restore.\n    await dropPantheonRuntimeState(root, tmpIndex)\n",
+        to: "    await runGit(root, ['add', '-A'], { GIT_INDEX_FILE: tmpIndex })\n",
+      },
+    ],
+  },
+  {
+    id: 'L3-scrub-strip-removed',
+    description: 'the scrub reports every legacy checkpoint as already clean',
+    expect: 'L3 scrub rewrites legacy checkpoints',
+    edits: [
+      {
+        file: CHECKPOINT,
+        from: '    if (!(await treeContainsPantheon(root, treeHash))) {',
+        to: '    if (true) {',
+      },
+    ],
+  },
 ]
 
 function parseArgs(argv) {
@@ -251,15 +350,24 @@ for (const mutant of selected) {
         console.log(`      ${output.trim().split('\n').slice(-4).join(' / ')}`)
         continue
       }
-      const caught = output.includes(`✖ ${mutant.expect}`)
+      // `expect: null` marks a redundancy check: another layer must absorb this
+      // mutant, so the slice has to stay green.
+      const caught =
+        mutant.expect === null ? !/^✖ /m.test(output) : output.includes(`✖ ${mutant.expect}`)
       if (caught) {
         console.log(
-          `ok    ${mutant.id} [run ${run}] — ${mutant.description} => red: ${mutant.expect}`,
+          `ok    ${mutant.id} [run ${run}] — ${mutant.description} => ${
+            mutant.expect === null ? 'absorbed (slice stayed green)' : `red: ${mutant.expect}`
+          }`,
         )
       } else {
         failures += 1
         console.log(
-          `FAIL  ${mutant.id} [run ${run}] — ${mutant.description} did NOT break ${mutant.expect}`,
+          `FAIL  ${mutant.id} [run ${run}] — ${mutant.description} ${
+            mutant.expect === null
+              ? 'was NOT absorbed by the other layer'
+              : `did NOT break ${mutant.expect}`
+          }`,
         )
       }
     }

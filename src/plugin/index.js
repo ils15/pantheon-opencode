@@ -14266,6 +14266,17 @@ import { join as join18, resolve as resolve14 } from "node:path";
 import { promisify as promisify3 } from "node:util";
 var execFileAsync3 = promisify3(execFile3);
 var SAFE_TREE_RE = /^[0-9a-f]{40}$/;
+var PANTHEON_RUNTIME_PATHS = [".pantheon"];
+async function dropPantheonRuntimeState(root, tmpIndex) {
+  await runGit(
+    root,
+    // `-f` is required when an entry's staged content diverges from both the
+    // work tree and HEAD (exactly the stale-checkpoint case). It only affects
+    // the isolated temporary index, never the repository's real staging area.
+    ["rm", "-r", "-f", "-q", "--cached", "--ignore-unmatch", "--", ...PANTHEON_RUNTIME_PATHS],
+    { GIT_INDEX_FILE: tmpIndex }
+  );
+}
 async function runGit(cwd, args, envExtra) {
   const { stdout } = await execFileAsync3("git", [...args], {
     cwd,
@@ -14297,6 +14308,7 @@ async function captureGitCheckpoint(cwd, stepKey = "step") {
       await runGit(root, ["read-tree", "--empty"], { GIT_INDEX_FILE: tmpIndex });
     }
     await runGit(root, ["add", "-A"], { GIT_INDEX_FILE: tmpIndex });
+    await dropPantheonRuntimeState(root, tmpIndex);
     const treeHash = await runGit(root, ["write-tree"], { GIT_INDEX_FILE: tmpIndex });
     if (!SAFE_TREE_RE.test(treeHash)) {
       return { ok: false, reason: "invalid_tree_hash" };
@@ -14307,6 +14319,40 @@ async function captureGitCheckpoint(cwd, stepKey = "step") {
       ok: false,
       reason: err instanceof Error ? err.message : String(err)
     };
+  } finally {
+    try {
+      if (existsSync13(tmpIndex)) unlinkSync3(tmpIndex);
+    } catch {
+    }
+  }
+}
+async function treeContainsPantheon(root, treeHash) {
+  const listing = await runGit(root, [
+    "ls-tree",
+    "-r",
+    "--name-only",
+    treeHash,
+    "--",
+    ...PANTHEON_RUNTIME_PATHS
+  ]);
+  return listing.length > 0;
+}
+async function stripPantheonFromTree(cwd, treeHash) {
+  const root = resolve14(cwd);
+  if (!SAFE_TREE_RE.test(treeHash)) return { ok: false, reason: "invalid_tree_hash" };
+  if (!await isGitWorkspace(root)) return { ok: false, reason: "not_a_git_repository" };
+  const tmpIndex = join18(tmpdir2(), `pantheon-scrub-${process.pid}-${Date.now()}`);
+  try {
+    if (!await treeContainsPantheon(root, treeHash)) {
+      return { ok: true, treeHash, changed: false };
+    }
+    await runGit(root, ["read-tree", treeHash], { GIT_INDEX_FILE: tmpIndex });
+    await dropPantheonRuntimeState(root, tmpIndex);
+    const stripped = await runGit(root, ["write-tree"], { GIT_INDEX_FILE: tmpIndex });
+    if (!SAFE_TREE_RE.test(stripped)) return { ok: false, reason: "invalid_tree_hash" };
+    return { ok: true, treeHash: stripped, changed: stripped !== treeHash };
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
   } finally {
     try {
       if (existsSync13(tmpIndex)) unlinkSync3(tmpIndex);
@@ -14338,6 +14384,7 @@ async function restoreGitCheckpoint(cwd, treeHash) {
       }
     }
     await runGit(root, ["read-tree", treeHash], { GIT_INDEX_FILE: tmpIndex });
+    await dropPantheonRuntimeState(root, tmpIndex);
     await runGit(root, ["checkout-index", "--all", "--force"], { GIT_INDEX_FILE: tmpIndex });
     mkdirSync8(join18(root, ".pantheon", "ledger"), { recursive: true });
     return { ok: true, treeHash };
@@ -16046,7 +16093,8 @@ function acquireLedgerLock(lockPath) {
     }
     const observedToken = readLockToken(lockPath);
     if (observedToken !== void 0 && lockOwnerPid(observedToken) === process.pid) {
-      throw new Error(
+      throw new StepLedgerLockError(
+        "lock_reentrant",
         `step-ledger lock ${lockPath} is held by this process: re-entrant updateStepLedger is not supported. Move the nested write outside the mutator.`
       );
     }
@@ -16061,7 +16109,8 @@ function acquireLedgerLock(lockPath) {
       continue;
     }
     if (Date.now() >= deadline) {
-      throw new Error(
+      throw new StepLedgerLockError(
+        "lock_timeout",
         `step-ledger lock timeout after ${LOCK_WAIT_BUDGET_MS}ms waiting on ${lockPath} (held by pid ${observedToken ?? "unknown"}). If that writer crashed, remove the file: rm -f ${lockPath}`
       );
     }
@@ -16075,9 +16124,18 @@ function releaseLedgerLock(lockPath, token) {
   } catch {
   }
 }
+var StepLedgerLockError = class extends Error {
+  code;
+  constructor(code, message) {
+    super(message);
+    this.name = "StepLedgerLockError";
+    this.code = code;
+  }
+};
 function assertLockStillOwned(lockPath, token) {
   if (readLockToken(lockPath) === token) return;
-  throw new Error(
+  throw new StepLedgerLockError(
+    "lock_lost",
     `step-ledger lock ${lockPath} is no longer owned by this writer (token mismatch): another writer took over mid-mutation. Aborting before commit; re-run the action.`
   );
 }
@@ -16173,6 +16231,53 @@ function dependencyFailurePayload(stepKey, result) {
     issues: result.issues
   };
 }
+async function scrubCheckpointHistory(cwd, options = {}) {
+  const dryRun = options.dryRun === true;
+  const store2 = readStepLedger(cwd);
+  const targets = Object.values(store2.steps).filter(
+    (entry) => typeof entry.baselineTree === "string" && entry.baselineTree.length > 0
+  );
+  const rewritten = [];
+  const remaining = [];
+  let clean = 0;
+  for (const entry of targets) {
+    const stripped = await stripPantheonFromTree(cwd, entry.baselineTree);
+    if (!stripped.ok || !stripped.treeHash) {
+      remaining.push({
+        stepKey: entry.stepKey,
+        treeHash: entry.baselineTree,
+        reason: stripped.reason ?? "strip_failed"
+      });
+      continue;
+    }
+    if (!stripped.changed) {
+      clean += 1;
+      continue;
+    }
+    rewritten.push({ stepKey: entry.stepKey, from: entry.baselineTree, to: stripped.treeHash });
+  }
+  if (!dryRun && rewritten.length > 0) {
+    const updates = new Map(rewritten.map((item) => [item.stepKey, item.to]));
+    const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+    updateStepLedger(cwd, (ledger) => {
+      for (const [stepKey, treeHash] of updates) {
+        const entry = ledger.steps[stepKey];
+        if (!entry) continue;
+        entry.baselineTree = treeHash;
+        entry.updatedAt = nowIso;
+      }
+    });
+  }
+  return {
+    ok: remaining.length === 0,
+    dryRun,
+    scanned: targets.length,
+    rewritten,
+    clean,
+    orphanedTrees: rewritten.map((item) => item.from),
+    remaining
+  };
+}
 function applyCascade(store2, rootStepKey, reason, nowIso) {
   const targets = cascadeBlock(Object.values(store2.steps), rootStepKey, reason);
   const invalidated = [];
@@ -16215,13 +16320,54 @@ function compensationPayload(compensation) {
     ...compensation.restoreFailed ? { restoreFailed: compensation.restoreFailed } : {}
   };
 }
+function restoreLedgerSnapshotUnderLock(workspaceDir, snapshot) {
+  const filePath = resolveLedgerPath(workspaceDir);
+  const lockPath = resolveLockPath(filePath);
+  const token = acquireLedgerLock(lockPath);
+  try {
+    let current = { version: 1, steps: {} };
+    try {
+      current = readLedgerFileAtPath(filePath);
+    } catch {
+    }
+    assertLockStillOwned(lockPath, token);
+    writeLedgerFileAtomic(filePath, {
+      version: 1,
+      steps: { ...snapshot.steps, ...current.steps }
+    });
+  } finally {
+    releaseLedgerLock(lockPath, token);
+  }
+}
+function describeLedgerError(err) {
+  if (!(err instanceof StepLedgerLockError)) return void 0;
+  const hints = {
+    lock_lost: "Re-run the action; another writer took over the ledger lock mid-mutation and nothing was committed.",
+    lock_timeout: "Another writer is holding the ledger lock. Retry once it finishes, or free a crashed lock with `rm -f .pantheon/ledger/.step-ledger.lock`.",
+    lock_reentrant: "Move the nested ledger write outside the current mutator \u2014 updateStepLedger must not be called from inside another one."
+  };
+  const error = err.code === "lock_lost" ? "lock lost mid-mutation" : err.code === "lock_timeout" ? "ledger_lock_timeout" : "reentrant_ledger_write";
+  return { ok: false, error, hint: hints[err.code], detail: err.message };
+}
 async function preserveLedgerBytes(cwd, fn) {
   const filePath = resolveLedgerPath(cwd);
-  const before = existsSync16(filePath) ? readFileSync13(filePath, "utf8") : void 0;
+  const beforeText = existsSync16(filePath) ? readFileSync13(filePath, "utf8") : void 0;
+  let snapshot;
+  if (beforeText !== void 0) {
+    try {
+      const parsed = JSON.parse(beforeText);
+      if (parsed && typeof parsed.steps === "object" && parsed.steps !== null) {
+        snapshot = { version: 1, steps: parsed.steps };
+      }
+    } catch {
+      snapshot = void 0;
+    }
+  }
   const result = await fn();
-  if (before === void 0) return result;
-  const after = existsSync16(filePath) ? readFileSync13(filePath, "utf8") : void 0;
-  if (after !== before) writeFileSync7(filePath, before, "utf8");
+  if (!snapshot) return result;
+  const afterText = existsSync16(filePath) ? readFileSync13(filePath, "utf8") : void 0;
+  if (afterText === beforeText) return result;
+  restoreLedgerSnapshotUnderLock(cwd, snapshot);
   return result;
 }
 function emitBlocked(stepKey, entry) {
@@ -16256,9 +16402,10 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             "complete_step",
             "rollback_step",
             "unblock_step",
+            "scrub_checkpoints",
             "status"
           ],
-          description: "Ledger operation (init_step | execute_step | spawn_ephemeral | verify_ephemeral | record_reproduction | record_mutation | record_verification | complete_step | rollback_step | unblock_step | status)"
+          description: "Ledger operation (init_step | execute_step | spawn_ephemeral | verify_ephemeral | record_reproduction | record_mutation | record_verification | complete_step | rollback_step | unblock_step | scrub_checkpoints | status)"
         },
         stepKey: {
           type: "string",
@@ -16367,6 +16514,10 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
         cascade: {
           type: "boolean",
           description: "rollback_step: also invalidate transitive dependents (blocked with blockedBy + cascadeReason)"
+        },
+        dryRun: {
+          type: "boolean",
+          description: "scrub_checkpoints: report what would be rewritten without persisting"
         }
       }
     },
@@ -16417,6 +16568,10 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             ...parentSid ? { parentSessionID: parentSid } : {}
           });
           return jsonResult3(verifyOut);
+        }
+        if (action === "scrub_checkpoints") {
+          const outcome = await scrubCheckpointHistory(cwd, { dryRun: input.dryRun === true });
+          return jsonResult3(outcome);
         }
         const key = assertSafeStepKey(input.stepKey);
         if (action === "init_step") {
@@ -16646,7 +16801,8 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             });
           }
           const preRollback = await captureGitCheckpoint(cwd, `${key}-pre-rollback`);
-          const rb = await restoreGitCheckpoint(cwd, step.baselineTree);
+          const baselineTree = step.baselineTree;
+          const rb = await preserveLedgerBytes(cwd, () => restoreGitCheckpoint(cwd, baselineTree));
           const cascadeReason = `Step "${key}" was rolled back; dependent invalidated by cascade`;
           const outcome = updateStepLedger(cwd, (ledger) => {
             const entry = ledger.steps[key];
@@ -16962,6 +17118,8 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
         }
         return jsonResult3({ ok: false, error: `Unsupported action: ${action}` });
       } catch (err) {
+        const structured = describeLedgerError(err);
+        if (structured) return jsonResult3(structured);
         return jsonResult3({
           ok: false,
           error: err instanceof Error ? err.message : String(err)

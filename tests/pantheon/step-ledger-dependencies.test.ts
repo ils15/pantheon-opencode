@@ -21,6 +21,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { pathToFileURL } from 'node:url'
 import { getSharedBus } from '../../src/pantheon/bus.ts'
+import { captureGitCheckpoint, restoreGitCheckpoint } from '../../src/pantheon/git-checkpoint.ts'
 import { evaluateReproductionGate } from '../../src/pantheon/reproduction-gate.ts'
 import {
   buildDependencyGraph,
@@ -35,9 +36,13 @@ import {
 } from '../../src/pantheon/step-dependencies.ts'
 import {
   createStepLedgerTool,
+  describeLedgerError,
+  preserveLedgerBytes,
   readStepLedger,
   type StepLedgerEntry,
+  StepLedgerLockError,
   type StepLedgerStore,
+  scrubCheckpointHistory,
   updateStepLedger,
 } from '../../src/pantheon/step-ledger.ts'
 import type { PantheonToolDef } from '../../src/pantheon/tools.ts'
@@ -1072,7 +1077,258 @@ test('R-a post-restore missing entry: the tree is compensated and reported, not 
   }
 })
 
-// ── R-e — a corrupt ledger is visible to consumers, never silent ──────────
+// ── D1 — checkpoints must not capture (or restore) `.pantheon/` ───────────
+
+test('D1 rollback keeps every ledger step in a repo that does not ignore .pantheon', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-dep-unignored-'))
+  try {
+    // No `.gitignore` rule for `.pantheon`: this is the reviewer's fixture.
+    initGitRepo(dir)
+    assert.throws(
+      () => execFileSync('git', ['check-ignore', '-q', '.pantheon'], { cwd: dir }),
+      'fixture must NOT ignore .pantheon, or this test could pass by accident',
+    )
+
+    const tool = makeTool(dir)
+    const ctx = { directory: dir }
+    for (const stepKey of ['u-a', 'u-b', 'u-c']) {
+      const init = await call(
+        tool,
+        { action: 'init_step', stepKey, objective: stepKey, agent: 'hermes' },
+        ctx,
+      )
+      assert.equal(init.ok, true)
+    }
+
+    // u-b's baseline was captured after u-a's entry existed; it must still not
+    // contain runtime state.
+    const baselineTree = readStepLedger(dir).steps['u-b']?.baselineTree
+    assert.ok(baselineTree)
+    const listing = execFileSync('git', ['ls-tree', '-r', '--name-only', baselineTree], {
+      cwd: dir,
+      encoding: 'utf8',
+    })
+    assert.equal(listing.includes('.pantheon'), false, 'checkpoint captured runtime state')
+
+    const rb = await call(tool, { action: 'rollback_step', stepKey: 'u-b' }, ctx)
+    assert.equal(rb.ok, true, `rollback: ${String(rb.error)}`)
+    assert.notEqual(rb.error, 'Step "u-b" is not initialized')
+
+    const store = readStepLedger(dir)
+    assert.deepEqual(Object.keys(store.steps).sort(), ['u-a', 'u-b', 'u-c'])
+    assert.equal(store.steps['u-b']?.state, 'rolled_back')
+    assert.equal(store.steps['u-c']?.state, 'in_progress', 'unrelated step must survive')
+    assert.equal(store.steps['u-a']?.state, 'in_progress')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// ── L1/L2/L3 — checkpoints never carry `.pantheon/` (now or historically) ─
+
+/**
+ * Build a checkpoint the way Pantheon < 2.3.5 did: `read-tree HEAD` + `add -A`
+ * with no `.pantheon/` exclusion, so the tree captures the ledger.
+ */
+function buildLegacyCheckpoint(dir: string): string {
+  const tmpIndex = join(dir, '.legacy-index')
+  const env = { ...process.env, GIT_INDEX_FILE: tmpIndex }
+  const git = (args: string[]): string =>
+    execFileSync('git', args, { cwd: dir, env, encoding: 'utf8' }).trim()
+  try {
+    git(['read-tree', 'HEAD'])
+    git(['add', '-A'])
+    return git(['write-tree'])
+  } finally {
+    rmSync(tmpIndex, { force: true })
+  }
+}
+
+function treeEntries(dir: string, treeHash: string): string[] {
+  return execFileSync('git', ['ls-tree', '-r', '--name-only', treeHash], {
+    cwd: dir,
+    encoding: 'utf8',
+  })
+    .split('\n')
+    .filter(Boolean)
+}
+
+test('L1 a legacy checkpoint cannot roll back .pantheon runtime state', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-dep-l1-'))
+  try {
+    initGitRepo(dir)
+    seed(dir, [stepEntry('l1-a', { state: 'done' }), stepEntry('l1-b', { state: 'in_progress' })])
+    const liveLedger = readFileSync(ledgerFile(dir), 'utf8')
+
+    // A legacy checkpoint that DID capture the ledger, with stale content.
+    writeFileSync(ledgerFile(dir), JSON.stringify({ version: 1, steps: { 'l1-a': { stale: 1 } } }))
+    const legacyTree = buildLegacyCheckpoint(dir)
+    writeFileSync(ledgerFile(dir), liveLedger)
+    assert.ok(treeEntries(dir, legacyTree).includes('.pantheon/ledger/step-ledger.json'))
+
+    const rb = await restoreGitCheckpoint(dir, legacyTree)
+    assert.equal(rb.ok, true, `restore failed: ${String(rb.reason)}`)
+    assert.equal(
+      readFileSync(ledgerFile(dir), 'utf8'),
+      liveLedger,
+      'restore must never apply .pantheon/ paths from a legacy checkpoint',
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('L2 capture excludes .pantheon runtime state', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-dep-l2-'))
+  try {
+    initGitRepo(dir)
+    seed(dir, [stepEntry('l2-a', { state: 'in_progress' })])
+    writeFileSync(join(dir, 'app.ts'), 'export const version = 2\n')
+
+    const captured = await captureGitCheckpoint(dir, 'l2')
+    assert.equal(captured.ok, true)
+    const entries = treeEntries(dir, String(captured.treeHash))
+    assert.ok(entries.includes('app.ts'), 'work-tree changes are still captured')
+    assert.equal(
+      entries.some((entry) => entry.startsWith('.pantheon/')),
+      false,
+      'checkpoint must not capture runtime state',
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('L3 scrub rewrites legacy checkpoints without .pantheon and leaves them GC-able', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-dep-l3-'))
+  try {
+    initGitRepo(dir)
+    seed(dir, [stepEntry('l3-a', { state: 'in_progress' })])
+    // Build a legacy checkpoint with stale runtime state, then point a ledger
+    // entry at it (the ledger is the only index of "checkpoints" that exists).
+    writeFileSync(ledgerFile(dir), JSON.stringify({ version: 1, steps: { stale: true } }))
+    const legacyTree = buildLegacyCheckpoint(dir)
+    seed(dir, [stepEntry('l3-a', { state: 'in_progress', baselineTree: legacyTree })])
+
+    // Dry run reports without persisting.
+    const dry = await scrubCheckpointHistory(dir, { dryRun: true })
+    assert.equal(dry.dryRun, true)
+    assert.equal(dry.rewritten.length, 1)
+    assert.equal(readStepLedger(dir).steps['l3-a']?.baselineTree, legacyTree)
+
+    const scrubbed = await scrubCheckpointHistory(dir)
+    assert.equal(scrubbed.ok, true)
+    assert.deepEqual(scrubbed.remaining, [])
+    assert.equal(scrubbed.rewritten.length, 1)
+    assert.notEqual(scrubbed.rewritten[0]?.to, legacyTree)
+
+    const store = readStepLedger(dir)
+    const rewrittenTree = String(store.steps['l3-a']?.baselineTree)
+    assert.notEqual(rewrittenTree, legacyTree)
+    // Every checkpoint the ledger references is now free of runtime state.
+    for (const entry of Object.values(store.steps)) {
+      if (!entry.baselineTree) continue
+      assert.equal(
+        treeEntries(dir, entry.baselineTree).some((path) => path.startsWith('.pantheon/')),
+        false,
+        `checkpoint for ${entry.stepKey} still contains .pantheon/`,
+      )
+    }
+
+    // Idempotent, and the old tree is unreachable -> reclaimable by Git.
+    const again = await scrubCheckpointHistory(dir)
+    assert.deepEqual(again.rewritten, [])
+
+    // The maintenance action works without a stepKey (it is a ledger-wide scrub).
+    const tool = makeTool(dir)
+    const viaTool = await call(tool, { action: 'scrub_checkpoints' }, { directory: dir })
+    assert.equal(viaTool.ok, true)
+    assert.deepEqual(viaTool.rewritten, [])
+
+    const unreachable = execFileSync('git', ['fsck', '--unreachable', '--no-reflogs'], {
+      cwd: dir,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+    assert.match(unreachable, new RegExp(legacyTree))
+    execFileSync('git', ['gc', '--prune=now', '--quiet'], { cwd: dir })
+    assert.throws(() =>
+      execFileSync('git', ['cat-file', '-e', legacyTree], { cwd: dir, stdio: 'ignore' }),
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// ── D1 — the restore guard (second layer) ────────────────────────────────
+
+test('D1 the restore guard merges a clobbered ledger back without losing concurrent work', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-dep-guard-'))
+  try {
+    seed(dir, [
+      stepEntry('g-1', { state: 'done', objective: 'one' }),
+      stepEntry('g-2', { state: 'in_progress', objective: 'two' }),
+    ])
+    const before = readStepLedger(dir)
+
+    await preserveLedgerBytes(dir, async () => {
+      // Simulate a legacy restore rewriting the ledger with an older snapshot
+      // (g-1 only) *and* a concurrent writer adding g-3 in the same window.
+      writeFileSync(
+        ledgerFile(dir),
+        JSON.stringify({
+          version: 1,
+          steps: { 'g-1': before.steps['g-1'], 'g-3': stepEntry('g-3') },
+        }),
+      )
+    })
+
+    const after = readStepLedger(dir)
+    assert.deepEqual(Object.keys(after.steps).sort(), ['g-1', 'g-2', 'g-3'])
+    assert.equal(after.steps['g-2']?.objective, 'two', 'clobbered entry restored from the snapshot')
+    assert.equal(after.steps['g-3']?.objective, 'objective g-3', 'concurrent addition survives')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// ── D3 — lock failures surface as structured results ─────────────────────
+
+test('D3 a lost lock is a structured tool result, and the error carries a code', () => {
+  const mapped = describeLedgerError(
+    new StepLedgerLockError(
+      'lock_lost',
+      'lock .pantheon/ledger/.step-ledger.lock is no longer owned',
+    ),
+  )
+  assert.ok(mapped)
+  assert.equal(mapped.ok, false)
+  assert.equal(mapped.error, 'lock lost mid-mutation')
+  assert.match(mapped.hint, /Re-run the action/)
+  assert.match(mapped.detail, /no longer owned/)
+
+  assert.equal(describeLedgerError(new Error('plain')), undefined)
+
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-dep-d3-'))
+  try {
+    seed(dir, [stepEntry('d3-a')])
+    const lockPath = join(dir, '.pantheon', 'ledger', '.step-ledger.lock')
+    assert.throws(
+      () =>
+        updateStepLedger(dir, (store) => {
+          store.steps['d3-a'] = { ...stepEntry('d3-a'), objective: 'changed' }
+          writeFileSync(lockPath, '999999:someone-else\n')
+        }),
+      (err: unknown) =>
+        err instanceof StepLedgerLockError &&
+        err.code === 'lock_lost' &&
+        describeLedgerError(err)?.error === 'lock lost mid-mutation',
+    )
+    rmSync(lockPath)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
 
 test('R-e the reproduction gate reports an unreadable ledger instead of failing silently', () => {
   const dir = mkdtempSync(join(tmpdir(), 'pantheon-dep-gate-corrupt-'))
