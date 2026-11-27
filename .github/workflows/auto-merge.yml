@@ -22,6 +22,11 @@ jobs:
     steps:
       - name: Enable squash auto-merge
         env:
-          GH_TOKEN: ${{ github.token }}
+          PR_MERGE_TOKEN: ${{ secrets.PR_MERGE_TOKEN }}
+          GH_TOKEN: ${{ secrets.PR_MERGE_TOKEN || secrets.GITHUB_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr merge --auto --squash "$PR_URL"
+        run: |
+          if [ -z "${PR_MERGE_TOKEN}" ]; then
+            echo "::warning::PR_MERGE_TOKEN is not set. Merging with GITHUB_TOKEN does not trigger push workflows, so main will have no CI evidence for the merge SHA. See docs/RELEASING.md."
+          fi
+          gh pr merge --auto --squash "$PR_URL"

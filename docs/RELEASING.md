@@ -47,6 +47,11 @@ flowchart TD
 3. **Buffering in `[Unreleased]`:** Completed features accumulate in the `## [Unreleased]` section of `CHANGELOG.md` until the maintainer decides the milestone is complete.
 4. **Explicit Release Cutting:** A release is only triggered when the maintainer runs the release script (`node scripts/versioning.mjs apply [patch|minor|major]`), which promotes `[Unreleased]` to the new version header, synchronizes manifests, and creates the release tag.
 
+### CI evidence on `main`
+GitHub does not emit `push` workflows for commits pushed with the default `GITHUB_TOKEN`, so an auto-merge performed that way leaves `main` with **no CI run for the merge SHA** — only the PR-head run exists.
+This repo therefore uses the optional `PR_MERGE_TOKEN` secret (a fine-grained PAT with `contents: write` and `pull-requests: write`) for auto-merge, so the merge is attributed to a user and the resulting push triggers `ci.yml` on `main`.
+When the secret is absent the workflow degrades to `GITHUB_TOKEN` with a warning; release evidence for that SHA is then limited to the PR-head run plus tree equality — treat that as **audit debt, not green evidence**.
+
 ---
 
 ## Versioning Policy
