@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "types": ["node"],
+    "noEmit": true,
+    "paths": {
+      "@opencode/plugin/gui": ["../../../node_modules/@opencode/plugin/dist/gui/index.d.ts"],
+      "@opencode/plugin/gui/*": ["../../../node_modules/@opencode/plugin/dist/gui/*.d.ts"],
+      "effect": ["../../../node_modules/@opencode/plugin/node_modules/effect/dist/index.d.ts"],
+      "effect/*": ["../../../node_modules/@opencode/plugin/node_modules/effect/dist/*.d.ts"]
+    }
+  },
+  "include": ["src/gui.tsx"]
+}
