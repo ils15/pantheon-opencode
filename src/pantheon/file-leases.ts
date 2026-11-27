@@ -11,6 +11,15 @@
 import path from 'node:path'
 
 const LEASE_REGISTRY_KEY = '__pantheonFileLeases' as const
+/**
+ * Secondary slot for the registry.
+ *
+ * `__pantheonFileLeases` is also used by callers that expect a *hook object*
+ * (`{ acquireFileLease, releaseFileLease }`) rather than the registry Map. When
+ * such an object occupies the primary key, the registry lives here instead of
+ * overwriting it — both shapes coexist, and neither silently disables the other.
+ */
+const LEASE_REGISTRY_FALLBACK_KEY = '__pantheonFileLeaseRegistry' as const
 const WINDOWS_DRIVE_RE = /^([a-zA-Z]):\//
 
 export interface FileLeaseInput {
@@ -39,11 +48,23 @@ export interface FileLeaseCheckResult {
 }
 
 function getLeaseRegistry(): Map<string, FileLeaseRecord> {
-  const host = globalThis as { [LEASE_REGISTRY_KEY]?: Map<string, FileLeaseRecord> }
-  if (!host[LEASE_REGISTRY_KEY]) {
-    host[LEASE_REGISTRY_KEY] = new Map<string, FileLeaseRecord>()
+  const host = globalThis as {
+    [LEASE_REGISTRY_KEY]?: unknown
+    [LEASE_REGISTRY_FALLBACK_KEY]?: unknown
   }
-  return host[LEASE_REGISTRY_KEY]
+  const primary = host[LEASE_REGISTRY_KEY]
+  if (primary instanceof Map) return primary as Map<string, FileLeaseRecord>
+  const fallback = host[LEASE_REGISTRY_FALLBACK_KEY]
+  if (fallback instanceof Map) return fallback as Map<string, FileLeaseRecord>
+  const registry = new Map<string, FileLeaseRecord>()
+  // Keep the historical slot when it is free (tests and older plugins read it
+  // directly); otherwise hold the registry beside the hook object.
+  if (primary === undefined) {
+    host[LEASE_REGISTRY_KEY] = registry
+  } else {
+    host[LEASE_REGISTRY_FALLBACK_KEY] = registry
+  }
+  return registry
 }
 
 function isAbsoluteAnyPlatform(forwardPath: string): boolean {
@@ -133,6 +154,38 @@ export function releaseFileLease(sessionID: string): boolean {
  */
 export function getFileLease(sessionID: string): FileLeaseRecord | undefined {
   return getLeaseRegistry().get(sessionID)
+}
+
+/**
+ * List every active file lease, optionally narrowed to one checkout.
+ *
+ * This is the production accessor the merge gate needs: the registry is only
+ * reachable through function calls (the `globalThis` slot is an implementation
+ * detail), and "who else owns these files?" must be answerable without a
+ * session id. `rootDir` is canonicalized exactly like lease acquisition, so a
+ * trailing slash or a Windows path still matches.
+ */
+export function listActiveLeases(options?: { readonly rootDir?: string }): FileLeaseRecord[] {
+  const leases = Array.from(getLeaseRegistry().values())
+  const filterRoot = options?.rootDir?.trim()
+  if (!filterRoot) return leases
+  const normalizedRoot = canonicalizeForwardPath(filterRoot)
+  return leases.filter((lease) => lease.rootDir === normalizedRoot)
+}
+
+/**
+ * True when `targetPath` falls inside a path the lease claims — owned *or*
+ * forbidden. Both directions matter to a merge gate: an owned path means the
+ * lease holder is editing it, and a forbidden path means the holder declared it
+ * sensitive; a branch that rewrites either one is a conflict a human must see.
+ */
+export function leaseClaimsPath(lease: FileLeaseRecord, targetPath: string): boolean {
+  const trimmed = targetPath.trim()
+  if (!trimmed) return false
+  const normalizedTarget = normalizeLeasePath(trimmed, lease.rootDir)
+  return [...lease.normalizedOwned, ...lease.normalizedForbidden].some((entry) =>
+    matchesLeaseEntry(normalizedTarget, entry),
+  )
 }
 
 /**

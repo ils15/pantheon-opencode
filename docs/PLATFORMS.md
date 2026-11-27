@@ -81,6 +81,13 @@ writers are safe, and a corrupt ledger is moved aside as
 `step-ledger.json.corrupt.<ts>` — see
 [Step dependencies](opencode.md#step-dependencies-and-readiness).
 
+Worker branches live in git, not in `.pantheon/`: `spawn_ephemeral` preserves a
+worker's edits on `pantheon/eph/<stepKey>` and records `ephemeral.branch` /
+`ephemeral.baseHead` on the ledger entry, and
+`pantheon_step_ledger(action="merge_ephemeral")` lands it behind a single-use
+token (`mergedAt`/`mergeTree` afterwards) — see
+[Ephemeral branch merge](opencode.md#ephemeral-branch-merge).
+
 With the recommended `opencode plugin add pantheon-opencode` install, agents,
 skills, commands, and the TUI bundle are loaded directly from OpenCode's npm
 plugin cache—no redundant copies in `~/.config/opencode/agents/` or

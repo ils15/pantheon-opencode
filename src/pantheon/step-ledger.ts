@@ -32,6 +32,7 @@ import {
 } from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { getSharedBus } from './bus.ts'
+import { mergeEphemeralStep } from './ephemeral-merge.ts'
 import {
   deriveEphemeralRoleSlug,
   spawnEphemeralWorker,
@@ -79,6 +80,8 @@ export interface EphemeralStepMetadata {
   verdict?: string
   mergeTree?: string
   mergedAt?: string
+  /** Set by `merge_ephemeral(mode:"discard")`; the only action that deletes the branch. */
+  discardedAt?: string
   role?: string
   worktreeDir?: string
 }
@@ -907,7 +910,8 @@ export function createStepLedgerTool(
     name: 'pantheon_step_ledger',
     description:
       'Manage atomic Step-Ledger execution contracts with hard verification gates, Git checkpoints, bugfix reproduction tracking, and isolated sub-session step runner. ' +
-      'Lifecycle: init_step | execute_step -> [record_reproduction] -> record_mutation -> record_verification -> complete_step | rollback_step | unblock_step | status.',
+      'Lifecycle: init_step | execute_step -> [record_reproduction] -> record_mutation -> record_verification -> complete_step | rollback_step | unblock_step | status. ' +
+      'Ephemeral handoff: spawn_ephemeral -> verify_ephemeral -> merge_ephemeral (preview mints a single-use MERGE- token; apply squashes it unstaged, or discard deletes the branch).',
     input: {
       type: 'object',
       additionalProperties: false,
@@ -926,11 +930,12 @@ export function createStepLedgerTool(
             'complete_step',
             'rollback_step',
             'unblock_step',
+            'merge_ephemeral',
             'scrub_checkpoints',
             'status',
           ],
           description:
-            'Ledger operation (init_step | execute_step | spawn_ephemeral | verify_ephemeral | record_reproduction | record_mutation | record_verification | complete_step | rollback_step | unblock_step | scrub_checkpoints | status)',
+            'Ledger operation (init_step | execute_step | spawn_ephemeral | verify_ephemeral | record_reproduction | record_mutation | record_verification | complete_step | rollback_step | unblock_step | merge_ephemeral | scrub_checkpoints | status)',
         },
         stepKey: {
           type: 'string',
@@ -1053,6 +1058,27 @@ export function createStepLedgerTool(
           type: 'boolean',
           description: 'scrub_checkpoints: report what would be rewritten without persisting',
         },
+        mode: {
+          type: 'string',
+          enum: ['preview', 'apply', 'discard'],
+          description:
+            'merge_ephemeral mode: preview (mint token, change nothing) | apply (squash merge) | discard (delete the branch)',
+        },
+        confirmToken: {
+          type: 'string',
+          description:
+            'merge_ephemeral: the single-use MERGE-… token returned by mode:"preview" (required for apply/discard)',
+        },
+        allowDirty: {
+          type: 'boolean',
+          description:
+            'merge_ephemeral: permit an unstaged/untracked working tree (staged changes are always refused)',
+        },
+        commit: {
+          type: 'boolean',
+          description:
+            'merge_ephemeral apply: commit the squash instead of leaving it unstaged (default false, review-first)',
+        },
       },
     },
     output: {},
@@ -1119,6 +1145,30 @@ export function createStepLedgerTool(
         }
 
         const key = assertSafeStepKey(input.stepKey)
+
+        if (action === 'merge_ephemeral') {
+          const callerSidMerge =
+            typeof (context as { sessionID?: unknown } | undefined)?.sessionID === 'string'
+              ? (context as { sessionID?: string }).sessionID
+              : undefined
+          const mergeOut = await mergeEphemeralStep({
+            cwd,
+            stepKey: key,
+            // The tool input is untyped JSON: pass the raw string through so the
+            // module can refuse an unknown mode instead of silently previewing.
+            ...(typeof input.mode === 'string'
+              ? { mode: input.mode as 'preview' | 'apply' | 'discard' }
+              : {}),
+            ...(typeof input.confirmToken === 'string' && input.confirmToken.trim()
+              ? { confirmToken: input.confirmToken.trim() }
+              : {}),
+            ...(typeof input.allowDirty === 'boolean' ? { allowDirty: input.allowDirty } : {}),
+            ...(typeof input.commit === 'boolean' ? { commit: input.commit } : {}),
+            ...(typeof input.cascade === 'boolean' ? { cascade: input.cascade } : {}),
+            ...(callerSidMerge ? { sessionID: callerSidMerge } : {}),
+          })
+          return jsonResult(mergeOut)
+        }
 
         if (action === 'init_step') {
           const objective = typeof input.objective === 'string' ? input.objective.trim() : ''

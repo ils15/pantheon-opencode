@@ -4,13 +4,13 @@
  *
  * The S1 review rejected probe evidence that only lived in a chat transcript.
  * This script is the committed, re-runnable form: each mutant disables exactly
- * one mechanism in `step-dependencies.ts` / `step-ledger.ts` and MUST turn a
- * named test red. A mutant that survives means the corresponding gate is not
- * actually enforced by the suite.
+ * one mechanism in `step-dependencies.ts` / `step-ledger.ts` /
+ * `ephemeral-merge.ts` and MUST turn a named test red. A mutant that survives
+ * means the corresponding gate is not actually enforced by the suite.
  *
  * Usage:
  *   node scripts/verify-step-ledger-mutations.mjs
- *   node scripts/verify-step-ledger-mutations.mjs --runs 5 --only lock-bypass
+ *   node scripts/verify-step-ledger-mutations.mjs --runs 5 --only S3-token-check-removed
  *
  * It temporarily rewrites the source file(s), runs the narrow slice, restores
  * the original bytes in a `finally`, and exits non-zero if any expectation
@@ -30,6 +30,8 @@ const LEDGER = 'src/pantheon/step-ledger.ts'
 const DEPS = 'src/pantheon/step-dependencies.ts'
 const CHECKPOINT = 'src/pantheon/git-checkpoint.ts'
 const HOOK = 'scripts/hooks/check-pantheon-runtime-staged.mjs'
+const MERGE = 'src/pantheon/ephemeral-merge.ts'
+const MERGE_SLICE = 'tests/pantheon/ephemeral-merge.test.ts'
 
 /**
  * @type {Array<{
@@ -348,6 +350,103 @@ const MUTANTS = [
       },
     ],
   },
+  // --- S3: protected ephemeral merge (ephemeral-merge.ts) -------------------
+  {
+    id: 'S3-token-check-removed',
+    description: 'merge_ephemeral apply accepts any (or no) confirmToken',
+    slice: MERGE_SLICE,
+    expect:
+      'S3-6 apply requires a token that is single-use, expiring, and invalid after any change',
+    edits: [
+      {
+        file: MERGE,
+        from: '  const verdict = validateToken(storeKey, input.confirmToken, computedToken, now)\n  if (!verdict.ok) {',
+        to: '  const verdict = validateToken(storeKey, input.confirmToken, computedToken, now)\n  if (!verdict.ok && false) {',
+      },
+    ],
+  },
+  {
+    id: 'S3-single-use-removed',
+    description: 'a merge token is never burned, so it stays usable forever',
+    slice: MERGE_SLICE,
+    expect: 'S3-A2 two concurrent applies with one token: exactly one wins',
+    edits: [
+      {
+        file: MERGE,
+        from: '  const record = tokenStore().get(storeKey)\n  if (record) record.consumed = true',
+        to: '  const record = tokenStore().get(storeKey)\n  if (record) void record',
+      },
+    ],
+  },
+  {
+    id: 'S3-drift-check-removed',
+    description: 'apply ignores HEAD drift past ephemeral.baseHead',
+    slice: MERGE_SLICE,
+    expect: 'S3-2 apply refuses head_drift and leaves git status byte-identical',
+    edits: [
+      {
+        file: MERGE,
+        from: "  if (headDrift) {\n    return refuse(base, 'head_drift', {",
+        to: "  if (headDrift && false) {\n    return refuse(base, 'head_drift', {",
+      },
+    ],
+  },
+  {
+    id: 'S3-lease-check-removed',
+    description: 'apply ignores dirty/lease/branch overlaps',
+    slice: MERGE_SLICE,
+    expect:
+      "S3-4 apply refuses a second live pantheon/eph branch on the same file (source:'branch')",
+    edits: [
+      {
+        file: MERGE,
+        from: "  if (leaseConflicts.length > 0) {\n    return refuse(base, 'lease_conflict', {",
+        to: "  if (leaseConflicts.length > 0 && false) {\n    return refuse(base, 'lease_conflict', {",
+      },
+    ],
+  },
+  {
+    id: 'S3-recovery-reset-removed',
+    description: 'recovery skips `git reset --merge`, leaving an unmerged index behind',
+    slice: MERGE_SLICE,
+    expect:
+      'S3-5b an injected mid-apply conflict is aborted and the tree is restored byte-identically',
+    edits: [
+      {
+        file: MERGE,
+        from: "  const reset = await git(root, ['reset', '--merge'])\n  resetApplied = reset.ok",
+        to: "  const reset = await git(root, ['rev-parse', 'HEAD'])\n  resetApplied = reset.ok",
+      },
+    ],
+  },
+  {
+    id: 'S3-recovery-restore-skipped',
+    description: 'recovery trusts `git reset --merge` and never restores the checkpoint',
+    slice: MERGE_SLICE,
+    expect:
+      'S3-5b an injected mid-apply conflict is aborted and the tree is restored byte-identically',
+    edits: [
+      {
+        file: MERGE,
+        from: '      const restore = await restoreGitCheckpoint(root, preMerge.treeHash)',
+        to: '      const restore = { ok: true, reason: undefined }',
+      },
+    ],
+  },
+  {
+    id: 'S3-unstage-skipped',
+    description: 'apply leaves the squash staged instead of review-first (D05)',
+    slice: MERGE_SLICE,
+    expect:
+      'S3-A1 apply leaves the squash unstaged, records ephemeral metadata, emits step:merge, and keeps the branch',
+    edits: [
+      {
+        file: MERGE,
+        from: "    const unstaged = await git(root, ['reset'])",
+        to: "    const unstaged = await git(root, ['status'])",
+      },
+    ],
+  },
 ]
 
 function parseArgs(argv) {
@@ -410,7 +509,9 @@ if (selected.length === 0) {
 const backupPath = join(root, '.step-ledger-mutation-backup')
 let failures = 0
 
-console.log(`Running ${selected.length} mutant(s) x ${options.runs} run(s) against ${SLICE}\n`)
+console.log(
+  `Running ${selected.length} mutant(s) x ${options.runs} run(s) against each mutant's slice\n`,
+)
 
 for (const mutant of selected) {
   let originals = new Map()

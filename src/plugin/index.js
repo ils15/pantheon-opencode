@@ -6,7 +6,7 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
 });
 
 // src/plugin.ts
-import { appendFileSync as appendFileSync3, existsSync as existsSync27, mkdirSync as mkdirSync15, readdirSync as readdirSync9, readFileSync as readFileSync22 } from "node:fs";
+import { appendFileSync as appendFileSync3, existsSync as existsSync28, mkdirSync as mkdirSync16, readdirSync as readdirSync9, readFileSync as readFileSync22 } from "node:fs";
 import { realpath as realpathAsync } from "node:fs/promises";
 import path5 from "node:path";
 import { fileURLToPath as fileURLToPath6 } from "node:url";
@@ -819,7 +819,7 @@ var PantheonBus = class {
    * Wait asynchronously for a specific event matching a predicate, with an optional timeout.
    */
   waitFor(event, predicate, timeoutMs = 3e4) {
-    return new Promise((resolve25, reject) => {
+    return new Promise((resolve26, reject) => {
       let timer = null;
       let unsubscribe = null;
       if (timeoutMs > 0 && Number.isFinite(timeoutMs)) {
@@ -833,7 +833,7 @@ var PantheonBus = class {
           if (predicate(payload)) {
             if (timer) clearTimeout(timer);
             unsubscribe?.();
-            resolve25(payload);
+            resolve26(payload);
           }
         } catch (err) {
           if (timer) clearTimeout(timer);
@@ -5801,13 +5801,21 @@ function resolveV2SandboxConfig(options) {
 // src/pantheon/file-leases.ts
 import path2 from "node:path";
 var LEASE_REGISTRY_KEY = "__pantheonFileLeases";
+var LEASE_REGISTRY_FALLBACK_KEY = "__pantheonFileLeaseRegistry";
 var WINDOWS_DRIVE_RE = /^([a-zA-Z]):\//;
 function getLeaseRegistry() {
   const host = globalThis;
-  if (!host[LEASE_REGISTRY_KEY]) {
-    host[LEASE_REGISTRY_KEY] = /* @__PURE__ */ new Map();
+  const primary = host[LEASE_REGISTRY_KEY];
+  if (primary instanceof Map) return primary;
+  const fallback = host[LEASE_REGISTRY_FALLBACK_KEY];
+  if (fallback instanceof Map) return fallback;
+  const registry = /* @__PURE__ */ new Map();
+  if (primary === void 0) {
+    host[LEASE_REGISTRY_KEY] = registry;
+  } else {
+    host[LEASE_REGISTRY_FALLBACK_KEY] = registry;
   }
-  return host[LEASE_REGISTRY_KEY];
+  return registry;
 }
 function isAbsoluteAnyPlatform(forwardPath) {
   return forwardPath.startsWith("/") || WINDOWS_DRIVE_RE.test(forwardPath) || forwardPath.startsWith("//");
@@ -5852,6 +5860,21 @@ function matchesLeaseEntry(normalizedTarget, normalizedEntry) {
 }
 function getFileLease(sessionID) {
   return getLeaseRegistry().get(sessionID);
+}
+function listActiveLeases(options) {
+  const leases = Array.from(getLeaseRegistry().values());
+  const filterRoot = options?.rootDir?.trim();
+  if (!filterRoot) return leases;
+  const normalizedRoot = canonicalizeForwardPath(filterRoot);
+  return leases.filter((lease) => lease.rootDir === normalizedRoot);
+}
+function leaseClaimsPath(lease, targetPath) {
+  const trimmed = targetPath.trim();
+  if (!trimmed) return false;
+  const normalizedTarget = normalizeLeasePath(trimmed, lease.rootDir);
+  return [...lease.normalizedOwned, ...lease.normalizedForbidden].some(
+    (entry) => matchesLeaseEntry(normalizedTarget, entry)
+  );
 }
 function checkFileLease(sessionID, targetPath) {
   if (!sessionID) return { allowed: true };
@@ -7548,12 +7571,12 @@ function recordSkip(sink, skipReason) {
   );
 }
 function abortDeadline(signal) {
-  return new Promise((resolve25) => {
+  return new Promise((resolve26) => {
     if (signal.aborted) {
-      resolve25("timeout");
+      resolve26("timeout");
       return;
     }
-    signal.addEventListener("abort", () => resolve25("timeout"), { once: true });
+    signal.addEventListener("abort", () => resolve26("timeout"), { once: true });
   });
 }
 function createJ1RiskGateObserver(options) {
@@ -9768,12 +9791,12 @@ function recordSkip2(sink, skipReason) {
   );
 }
 function abortDeadline2(signal) {
-  return new Promise((resolve25) => {
+  return new Promise((resolve26) => {
     if (signal.aborted) {
-      resolve25("timeout");
+      resolve26("timeout");
       return;
     }
-    signal.addEventListener("abort", () => resolve25("timeout"), { once: true });
+    signal.addEventListener("abort", () => resolve26("timeout"), { once: true });
   });
 }
 function createJ3EscalationObserver(options) {
@@ -12867,25 +12890,26 @@ ${layers.history.map((h) => h.trim()).join("\n\n")}`
 import { randomUUID as randomUUID4 } from "node:crypto";
 import {
   closeSync as closeSync4,
-  existsSync as existsSync18,
+  existsSync as existsSync19,
   linkSync,
-  mkdirSync as mkdirSync11,
+  mkdirSync as mkdirSync12,
   openSync as openSync4,
   readdirSync as readdirSync4,
   readFileSync as readFileSync15,
   realpathSync as realpathSync9,
   renameSync as renameSync4,
   statSync as statSync6,
-  unlinkSync as unlinkSync4,
+  unlinkSync as unlinkSync5,
   writeFileSync as writeFileSync8,
   writeSync
 } from "node:fs";
-import { basename as basename7, dirname as dirname14, join as join23, resolve as resolve18, sep as sep8 } from "node:path";
+import { basename as basename7, dirname as dirname14, join as join24, resolve as resolve19, sep as sep8 } from "node:path";
 
-// src/pantheon/ephemeral-worker.ts
+// src/pantheon/ephemeral-merge.ts
 import { execFile as execFile5 } from "node:child_process";
-import { existsSync as existsSync15 } from "node:fs";
-import { join as join20 } from "node:path";
+import { createHash as createHash7 } from "node:crypto";
+import { existsSync as existsSync15, mkdirSync as mkdirSync10, rmSync as rmSync3, unlinkSync as unlinkSync4 } from "node:fs";
+import { isAbsolute as isAbsolute6, join as join20, resolve as resolve16 } from "node:path";
 import { promisify as promisify5 } from "node:util";
 
 // src/pantheon/board-messages.ts
@@ -13242,9 +13266,9 @@ var BackgroundJobBoard = class {
     if (existing && (TERMINAL_STATES.has(existing.state) || existing.state === "reconciled")) {
       return Promise.resolve(existing);
     }
-    return new Promise((resolve25, reject) => {
+    return new Promise((resolve26, reject) => {
       const waiter = {
-        resolve: resolve25,
+        resolve: resolve26,
         reject,
         timer: setTimeout(() => {
           this.removeTerminalWaiter(taskID, waiter);
@@ -13938,8 +13962,8 @@ async function appendBoardMessage(workspaceDir, input) {
 `, "utf8");
     return entry;
   });
-  const firstLine = message.body.split(/\r?\n/)[0] ?? message.body;
-  const summary = firstLine.length > 160 ? `${firstLine.slice(0, 157)}...` : firstLine;
+  const firstLine2 = message.body.split(/\r?\n/)[0] ?? message.body;
+  const summary = firstLine2.length > 160 ? `${firstLine2.slice(0, 157)}...` : firstLine2;
   getSharedBus().emit("board:message", {
     seq: message.seq,
     channel: message.channel,
@@ -14448,6 +14472,1100 @@ async function restoreGitCheckpoint(cwd, treeHash) {
   }
 }
 
+// src/pantheon/worktree-orchestrator.ts
+import { execFile as execFile4 } from "node:child_process";
+import { accessSync, constants as constants3, existsSync as existsSync14, mkdirSync as mkdirSync9, realpathSync as realpathSync6 } from "node:fs";
+import { basename as basename5, dirname as dirname13, join as join19, resolve as resolve15 } from "node:path";
+import { promisify as promisify4 } from "node:util";
+var execFileAsync4 = promisify4(execFile4);
+var SAFE_TASK_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
+function isAbortError(err) {
+  return err instanceof Error && err.name === "AbortError";
+}
+function sanitizeTaskSlug(raw) {
+  const base = basename5(raw.trim()).replace(/[^a-zA-Z0-9._-]/g, "-");
+  if (!base || !SAFE_TASK_RE.test(base) || base.includes("..")) {
+    return `wt-${Date.now()}`;
+  }
+  return base;
+}
+function resolvePantheonWorktreePath(sourceDirectory, taskName) {
+  const sourceReal = existsSync14(sourceDirectory) ? realpathSync6(resolve15(sourceDirectory)) : resolve15(sourceDirectory);
+  const parent = dirname13(sourceReal);
+  const repoName = basename5(sourceReal) || "workspace";
+  const taskSlug = sanitizeTaskSlug(taskName);
+  return join19(parent, ".pantheon-worktrees", repoName, taskSlug);
+}
+function isInsideOrDotPantheon(sourceDirectory, candidate) {
+  const srcReal = existsSync14(sourceDirectory) ? realpathSync6(resolve15(sourceDirectory)) : resolve15(sourceDirectory);
+  const candResolved = resolve15(candidate);
+  return candResolved === srcReal || candResolved.startsWith(`${srcReal}/`) || candResolved.includes("/.pantheon/") || candResolved.includes("\\.pantheon\\");
+}
+var REQUIRED_WORKTREE_HOOKS = ["commit-msg", "pre-commit"];
+async function assertWorktreeHooks(source, targetDir, signal) {
+  let configured = "";
+  try {
+    configured = (await runGit2(source, ["config", "--get", "core.hooksPath"], signal)).trim();
+  } catch (err) {
+    if (isAbortError(err)) throw err;
+    return;
+  }
+  if (!configured) return;
+  const hooksDir = resolve15(
+    targetDir,
+    (await runGit2(targetDir, ["rev-parse", "--git-path", "hooks"], signal)).trim()
+  );
+  const problems = [];
+  if (!existsSync14(hooksDir)) {
+    problems.push(`hooks directory ${hooksDir} does not exist`);
+  } else {
+    for (const hook of REQUIRED_WORKTREE_HOOKS) {
+      const file = join19(hooksDir, hook);
+      if (!existsSync14(file)) {
+        problems.push(`${hook} is missing from ${hooksDir}`);
+        continue;
+      }
+      try {
+        accessSync(file, constants3.X_OK);
+      } catch {
+        problems.push(`${hook} is not executable`);
+      }
+    }
+  }
+  if (problems.length === 0) return;
+  throw new Error(
+    `Refusing to create ${targetDir}: git would silently skip its hooks (${problems.join("; ")}). core.hooksPath=${configured} comes from the shared .git/config, but a fresh worktree only contains tracked files. Fix the source checkout (npm run prepare) and create the worktree again.`
+  );
+}
+async function runGit2(cwd, args, signal) {
+  if (signal?.aborted) {
+    const abortErr = new Error("Worktree operation aborted");
+    abortErr.name = "AbortError";
+    throw abortErr;
+  }
+  const { stdout } = await execFileAsync4("git", [...args], {
+    cwd,
+    signal,
+    timeout: 15e3,
+    maxBuffer: 4 * 1024 * 1024
+  });
+  return stdout;
+}
+function createPantheonWorktreeDefinition() {
+  return {
+    id: "pantheon-worktree",
+    create: async (input, context) => {
+      const source = resolve15(input.sourceDirectory);
+      const requestedDir = input.directory ? resolve15(input.directory) : "";
+      const targetDir = !requestedDir || isInsideOrDotPantheon(source, requestedDir) ? resolvePantheonWorktreePath(source, basename5(requestedDir) || `wt-${Date.now()}`) : requestedDir;
+      if (input.branch && (!SAFE_TASK_RE.test(input.branch) || input.branch.startsWith("-"))) {
+        throw new Error(`Unsafe git ref "${input.branch}" for worktree creation`);
+      }
+      mkdirSync9(dirname13(targetDir), { recursive: true });
+      const args = ["worktree", "add", "--detach", targetDir];
+      if (input.branch) args.push(input.branch);
+      await runGit2(source, args, context.signal);
+      try {
+        await assertWorktreeHooks(source, targetDir, context.signal);
+      } catch (err) {
+        if (isAbortError(err)) throw err;
+        if (existsSync14(targetDir)) {
+          try {
+            await runGit2(source, ["worktree", "remove", "--force", targetDir], context.signal);
+          } catch {
+          }
+        }
+        throw err;
+      }
+      return { directory: existsSync14(targetDir) ? realpathSync6(targetDir) : targetDir };
+    },
+    remove: async (input, context) => {
+      const dir = resolve15(input.directory);
+      const parent = dirname13(dir);
+      const args = ["worktree", "remove"];
+      if (input.force) args.push("--force");
+      args.push(dir);
+      try {
+        await runGit2(existsSync14(dir) ? dir : parent, args, context.signal);
+      } catch (err) {
+        if (isAbortError(err)) throw err;
+        throw err;
+      }
+    },
+    list: async (sourceDirectory, context) => {
+      const source = resolve15(sourceDirectory);
+      const raw = await runGit2(source, ["worktree", "list", "--porcelain"], context.signal);
+      const entries = [];
+      const srcReal = existsSync14(source) ? realpathSync6(source) : source;
+      for (const line of raw.split(/\r?\n/)) {
+        if (!line.startsWith("worktree ")) continue;
+        const wtPath = line.slice("worktree ".length).trim();
+        if (!wtPath) continue;
+        const wtReal = existsSync14(wtPath) ? realpathSync6(wtPath) : wtPath;
+        entries.push({
+          directory: wtReal,
+          type: wtReal === srcReal ? "root" : "worktree"
+        });
+      }
+      return entries;
+    }
+  };
+}
+function jsonResult2(payload) {
+  return { output: JSON.stringify(payload) };
+}
+function createWorktreeTool(fallbackDir) {
+  const driver = createPantheonWorktreeDefinition();
+  return {
+    name: "pantheon_worktree",
+    description: "Manage isolated git worktrees strictly outside the main repository under <project-parent>/.pantheon-worktrees/<repo>/<task> (actions: create | list | remove).",
+    input: {
+      type: "object",
+      additionalProperties: false,
+      required: ["action"],
+      properties: {
+        action: { type: "string", enum: ["create", "list", "remove"] },
+        task: { type: "string", description: "Short task slug for sibling worktree folder" },
+        branch: { type: "string", description: "Optional existing git branch/ref to check out" },
+        directory: { type: "string", description: "Target worktree directory (for remove)" },
+        force: { type: "boolean", description: "Force worktree removal even with dirty files" }
+      }
+    },
+    output: {},
+    execute: async (input, context) => {
+      try {
+        const action = typeof input.action === "string" ? input.action : "list";
+        const workspaceDir = resolveSharedPantheonRoot(resolveToolCwd(context, fallbackDir));
+        const ac = new AbortController();
+        if (action === "list") {
+          const entries = await driver.list(workspaceDir, { signal: ac.signal });
+          return jsonResult2({ ok: true, entries });
+        }
+        if (action === "create") {
+          const task = typeof input.task === "string" && input.task.trim() ? input.task.trim() : `wt-${Date.now()}`;
+          const targetDir = resolvePantheonWorktreePath(workspaceDir, task);
+          const res = await driver.create(
+            {
+              sourceDirectory: workspaceDir,
+              directory: targetDir,
+              ...typeof input.branch === "string" && input.branch.trim() ? { branch: input.branch.trim() } : {}
+            },
+            { signal: ac.signal }
+          );
+          return jsonResult2({ ok: true, action: "create", directory: res.directory });
+        }
+        if (action === "remove") {
+          const target = typeof input.directory === "string" && input.directory.trim() ? input.directory.trim() : typeof input.task === "string" && input.task.trim() ? resolvePantheonWorktreePath(workspaceDir, input.task.trim()) : "";
+          if (!target) return jsonResult2({ ok: false, error: "directory or task is required" });
+          await driver.remove(
+            { directory: target, force: input.force === true },
+            { signal: ac.signal }
+          );
+          return jsonResult2({ ok: true, action: "remove", directory: target });
+        }
+        return jsonResult2({ ok: false, error: `Unsupported action: ${action}` });
+      } catch (err) {
+        return jsonResult2({
+          ok: false,
+          error: err instanceof Error ? err.message : String(err)
+        });
+      }
+    }
+  };
+}
+
+// src/pantheon/ephemeral-merge.ts
+var execFileAsync5 = promisify5(execFile5);
+var MERGE_TOKEN_PREFIX = "MERGE-";
+var MERGE_TOKEN_TTL_MS = 10 * 60 * 1e3;
+var MERGE_TOKEN_RE = /^MERGE-[0-9a-f]{12}$/;
+var EPH_BRANCH_PREFIX = "pantheon/eph/";
+var SAFE_EPH_BRANCH_RE = /^[A-Za-z0-9._/-]+$/;
+var TOKEN_STORE_KEY = "__pantheonMergeTokens";
+var MERGE_TREE_MIN_GIT = [2, 38];
+function isPantheonRuntimePath2(rel) {
+  return rel === ".pantheon" || rel.startsWith(".pantheon/");
+}
+async function git(cwd, args) {
+  try {
+    const { stdout, stderr } = await execFileAsync5("git", [...args], {
+      cwd,
+      timeout: 3e4,
+      maxBuffer: 32 * 1024 * 1024,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" }
+    });
+    return { ok: true, code: 0, stdout, stderr };
+  } catch (err) {
+    const failure = err;
+    return {
+      ok: false,
+      code: typeof failure.code === "number" ? failure.code : 1,
+      stdout: failure.stdout ?? "",
+      stderr: failure.stderr ?? ""
+    };
+  }
+}
+function firstLine(text2) {
+  return text2.trim().split(/\r?\n/).find((line) => line.length > 0) ?? "";
+}
+function splitNul(text2) {
+  return text2.split("\0").filter((entry) => entry.length > 0);
+}
+function parseStatus(raw) {
+  const fields = splitNul(raw);
+  const entries = [];
+  for (let i = 0; i < fields.length; i += 1) {
+    const field = fields[i] ?? "";
+    if (field.length < 4) continue;
+    const index = field.slice(0, 1);
+    const worktree = field.slice(1, 2);
+    const paths = [field.slice(3)];
+    if (index === "R" || index === "C") {
+      const second = fields[i + 1];
+      if (second !== void 0) {
+        paths.push(second);
+        i += 1;
+      }
+    }
+    if (paths.every((entry) => isPantheonRuntimePath2(entry))) continue;
+    entries.push({ index, worktree, paths });
+  }
+  return entries;
+}
+async function readStatus(root) {
+  const res = await git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+  if (!res.ok) return [];
+  return parseStatus(res.stdout);
+}
+function statusFingerprint(entries) {
+  return entries.map((entry) => `${entry.index}${entry.worktree} ${entry.paths.join("\0")}`).sort().join("\n");
+}
+function dirtyPaths(entries) {
+  return entries.flatMap((entry) => [...entry.paths]);
+}
+function stagedPaths(entries) {
+  return entries.filter((entry) => entry.index !== " " && entry.index !== "?").flatMap((entry) => [...entry.paths]);
+}
+async function changedFiles(root, from, to) {
+  const res = await git(root, ["diff", "--name-only", "-z", from, to]);
+  if (!res.ok) return [];
+  return splitNul(res.stdout);
+}
+async function commitCount(root, range) {
+  const res = await git(root, ["rev-list", "--count", range]);
+  const parsed = Number.parseInt(res.stdout.trim(), 10);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+async function resolveCommit(root, ref) {
+  const res = await git(root, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
+  if (!res.ok) return void 0;
+  const sha = res.stdout.trim();
+  return /^[0-9a-f]{40,64}$/.test(sha) ? sha : void 0;
+}
+async function gitVersion(root) {
+  const res = await git(root, ["version"]);
+  const match = /(\d+)\.(\d+)/.exec(res.stdout);
+  if (!match) return [0, 0];
+  return [Number(match[1]), Number(match[2])];
+}
+function supportsMergeTree(version) {
+  const [major, minor] = version;
+  if (major > MERGE_TREE_MIN_GIT[0]) return true;
+  if (major < MERGE_TREE_MIN_GIT[0]) return false;
+  return minor >= MERGE_TREE_MIN_GIT[1];
+}
+async function diffDigest(root, baseHead, branch) {
+  const res = await git(root, ["diff", "--binary", "--no-color", baseHead, branch]);
+  return createHash7("sha256").update(res.stdout).digest("hex");
+}
+function parseMergeTreeOutput(stdout, code) {
+  const lines = stdout.split(/\r?\n/);
+  const tree = (lines[0] ?? "").trim();
+  if (!/^[0-9a-f]{40,64}$/.test(tree)) {
+    return {
+      ok: false,
+      clean: false,
+      conflicts: [],
+      via: "merge-tree",
+      error: `git merge-tree produced no tree${code === 1 ? " (conflict)" : ""}`
+    };
+  }
+  const conflicts = [];
+  for (const line of lines.slice(1)) {
+    if (!line.trim()) break;
+    conflicts.push(line.trim());
+  }
+  return {
+    ok: true,
+    clean: code === 0 && conflicts.length === 0,
+    mergeTree: tree,
+    conflicts,
+    via: "merge-tree"
+  };
+}
+async function previewInTempWorktree(root, branch, stepKey) {
+  const previewDir = resolvePantheonWorktreePath(root, `merge-preview-${stepKey}`);
+  let added = false;
+  try {
+    mkdirSync10(join20(previewDir, ".."), { recursive: true });
+    rmSync3(previewDir, { recursive: true, force: true });
+    const add = await git(root, ["worktree", "add", "--detach", previewDir, "HEAD"]);
+    if (!add.ok) {
+      return {
+        ok: false,
+        clean: false,
+        conflicts: [],
+        via: "temp-worktree",
+        error: `git worktree add failed: ${firstLine(add.stderr)}`
+      };
+    }
+    added = true;
+    const merge = await git(previewDir, ["merge", "--no-commit", "--no-ff", "--no-edit", branch]);
+    if (merge.ok) {
+      const tree = await git(previewDir, ["write-tree"]);
+      const treeSha = tree.stdout.trim();
+      return {
+        ok: true,
+        clean: true,
+        via: "temp-worktree",
+        ...tree.ok && /^[0-9a-f]{40,64}$/.test(treeSha) ? { mergeTree: treeSha } : {},
+        conflicts: []
+      };
+    }
+    const unmerged = await git(previewDir, ["diff", "--name-only", "-z", "--diff-filter=U"]);
+    const conflicts = splitNul(unmerged.stdout);
+    await git(previewDir, ["merge", "--abort"]);
+    return {
+      ok: conflicts.length > 0,
+      clean: false,
+      via: "temp-worktree",
+      conflicts,
+      ...conflicts.length === 0 ? { error: `git merge failed: ${firstLine(merge.stderr) || firstLine(merge.stdout)}` } : {}
+    };
+  } finally {
+    if (added) await git(root, ["worktree", "remove", "--force", previewDir]);
+    rmSync3(previewDir, { recursive: true, force: true });
+  }
+}
+async function previewMerge(root, branch, stepKey, forceLegacy) {
+  if (!forceLegacy && supportsMergeTree(await gitVersion(root))) {
+    const res = await git(root, ["merge-tree", "--write-tree", "--name-only", "HEAD", branch]);
+    if (res.code === 0 || res.code === 1) return parseMergeTreeOutput(res.stdout, res.code);
+    return {
+      ok: false,
+      clean: false,
+      conflicts: [],
+      via: "merge-tree",
+      error: `git merge-tree failed: ${firstLine(res.stderr) || firstLine(res.stdout)}`
+    };
+  }
+  return previewInTempWorktree(root, branch, stepKey);
+}
+function tokenStore() {
+  const host = globalThis;
+  if (!(host[TOKEN_STORE_KEY] instanceof Map)) {
+    host[TOKEN_STORE_KEY] = /* @__PURE__ */ new Map();
+  }
+  return host[TOKEN_STORE_KEY];
+}
+function tokenStoreKey(root, stepKey) {
+  return `${root}::${stepKey}`;
+}
+function computeMergeToken(fingerprint) {
+  const digest = createHash7("sha256").update(
+    [
+      fingerprint.stepKey,
+      fingerprint.branch,
+      fingerprint.baseHead,
+      fingerprint.head,
+      fingerprint.diffDigest
+    ].join("|")
+  ).digest("hex");
+  return `${MERGE_TOKEN_PREFIX}${digest.slice(0, 12)}`;
+}
+function validateToken(storeKey, presented, computed, now) {
+  const token = presented?.trim();
+  if (!token) {
+    return {
+      ok: false,
+      reason: "missing",
+      hint: 'Run mode:"preview" first and pass the returned token as confirmToken.'
+    };
+  }
+  if (!MERGE_TOKEN_RE.test(token)) {
+    return { ok: false, reason: "malformed", hint: "Tokens look like MERGE-<12 hex chars>." };
+  }
+  const record2 = tokenStore().get(storeKey);
+  if (!record2) {
+    return {
+      ok: false,
+      reason: "not_issued",
+      hint: 'No preview token is outstanding for this step in this process; run mode:"preview".'
+    };
+  }
+  if (record2.consumed) {
+    return {
+      ok: false,
+      reason: "already_used",
+      hint: 'Merge tokens are single-use; run mode:"preview" again for a fresh one.'
+    };
+  }
+  if (now > record2.expiresAt) {
+    return {
+      ok: false,
+      reason: "expired",
+      hint: 'Tokens live 10 minutes; run mode:"preview" again.'
+    };
+  }
+  if (token !== computed || record2.token !== computed) {
+    return {
+      ok: false,
+      reason: "stale",
+      hint: 'HEAD or the branch diff changed since the preview; run mode:"preview" again.'
+    };
+  }
+  return { ok: true };
+}
+async function mergeArtifactPath(root, name) {
+  const res = await git(root, ["rev-parse", "--git-path", name]);
+  if (!res.ok) return void 0;
+  const raw = res.stdout.trim();
+  if (!raw) return void 0;
+  return isAbsolute6(raw) ? raw : join20(root, raw);
+}
+async function inspectMergeState(root) {
+  const headPath = await mergeArtifactPath(root, "MERGE_HEAD");
+  const msgPath = await mergeArtifactPath(root, "MERGE_MSG");
+  return {
+    mergeHead: headPath ? existsSync15(headPath) : false,
+    mergeMsg: msgPath ? existsSync15(msgPath) : false
+  };
+}
+async function removeMergeArtifacts(root) {
+  for (const name of ["MERGE_HEAD", "MERGE_MSG"]) {
+    const artifact = await mergeArtifactPath(root, name);
+    if (!artifact) continue;
+    try {
+      if (existsSync15(artifact)) unlinkSync4(artifact);
+    } catch {
+    }
+  }
+}
+async function recoverFromFailedMerge(root, preMerge) {
+  const notes = [];
+  let aborted = false;
+  let resetApplied = false;
+  if ((await inspectMergeState(root)).mergeHead) {
+    const abort = await git(root, ["merge", "--abort"]);
+    aborted = abort.ok;
+    if (!abort.ok) notes.push(`git merge --abort failed: ${firstLine(abort.stderr)}`);
+  }
+  const reset = await git(root, ["reset", "--merge"]);
+  resetApplied = reset.ok;
+  if (!reset.ok) notes.push(`git reset --merge failed: ${firstLine(reset.stderr)}`);
+  await removeMergeArtifacts(root);
+  let compensated = false;
+  let restoredTree;
+  let restoreFailed;
+  let treeRestored = false;
+  if (preMerge.treeHash === void 0) {
+    notes.push("no pre-merge checkpoint: the tree could not be verified");
+    restoreFailed = { reason: "pre_merge_checkpoint_unavailable" };
+  } else {
+    const observed = await captureGitCheckpoint(root, "merge-recovery");
+    if (observed.ok && observed.treeHash === preMerge.treeHash) {
+      treeRestored = true;
+      restoredTree = preMerge.treeHash;
+    } else {
+      compensated = true;
+      const restore = await restoreGitCheckpoint(root, preMerge.treeHash);
+      const recheck = await captureGitCheckpoint(root, "merge-recovery");
+      if (restore.ok && recheck.ok && recheck.treeHash === preMerge.treeHash) {
+        treeRestored = true;
+        restoredTree = preMerge.treeHash;
+      } else {
+        restoreFailed = {
+          reason: restore.reason ?? "restore did not reproduce the pre-merge tree",
+          checkpoint: preMerge.treeHash
+        };
+      }
+    }
+  }
+  const statusRestored = statusFingerprint(await readStatus(root)) === preMerge.statusFingerprint;
+  if (!statusRestored) notes.push("git status differs from the pre-merge fingerprint");
+  const state = await inspectMergeState(root);
+  const mergeStatePresent = state.mergeHead || state.mergeMsg;
+  return {
+    aborted,
+    resetApplied,
+    treeRestored,
+    compensated,
+    ...restoredTree !== void 0 ? { restoredTree } : {},
+    ...restoreFailed !== void 0 ? { restoreFailed } : {},
+    statusRestored,
+    mergeStatePresent,
+    notes
+  };
+}
+function leaseConflictsFor(files, leases, callerSessionID) {
+  const conflicts = [];
+  for (const lease of leases) {
+    if (callerSessionID && lease.sessionID === callerSessionID) continue;
+    for (const file of files) {
+      if (!leaseClaimsPath(lease, file)) continue;
+      conflicts.push({ file, holder: lease.role || lease.sessionID, source: "lease" });
+    }
+  }
+  return conflicts;
+}
+async function branchConflictsFor(root, files, branch, stepKey, mergedSteps, warnings) {
+  const refs = await git(root, [
+    "for-each-ref",
+    "--format=%(refname:short)",
+    `refs/heads/${EPH_BRANCH_PREFIX}`
+  ]);
+  if (!refs.ok) return [];
+  const others = refs.stdout.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0 && line !== branch);
+  const conflicts = [];
+  for (const other of others) {
+    const otherKey = other.slice(EPH_BRANCH_PREFIX.length);
+    if (otherKey === stepKey) continue;
+    if (mergedSteps.has(otherKey)) continue;
+    const baseRes = await git(root, ["merge-base", "HEAD", `refs/heads/${other}`]);
+    const baseSha = baseRes.stdout.trim();
+    if (!baseRes.ok || !/^[0-9a-f]{40,64}$/.test(baseSha)) {
+      warnings.push(`branch ${other} has no merge base with HEAD; overlap not assessed`);
+      continue;
+    }
+    const otherFiles = await changedFiles(root, baseSha, `refs/heads/${other}`);
+    for (const file of otherFiles.filter((entry) => files.includes(entry))) {
+      conflicts.push({ file, holder: other, source: "branch" });
+    }
+  }
+  return conflicts;
+}
+function refuse(base, error, extra = {}) {
+  return { ...base, ok: false, error, noOp: true, ...extra };
+}
+async function mergeEphemeralStep(input) {
+  const mode = input.mode === "apply" || input.mode === "discard" || input.mode === "preview" ? input.mode : "preview";
+  const stepKey = input.stepKey;
+  const base = { mode, stepKey };
+  const now = input.now ?? Date.now();
+  if (input.mode !== void 0 && input.mode !== mode) {
+    return refuse(base, "invalid_mode", {
+      message: `mode must be one of preview|apply|discard (got "${String(input.mode)}")`
+    });
+  }
+  if (input.cascade === true) {
+    return refuse(base, "unsupported_option", {
+      message: "cascade is a rollback_step option; merge_ephemeral refuses it instead of silently ignoring a flag you expected to change behaviour."
+    });
+  }
+  const root = resolve16(input.cwd);
+  const sharedRoot = resolveSharedPantheonRoot(root);
+  const warnings = [];
+  if (!await isGitWorkspace(root)) {
+    return refuse(base, "not_a_git_repository", {
+      message: `${root} is not inside a git work tree`
+    });
+  }
+  const headNow = await resolveCommit(root, "HEAD");
+  if (!headNow) {
+    return refuse(base, "detached_head", { message: "HEAD does not resolve to a commit" });
+  }
+  const symbolic = await git(root, ["symbolic-ref", "-q", "HEAD"]);
+  if (!symbolic.ok) {
+    return refuse(base, "detached_head", {
+      head: headNow,
+      message: "HEAD is detached; a squash merge here would strand the result."
+    });
+  }
+  const currentBranch = symbolic.stdout.trim();
+  const store2 = readStepLedger(sharedRoot);
+  const entry = store2.steps[stepKey];
+  if (!entry) {
+    return refuse(base, "step_not_found", {
+      head: headNow,
+      message: `Step "${stepKey}" is not initialized in ${sharedRoot}`
+    });
+  }
+  const branch = entry.ephemeral?.branch;
+  if (!branch) {
+    return refuse(base, "missing_branch", {
+      head: headNow,
+      hint: "spawn_ephemeral records ephemeral.branch on the ledger entry after a preserve; re-run the worker or set it explicitly."
+    });
+  }
+  if (!branch.startsWith(EPH_BRANCH_PREFIX) || !SAFE_EPH_BRANCH_RE.test(branch) || branch.includes("..")) {
+    return refuse(base, "invalid_branch", {
+      branch,
+      head: headNow,
+      message: `ephemeral.branch must be a plain ${EPH_BRANCH_PREFIX}* branch name (got "${branch}")`,
+      hint: "A hand-edited ledger entry is refused before any git call; restore the worker branch name recorded by spawn_ephemeral."
+    });
+  }
+  if (branch === currentBranch) {
+    return refuse(base, "branch_is_head", {
+      branch,
+      head: headNow,
+      message: "The branch to merge is the checked-out branch."
+    });
+  }
+  if (!await resolveCommit(root, `refs/heads/${branch}`)) {
+    return refuse(base, "branch_missing", {
+      branch,
+      head: headNow,
+      hint: "The preserved branch no longer exists; there is nothing to merge or discard."
+    });
+  }
+  const baseHead = entry.ephemeral?.baseHead;
+  if (!baseHead) {
+    return refuse(base, "missing_base_head", {
+      branch,
+      head: headNow,
+      hint: "ephemeral.baseHead is required: without it the drift and content checks cannot be bound to the branch."
+    });
+  }
+  if (!await resolveCommit(root, baseHead)) {
+    return refuse(base, "unknown_base_head", {
+      branch,
+      baseHead,
+      head: headNow,
+      hint: "ephemeral.baseHead is not a commit in this repository (history rewritten or wrong checkout)."
+    });
+  }
+  const digest = await diffDigest(root, baseHead, branch);
+  const computedToken = computeMergeToken({
+    stepKey,
+    branch,
+    baseHead,
+    head: headNow,
+    diffDigest: digest
+  });
+  const storeKey = tokenStoreKey(root, stepKey);
+  if (mode === "discard") {
+    return discardEphemeralBranch({
+      base,
+      root,
+      sharedRoot,
+      stepKey,
+      branch,
+      baseHead,
+      headNow,
+      storeKey,
+      computedToken,
+      presented: input.confirmToken,
+      now
+    });
+  }
+  const statusEntries = await readStatus(root);
+  const statusPrint = statusFingerprint(statusEntries);
+  const dirty = dirtyPaths(statusEntries);
+  const staged = stagedPaths(statusEntries);
+  const mergeFiles = await changedFiles(root, baseHead, branch);
+  const driftCommits = await commitCount(root, `${baseHead}..HEAD`);
+  const headDrift = driftCommits > 0 ? { commits: driftCommits, files: await changedFiles(root, baseHead, "HEAD") } : void 0;
+  const dirtySet = new Set(dirty);
+  const leaseConflicts = mergeFiles.filter((file) => dirtySet.has(file)).map((file) => ({ file, holder: "working-tree", source: "dirty" }));
+  leaseConflicts.push(
+    ...leaseConflictsFor(mergeFiles, listActiveLeases({ rootDir: root }), input.sessionID)
+  );
+  const mergedSteps = new Set(
+    Object.values(store2.steps).filter((step) => Boolean(step.ephemeral?.mergedAt)).map((step) => step.stepKey)
+  );
+  leaseConflicts.push(
+    ...await branchConflictsFor(root, mergeFiles, branch, stepKey, mergedSteps, warnings)
+  );
+  const preview = await previewMerge(root, branch, stepKey, input.forceLegacyPreview === true);
+  if (!preview.ok) {
+    return refuse(base, "preview_failed", {
+      branch,
+      baseHead,
+      head: headNow,
+      changes: mergeFiles,
+      previewVia: preview.via,
+      ...preview.error ? { message: preview.error } : {},
+      tokenValid: false
+    });
+  }
+  const blockers = [];
+  if (staged.length > 0) blockers.push("dirty_index");
+  else if (input.allowDirty !== true && dirty.length > 0) blockers.push("worktree_dirty");
+  if (headDrift) blockers.push("head_drift");
+  if (leaseConflicts.length > 0) blockers.push("lease_conflict");
+  if (mergeFiles.length === 0) blockers.push("nothing_to_merge");
+  if (!preview.clean) blockers.push("merge_conflict");
+  if (mode === "preview") {
+    tokenStore().set(storeKey, {
+      token: computedToken,
+      fingerprint: `${stepKey}|${branch}|${baseHead}|${headNow}|${digest}`,
+      stepKey,
+      branch,
+      expiresAt: now + MERGE_TOKEN_TTL_MS,
+      consumed: false
+    });
+    const statusAfter = statusFingerprint(await readStatus(root));
+    const headAfter = await resolveCommit(root, "HEAD");
+    const result2 = {
+      ok: true,
+      ...base,
+      branch,
+      baseHead,
+      head: headNow,
+      commits: await commitCount(root, `${headNow}..${branch}`),
+      changes: mergeFiles,
+      clean: preview.clean,
+      ...preview.mergeTree ? { mergeTree: preview.mergeTree } : {},
+      previewVia: preview.via,
+      conflicts: preview.conflicts,
+      ...headDrift ? { headDrift } : {},
+      ...leaseConflicts.length > 0 ? { leaseConflicts } : {},
+      blockers,
+      readyToApply: blockers.length === 0,
+      token: computedToken,
+      tokenExpiresAt: new Date(now + MERGE_TOKEN_TTL_MS).toISOString(),
+      tokenValid: true,
+      treeUntouched: statusAfter === statusPrint && headAfter === headNow,
+      noOp: true,
+      ...warnings.length > 0 ? { warnings } : {}
+    };
+    return result2;
+  }
+  if (staged.length > 0) {
+    return refuse(base, "dirty_index", {
+      branch,
+      baseHead,
+      head: headNow,
+      changes: mergeFiles,
+      message: "The index has staged changes; commit or stash them first (they cannot be restored after a merge attempt)."
+    });
+  }
+  if (input.allowDirty !== true && dirty.length > 0) {
+    return refuse(base, "worktree_dirty", {
+      branch,
+      baseHead,
+      head: headNow,
+      changes: mergeFiles,
+      message: `The working tree has ${dirty.length} local change(s); pass allowDirty:true to merge over them.`
+    });
+  }
+  if (headDrift) {
+    return refuse(base, "head_drift", {
+      branch,
+      baseHead,
+      head: headNow,
+      commits: headDrift.commits,
+      changes: mergeFiles,
+      headDrift,
+      tokenValid: false,
+      hint: "HEAD moved past ephemeral.baseHead; the worker verdict no longer covers this tree. Re-verify against the new HEAD, then re-run preview."
+    });
+  }
+  if (leaseConflicts.length > 0) {
+    return refuse(base, "lease_conflict", {
+      branch,
+      baseHead,
+      head: headNow,
+      changes: mergeFiles,
+      leaseConflicts,
+      hint: "Another claim covers these files (local edits, another session lease, or a second live ephemeral branch). Resolve it before merging."
+    });
+  }
+  if (mergeFiles.length === 0) {
+    return refuse(base, "nothing_to_merge", {
+      branch,
+      baseHead,
+      head: headNow,
+      hint: "The branch has no changes against its recorded base; only discard can remove it."
+    });
+  }
+  const verdict = validateToken(storeKey, input.confirmToken, computedToken, now);
+  if (!verdict.ok) {
+    return refuse(base, "confirm_token_required", {
+      branch,
+      baseHead,
+      head: headNow,
+      changes: mergeFiles,
+      clean: preview.clean,
+      ...preview.mergeTree ? { mergeTree: preview.mergeTree } : {},
+      previewVia: preview.via,
+      conflicts: preview.conflicts,
+      tokenValid: false,
+      message: `confirmToken rejected: ${verdict.reason ?? "invalid"}`,
+      ...verdict.hint ? { hint: verdict.hint } : {}
+    });
+  }
+  if (!preview.clean) {
+    return refuse(base, "merge_conflict", {
+      branch,
+      baseHead,
+      head: headNow,
+      changes: mergeFiles,
+      clean: false,
+      conflicts: preview.conflicts,
+      ...preview.mergeTree ? { mergeTree: preview.mergeTree } : {},
+      previewVia: preview.via,
+      tokenValid: true,
+      hint: "The preview found conflicts; nothing was touched. Resolve them on the branch and re-preview."
+    });
+  }
+  const preMerge = await captureGitCheckpoint(root, `${stepKey}-pre-merge`);
+  if (!preMerge.ok || !preMerge.treeHash) {
+    return refuse(base, "checkpoint_failed", {
+      branch,
+      baseHead,
+      head: headNow,
+      tokenValid: true,
+      message: `Could not capture the pre-merge checkpoint: ${preMerge.reason ?? "unknown error"}`,
+      hint: "Refusing to merge without a restore point."
+    });
+  }
+  const record2 = tokenStore().get(storeKey);
+  if (record2) record2.consumed = true;
+  if (input.onBeforeMerge) await input.onBeforeMerge();
+  const merge = await git(root, ["merge", "--squash", "--no-edit", branch]);
+  if (!merge.ok) {
+    const unmerged = await git(root, ["diff", "--name-only", "-z", "--diff-filter=U"]);
+    const recovery = await recoverFromFailedMerge(root, {
+      treeHash: preMerge.treeHash,
+      statusFingerprint: statusPrint
+    });
+    return {
+      ...base,
+      ok: false,
+      error: "merge_conflict",
+      branch,
+      baseHead,
+      head: headNow,
+      changes: mergeFiles,
+      clean: false,
+      conflicts: splitNul(unmerged.stdout),
+      previewVia: preview.via,
+      ...preview.mergeTree ? { mergeTree: preview.mergeTree } : {},
+      tokenValid: true,
+      noOp: recovery.treeRestored && !recovery.mergeStatePresent,
+      recovery,
+      treeRestored: recovery.treeRestored,
+      ...recovery.restoredTree ? { restoredTree: recovery.restoredTree } : {},
+      ...recovery.restoreFailed ? { restoreFailed: recovery.restoreFailed } : {},
+      message: `git merge --squash failed: ${firstLine(merge.stderr) || firstLine(merge.stdout)}`,
+      hint: recovery.treeRestored ? "The worktree is back in its exact pre-merge state and no merge is in progress." : "The worktree could NOT be fully restored \u2014 recover it from recovery.restoreFailed.checkpoint."
+    };
+  }
+  let committed = false;
+  let commitHash;
+  let commitError;
+  if (input.commit === true) {
+    const message = `chore(pantheon): merge ${branch} for step ${stepKey}`;
+    let commit = await git(root, ["commit", "-m", message]);
+    if (!commit.ok) {
+      commit = await git(root, [
+        "-c",
+        "user.name=Pantheon",
+        "-c",
+        "user.email=pantheon@local",
+        "commit",
+        "-m",
+        message
+      ]);
+    }
+    if (commit.ok) {
+      committed = true;
+      commitHash = await resolveCommit(root, "HEAD");
+    } else {
+      commitError = firstLine(commit.stderr) || firstLine(commit.stdout) || "git commit failed";
+    }
+  }
+  if (input.commit === true && !committed) {
+    const recovery = await recoverFromFailedMerge(root, {
+      treeHash: preMerge.treeHash,
+      statusFingerprint: statusPrint
+    });
+    return {
+      ...base,
+      ok: false,
+      error: "commit_failed",
+      branch,
+      baseHead,
+      head: headNow,
+      changes: mergeFiles,
+      tokenValid: true,
+      recovery,
+      noOp: recovery.treeRestored && !recovery.mergeStatePresent,
+      treeRestored: recovery.treeRestored,
+      ...recovery.restoredTree ? { restoredTree: recovery.restoredTree } : {},
+      ...recovery.restoreFailed ? { restoreFailed: recovery.restoreFailed } : {},
+      message: `commit:true was requested but git commit failed: ${commitError ?? "unknown error"}`,
+      hint: recovery.treeRestored ? "The squash was undone and the worktree is back in its exact pre-merge state." : "The worktree could NOT be fully restored \u2014 recover it from recovery.restoreFailed.checkpoint."
+    };
+  }
+  if (!committed) {
+    const unstaged = await git(root, ["reset"]);
+    if (!unstaged.ok) {
+      const recovery = await recoverFromFailedMerge(root, {
+        treeHash: preMerge.treeHash,
+        statusFingerprint: statusPrint
+      });
+      return {
+        ...base,
+        ok: false,
+        error: "unstage_failed",
+        branch,
+        baseHead,
+        head: headNow,
+        changes: mergeFiles,
+        tokenValid: true,
+        recovery,
+        treeRestored: recovery.treeRestored,
+        ...recovery.restoredTree ? { restoredTree: recovery.restoredTree } : {},
+        ...recovery.restoreFailed ? { restoreFailed: recovery.restoreFailed } : {},
+        message: `git reset failed after the squash: ${firstLine(unstaged.stderr)}`
+      };
+    }
+  }
+  await removeMergeArtifacts(root);
+  const finalState = await inspectMergeState(root);
+  const mergedAt = new Date(now).toISOString();
+  const mergeTree = preview.mergeTree ?? await resolveCommit(root, "HEAD^{tree}");
+  const recorded = updateStepLedger(sharedRoot, (ledger) => {
+    const target = ledger.steps[stepKey];
+    if (!target) return { recorded: false };
+    const ephemeral = {
+      ...target.ephemeral,
+      branch,
+      baseHead,
+      ...mergeTree ? { mergeTree } : {},
+      mergedAt,
+      role: target.ephemeral?.role ?? target.agent
+    };
+    delete ephemeral.discardedAt;
+    target.ephemeral = ephemeral;
+    target.updatedAt = mergedAt;
+    return { recorded: true, step: target };
+  });
+  getSharedBus().emit("step:merge", {
+    stepKey,
+    branch,
+    baseHead,
+    head: headNow,
+    mode: "apply",
+    ...mergeTree ? { mergeTree } : {},
+    mergedAt,
+    committed,
+    ...commitHash ? { commit: commitHash } : {},
+    timestamp: now
+  });
+  const workerRole = recorded.recorded ? recorded.step?.ephemeral?.role ?? recorded.step?.agent ?? "zeus" : "zeus";
+  try {
+    await appendBoardMessage(sharedRoot, {
+      channel: "swarm",
+      threadId: stepKey,
+      stepKey,
+      from: "zeus",
+      to: [workerRole],
+      tag: "done",
+      body: committed ? `[done] @${workerRole} merged ${branch} into ${currentBranch} as commit ${commitHash?.slice(0, 12) ?? "(unknown)"}` : `[done] @${workerRole} merged ${branch} into ${currentBranch} (squash, changes left unstaged for review)`
+    });
+  } catch {
+  }
+  const result = {
+    ...base,
+    ok: true,
+    branch,
+    baseHead,
+    head: headNow,
+    changes: mergeFiles,
+    clean: true,
+    ...mergeTree ? { mergeTree } : {},
+    previewVia: preview.via,
+    tokenValid: true,
+    committed,
+    ...commitHash ? { commitHash } : {},
+    unstaged: !committed,
+    branchKept: true,
+    mergedAt,
+    metadataRecorded: recorded.recorded,
+    noOp: false,
+    treeUntouched: false,
+    ...recorded.recorded && recorded.step ? { step: recorded.step } : {},
+    ...warnings.length > 0 ? { warnings } : {}
+  };
+  if (finalState.mergeHead || finalState.mergeMsg) {
+    return {
+      ...result,
+      ok: false,
+      error: "merge_state_left_behind",
+      message: "MERGE_HEAD/MERGE_MSG survived a successful squash; inspect the checkout before committing."
+    };
+  }
+  return result;
+}
+async function discardEphemeralBranch(input) {
+  const { base, root, sharedRoot, stepKey, branch, baseHead, headNow, storeKey, now } = input;
+  const verdict = validateToken(storeKey, input.presented, input.computedToken, now);
+  if (!verdict.ok) {
+    return refuse(base, "confirm_token_required", {
+      branch,
+      baseHead,
+      head: headNow,
+      branchKept: true,
+      tokenValid: false,
+      message: `confirmToken rejected: ${verdict.reason ?? "invalid"}`,
+      ...verdict.hint ? { hint: verdict.hint } : {}
+    });
+  }
+  const record2 = tokenStore().get(storeKey);
+  if (record2) record2.consumed = true;
+  const deleted = await git(root, ["branch", "-D", branch]);
+  if (!deleted.ok) {
+    return refuse(base, "discard_failed", {
+      branch,
+      baseHead,
+      head: headNow,
+      branchKept: true,
+      tokenValid: true,
+      message: `git branch -D failed: ${firstLine(deleted.stderr)}`
+    });
+  }
+  const discardedAt = new Date(now).toISOString();
+  const recorded = updateStepLedger(sharedRoot, (ledger) => {
+    const target = ledger.steps[stepKey];
+    if (!target) return { recorded: false };
+    target.ephemeral = { ...target.ephemeral, branch, baseHead, discardedAt };
+    target.updatedAt = discardedAt;
+    return { recorded: true, step: target };
+  });
+  getSharedBus().emit("step:merge", {
+    stepKey,
+    branch,
+    baseHead,
+    head: headNow,
+    mode: "discard",
+    discarded: true,
+    timestamp: now
+  });
+  return {
+    ...base,
+    ok: true,
+    branch,
+    baseHead,
+    head: headNow,
+    tokenValid: true,
+    discarded: true,
+    branchKept: false,
+    noOp: false,
+    metadataRecorded: recorded.recorded,
+    ...recorded.recorded && recorded.step ? { step: recorded.step } : {}
+  };
+}
+
+// src/pantheon/ephemeral-worker.ts
+import { execFile as execFile6 } from "node:child_process";
+import { existsSync as existsSync16 } from "node:fs";
+import { join as join21 } from "node:path";
+import { promisify as promisify6 } from "node:util";
+
 // src/pantheon/step-runner.ts
 var DEFAULT_WALL_CLOCK_MS = 3e5;
 var VALID_FINISH_STATUS = /* @__PURE__ */ new Set(["complete", "partial", "failed"]);
@@ -14676,8 +15794,8 @@ async function runAtomicStepSubSession(input) {
       let timerId;
       const turnOutcome = await Promise.race([
         runTurn(),
-        new Promise((resolve25) => {
-          timerId = setTimeout(() => resolve25("timeout"), remainingMs);
+        new Promise((resolve26) => {
+          timerId = setTimeout(() => resolve26("timeout"), remainingMs);
           if (typeof timerId === "object" && "unref" in timerId) timerId.unref();
         })
       ]).finally(() => {
@@ -14769,208 +15887,6 @@ async function runAtomicStepSubSession(input) {
   }
 }
 
-// src/pantheon/worktree-orchestrator.ts
-import { execFile as execFile4 } from "node:child_process";
-import { accessSync, constants as constants3, existsSync as existsSync14, mkdirSync as mkdirSync9, realpathSync as realpathSync6 } from "node:fs";
-import { basename as basename5, dirname as dirname13, join as join19, resolve as resolve15 } from "node:path";
-import { promisify as promisify4 } from "node:util";
-var execFileAsync4 = promisify4(execFile4);
-var SAFE_TASK_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
-function isAbortError(err) {
-  return err instanceof Error && err.name === "AbortError";
-}
-function sanitizeTaskSlug(raw) {
-  const base = basename5(raw.trim()).replace(/[^a-zA-Z0-9._-]/g, "-");
-  if (!base || !SAFE_TASK_RE.test(base) || base.includes("..")) {
-    return `wt-${Date.now()}`;
-  }
-  return base;
-}
-function resolvePantheonWorktreePath(sourceDirectory, taskName) {
-  const sourceReal = existsSync14(sourceDirectory) ? realpathSync6(resolve15(sourceDirectory)) : resolve15(sourceDirectory);
-  const parent = dirname13(sourceReal);
-  const repoName = basename5(sourceReal) || "workspace";
-  const taskSlug = sanitizeTaskSlug(taskName);
-  return join19(parent, ".pantheon-worktrees", repoName, taskSlug);
-}
-function isInsideOrDotPantheon(sourceDirectory, candidate) {
-  const srcReal = existsSync14(sourceDirectory) ? realpathSync6(resolve15(sourceDirectory)) : resolve15(sourceDirectory);
-  const candResolved = resolve15(candidate);
-  return candResolved === srcReal || candResolved.startsWith(`${srcReal}/`) || candResolved.includes("/.pantheon/") || candResolved.includes("\\.pantheon\\");
-}
-var REQUIRED_WORKTREE_HOOKS = ["commit-msg", "pre-commit"];
-async function assertWorktreeHooks(source, targetDir, signal) {
-  let configured = "";
-  try {
-    configured = (await runGit2(source, ["config", "--get", "core.hooksPath"], signal)).trim();
-  } catch (err) {
-    if (isAbortError(err)) throw err;
-    return;
-  }
-  if (!configured) return;
-  const hooksDir = resolve15(
-    targetDir,
-    (await runGit2(targetDir, ["rev-parse", "--git-path", "hooks"], signal)).trim()
-  );
-  const problems = [];
-  if (!existsSync14(hooksDir)) {
-    problems.push(`hooks directory ${hooksDir} does not exist`);
-  } else {
-    for (const hook of REQUIRED_WORKTREE_HOOKS) {
-      const file = join19(hooksDir, hook);
-      if (!existsSync14(file)) {
-        problems.push(`${hook} is missing from ${hooksDir}`);
-        continue;
-      }
-      try {
-        accessSync(file, constants3.X_OK);
-      } catch {
-        problems.push(`${hook} is not executable`);
-      }
-    }
-  }
-  if (problems.length === 0) return;
-  throw new Error(
-    `Refusing to create ${targetDir}: git would silently skip its hooks (${problems.join("; ")}). core.hooksPath=${configured} comes from the shared .git/config, but a fresh worktree only contains tracked files. Fix the source checkout (npm run prepare) and create the worktree again.`
-  );
-}
-async function runGit2(cwd, args, signal) {
-  if (signal?.aborted) {
-    const abortErr = new Error("Worktree operation aborted");
-    abortErr.name = "AbortError";
-    throw abortErr;
-  }
-  const { stdout } = await execFileAsync4("git", [...args], {
-    cwd,
-    signal,
-    timeout: 15e3,
-    maxBuffer: 4 * 1024 * 1024
-  });
-  return stdout;
-}
-function createPantheonWorktreeDefinition() {
-  return {
-    id: "pantheon-worktree",
-    create: async (input, context) => {
-      const source = resolve15(input.sourceDirectory);
-      const requestedDir = input.directory ? resolve15(input.directory) : "";
-      const targetDir = !requestedDir || isInsideOrDotPantheon(source, requestedDir) ? resolvePantheonWorktreePath(source, basename5(requestedDir) || `wt-${Date.now()}`) : requestedDir;
-      if (input.branch && (!SAFE_TASK_RE.test(input.branch) || input.branch.startsWith("-"))) {
-        throw new Error(`Unsafe git ref "${input.branch}" for worktree creation`);
-      }
-      mkdirSync9(dirname13(targetDir), { recursive: true });
-      const args = ["worktree", "add", "--detach", targetDir];
-      if (input.branch) args.push(input.branch);
-      await runGit2(source, args, context.signal);
-      try {
-        await assertWorktreeHooks(source, targetDir, context.signal);
-      } catch (err) {
-        if (isAbortError(err)) throw err;
-        if (existsSync14(targetDir)) {
-          try {
-            await runGit2(source, ["worktree", "remove", "--force", targetDir], context.signal);
-          } catch {
-          }
-        }
-        throw err;
-      }
-      return { directory: existsSync14(targetDir) ? realpathSync6(targetDir) : targetDir };
-    },
-    remove: async (input, context) => {
-      const dir = resolve15(input.directory);
-      const parent = dirname13(dir);
-      const args = ["worktree", "remove"];
-      if (input.force) args.push("--force");
-      args.push(dir);
-      try {
-        await runGit2(existsSync14(dir) ? dir : parent, args, context.signal);
-      } catch (err) {
-        if (isAbortError(err)) throw err;
-        throw err;
-      }
-    },
-    list: async (sourceDirectory, context) => {
-      const source = resolve15(sourceDirectory);
-      const raw = await runGit2(source, ["worktree", "list", "--porcelain"], context.signal);
-      const entries = [];
-      const srcReal = existsSync14(source) ? realpathSync6(source) : source;
-      for (const line of raw.split(/\r?\n/)) {
-        if (!line.startsWith("worktree ")) continue;
-        const wtPath = line.slice("worktree ".length).trim();
-        if (!wtPath) continue;
-        const wtReal = existsSync14(wtPath) ? realpathSync6(wtPath) : wtPath;
-        entries.push({
-          directory: wtReal,
-          type: wtReal === srcReal ? "root" : "worktree"
-        });
-      }
-      return entries;
-    }
-  };
-}
-function jsonResult2(payload) {
-  return { output: JSON.stringify(payload) };
-}
-function createWorktreeTool(fallbackDir) {
-  const driver = createPantheonWorktreeDefinition();
-  return {
-    name: "pantheon_worktree",
-    description: "Manage isolated git worktrees strictly outside the main repository under <project-parent>/.pantheon-worktrees/<repo>/<task> (actions: create | list | remove).",
-    input: {
-      type: "object",
-      additionalProperties: false,
-      required: ["action"],
-      properties: {
-        action: { type: "string", enum: ["create", "list", "remove"] },
-        task: { type: "string", description: "Short task slug for sibling worktree folder" },
-        branch: { type: "string", description: "Optional existing git branch/ref to check out" },
-        directory: { type: "string", description: "Target worktree directory (for remove)" },
-        force: { type: "boolean", description: "Force worktree removal even with dirty files" }
-      }
-    },
-    output: {},
-    execute: async (input, context) => {
-      try {
-        const action = typeof input.action === "string" ? input.action : "list";
-        const workspaceDir = resolveSharedPantheonRoot(resolveToolCwd(context, fallbackDir));
-        const ac = new AbortController();
-        if (action === "list") {
-          const entries = await driver.list(workspaceDir, { signal: ac.signal });
-          return jsonResult2({ ok: true, entries });
-        }
-        if (action === "create") {
-          const task = typeof input.task === "string" && input.task.trim() ? input.task.trim() : `wt-${Date.now()}`;
-          const targetDir = resolvePantheonWorktreePath(workspaceDir, task);
-          const res = await driver.create(
-            {
-              sourceDirectory: workspaceDir,
-              directory: targetDir,
-              ...typeof input.branch === "string" && input.branch.trim() ? { branch: input.branch.trim() } : {}
-            },
-            { signal: ac.signal }
-          );
-          return jsonResult2({ ok: true, action: "create", directory: res.directory });
-        }
-        if (action === "remove") {
-          const target = typeof input.directory === "string" && input.directory.trim() ? input.directory.trim() : typeof input.task === "string" && input.task.trim() ? resolvePantheonWorktreePath(workspaceDir, input.task.trim()) : "";
-          if (!target) return jsonResult2({ ok: false, error: "directory or task is required" });
-          await driver.remove(
-            { directory: target, force: input.force === true },
-            { signal: ac.signal }
-          );
-          return jsonResult2({ ok: true, action: "remove", directory: target });
-        }
-        return jsonResult2({ ok: false, error: `Unsupported action: ${action}` });
-      } catch (err) {
-        return jsonResult2({
-          ok: false,
-          error: err instanceof Error ? err.message : String(err)
-        });
-      }
-    }
-  };
-}
-
 // src/pantheon/ephemeral-worker.ts
 var EPHEMERAL_ARCHETYPES = Object.freeze(
   {
@@ -15047,9 +15963,9 @@ function resolveFileLeaseHook(input) {
 }
 var DEFAULT_EPHEMERAL_MAX_TURNS = 8;
 var DEFAULT_VERIFIER_AGENT = "themis";
-var execFileAsync5 = promisify5(execFile5);
+var execFileAsync6 = promisify6(execFile6);
 async function runGit3(cwd, args) {
-  const { stdout } = await execFileAsync5("git", [...args], {
+  const { stdout } = await execFileAsync6("git", [...args], {
     cwd,
     timeout: 15e3,
     maxBuffer: 4 * 1024 * 1024
@@ -15104,6 +16020,29 @@ async function preserveWorktreeChanges(worktreeDir, stepKey, role, baseHead) {
 var SAFE_EPHEMERAL_ROLE_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 var EPHEMERAL_ROLE_MAX_LENGTH = 32;
 var FALLBACK_EPHEMERAL_ROLE = "worker";
+function recordEphemeralBranch(workspaceDir, stepKey, patch) {
+  try {
+    return updateStepLedger(workspaceDir, (ledger) => {
+      const entry = ledger.steps[stepKey];
+      if (!entry) return { recorded: false, error: "step_not_found" };
+      const ephemeral = {
+        ...entry.ephemeral,
+        branch: patch.branch,
+        ...patch.baseHead ? { baseHead: patch.baseHead } : {},
+        ...patch.role ? { role: patch.role } : {},
+        ...patch.worktreeDir ? { worktreeDir: patch.worktreeDir } : {}
+      };
+      delete ephemeral.mergedAt;
+      delete ephemeral.mergeTree;
+      delete ephemeral.discardedAt;
+      entry.ephemeral = ephemeral;
+      entry.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+      return { recorded: true };
+    });
+  } catch (err) {
+    return { recorded: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
 function deriveEphemeralRoleSlug(label) {
   const slug = label.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/-{2,}/g, "-").replace(/^-+|-+$/g, "").slice(0, EPHEMERAL_ROLE_MAX_LENGTH).replace(/-+$/, "");
   return SAFE_EPHEMERAL_ROLE_RE.test(slug) ? slug : FALLBACK_EPHEMERAL_ROLE;
@@ -15153,6 +16092,7 @@ async function spawnEphemeralWorker(input) {
   let preservedBranch;
   let diffSummary;
   let preserveError;
+  let ledgerMetadataError;
   let claimSeq;
   let finalSeq;
   let runOk = false;
@@ -15184,7 +16124,7 @@ async function spawnEphemeralWorker(input) {
       }
       leaseAcquired = true;
     }
-    if (input.isolateWorktree !== false && existsSync15(join20(sharedRoot, ".git"))) {
+    if (input.isolateWorktree !== false && existsSync16(join21(sharedRoot, ".git"))) {
       const candidateDir = resolvePantheonWorktreePath(
         sharedRoot,
         `eph-${input.stepKey}-${Date.now()}`
@@ -15296,6 +16236,15 @@ async function spawnEphemeralWorker(input) {
       preservedBranch = preserved.branch;
       diffSummary = preserved.diffSummary;
       preserveError = preserved.error;
+      if (preservedBranch) {
+        const rec = recordEphemeralBranch(sharedRoot, input.stepKey, {
+          branch: preservedBranch,
+          ...baseHead !== void 0 ? { baseHead } : {},
+          role,
+          ...worktreeDir !== void 0 ? { worktreeDir } : {}
+        });
+        if (!rec.recorded) ledgerMetadataError = rec.error ?? "ledger_metadata_not_recorded";
+      }
       if (input.keepWorktree !== true && !preserveError) {
         try {
           const ac = new AbortController();
@@ -15379,7 +16328,9 @@ async function spawnEphemeralWorker(input) {
     ...worktreeDir !== void 0 ? { worktreeDir } : {},
     worktreeCleaned,
     ...preservedBranch !== void 0 ? { branch: preservedBranch } : {},
+    ...baseHead !== void 0 ? { baseHead } : {},
     ...diffSummary !== void 0 ? { diffSummary } : {},
+    ...ledgerMetadataError !== void 0 ? { ledgerMetadataError } : {},
     ...claimSeq !== void 0 ? { claimSeq } : {},
     ...finalSeq !== void 0 ? { finalSeq } : {},
     ...haltedReason !== void 0 ? { haltedReason } : {},
@@ -15570,9 +16521,9 @@ ${d.patch || "(empty diff)"}`)
 }
 
 // src/pantheon/execution-receipt.ts
-import { createHash as createHash7 } from "node:crypto";
+import { createHash as createHash8 } from "node:crypto";
 function hashContent2(content) {
-  return createHash7("sha256").update(content).digest("hex");
+  return createHash8("sha256").update(content).digest("hex");
 }
 function computeReceiptSignature(taskID, agent, timestamp, files) {
   const sortedFiles = [...files].sort((a, b) => a.path.localeCompare(b.path));
@@ -15582,7 +16533,7 @@ function computeReceiptSignature(taskID, agent, timestamp, files) {
     String(timestamp),
     sortedFiles.map((f) => `${f.path}:${f.hash}`).join(";")
   ].join("|");
-  return createHash7("sha256").update(payload).digest("hex");
+  return createHash8("sha256").update(payload).digest("hex");
 }
 function createExecutionReceipt(input) {
   const timestamp = Date.now();
@@ -15939,27 +16890,27 @@ import { randomUUID as randomUUID3 } from "node:crypto";
 
 // src/pantheon/native-memory-tools.ts
 import {
-  existsSync as existsSync17,
-  mkdirSync as mkdirSync10,
+  existsSync as existsSync18,
+  mkdirSync as mkdirSync11,
   readdirSync as readdirSync3,
   readFileSync as readFileSync14,
   realpathSync as realpathSync8,
   writeFileSync as writeFileSync7
 } from "node:fs";
-import { join as join22, resolve as resolve17, sep as sep7 } from "node:path";
+import { join as join23, resolve as resolve18, sep as sep7 } from "node:path";
 import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
 
 // src/pantheon/memory-federation.ts
-import { existsSync as existsSync16, readFileSync as readFileSync13, realpathSync as realpathSync7 } from "node:fs";
+import { existsSync as existsSync17, readFileSync as readFileSync13, realpathSync as realpathSync7 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { basename as basename6, join as join21, resolve as resolve16 } from "node:path";
+import { basename as basename6, join as join22, resolve as resolve17 } from "node:path";
 import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
 var NOT_EXPIRED_SQL = "(expires_at IS NULL OR expires_at > ?)";
 function safeRealpath(dir) {
   try {
     return realpathSync7(dir);
   } catch {
-    return resolve16(dir);
+    return resolve17(dir);
   }
 }
 function resolveFederatedRepoDirs(primaryWorkspaceDir, options = {}) {
@@ -15974,8 +16925,8 @@ function resolveFederatedRepoDirs(primaryWorkspaceDir, options = {}) {
       if (trimmed) candidates.push(trimmed);
     }
   }
-  const manifestFile = options.manifestPath ?? join21(homedir6(), ".pantheon", "federation.json");
-  if (existsSync16(manifestFile)) {
+  const manifestFile = options.manifestPath ?? join22(homedir6(), ".pantheon", "federation.json");
+  if (existsSync17(manifestFile)) {
     try {
       const parsed = JSON.parse(readFileSync13(manifestFile, "utf8"));
       if (Array.isArray(parsed.repos)) {
@@ -15990,20 +16941,20 @@ function resolveFederatedRepoDirs(primaryWorkspaceDir, options = {}) {
   const seenStores = /* @__PURE__ */ new Set([primaryStore]);
   const peers = [];
   for (const candidate of candidates) {
-    const abs = resolve16(candidate);
-    if (!existsSync16(abs)) continue;
+    const abs = resolve17(candidate);
+    if (!existsSync17(abs)) continue;
     const peerStore = safeRealpath(resolveSharedPantheonRoot(abs));
     if (seenStores.has(peerStore)) continue;
-    const dbPath = join21(peerStore, ".pantheon", "memory", "memory.db");
-    if (!existsSync16(dbPath)) continue;
+    const dbPath = join22(peerStore, ".pantheon", "memory", "memory.db");
+    if (!existsSync17(dbPath)) continue;
     seenStores.add(peerStore);
     peers.push(peerStore);
   }
   return peers;
 }
 function querySinglePeerDb(peerRoot, rawQuery, nowIso, limit, namespace) {
-  const dbPath = join21(peerRoot, ".pantheon", "memory", "memory.db");
-  if (!existsSync16(dbPath)) return [];
+  const dbPath = join22(peerRoot, ".pantheon", "memory", "memory.db");
+  if (!existsSync17(dbPath)) return [];
   const repoName = basename6(peerRoot) || peerRoot;
   let db;
   try {
@@ -16076,7 +17027,7 @@ function getFederatedStats(primaryWorkspaceDir, options = {}) {
   const repos = [];
   let total = 0;
   for (const peer of peers) {
-    const dbPath = join21(peer, ".pantheon", "memory", "memory.db");
+    const dbPath = join22(peer, ".pantheon", "memory", "memory.db");
     let count = 0;
     let db;
     try {
@@ -16104,9 +17055,9 @@ function isSafeSegment(value) {
   return typeof value === "string" && SAFE_SEGMENT_RE2.test(value) && value !== "." && value !== ".." && !value.includes("..") && !value.includes("/") && !value.includes("\\");
 }
 function resolveConfinedPath(baseDir, ...segments) {
-  mkdirSync10(baseDir, { recursive: true });
+  mkdirSync11(baseDir, { recursive: true });
   const canonicalBase = realpathSync8(baseDir);
-  const candidate = resolve17(canonicalBase, ...segments);
+  const candidate = resolve18(canonicalBase, ...segments);
   const prefix = canonicalBase.endsWith(sep7) ? canonicalBase : `${canonicalBase}${sep7}`;
   if (candidate !== canonicalBase && !candidate.startsWith(prefix)) {
     throw new Error("Path traversal denied: target escapes confined directory");
@@ -16123,8 +17074,8 @@ function runAutoMigration(workspaceDir) {
 }
 function getMemoryDb(workspaceDir) {
   runAutoMigration(workspaceDir);
-  const memoryDir = join22(workspaceDir, ".pantheon", "memory");
-  mkdirSync10(memoryDir, { recursive: true });
+  const memoryDir = join23(workspaceDir, ".pantheon", "memory");
+  mkdirSync11(memoryDir, { recursive: true });
   const dbPath = resolveConfinedPath(memoryDir, "memory.db");
   const cached = dbCache.get(dbPath);
   if (cached) return cached;
@@ -16510,9 +17461,9 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
           }
           const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           runAutoMigration(cwd);
-          const baseDir = join22(cwd, ".pantheon", "persistence");
+          const baseDir = join23(cwd, ".pantheon", "persistence");
           const dir = resolveConfinedPath(baseDir, ns);
-          mkdirSync10(dir, { recursive: true });
+          mkdirSync11(dir, { recursive: true });
           const filePath = resolveConfinedPath(dir, `${sessionId}.json`);
           const nowIso = (/* @__PURE__ */ new Date()).toISOString();
           writeFileSync7(
@@ -16568,16 +17519,16 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
           }
           const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           runAutoMigration(cwd);
-          const baseDir = join22(cwd, ".pantheon", "persistence");
+          const baseDir = join23(cwd, ".pantheon", "persistence");
           const dir = resolveConfinedPath(baseDir, ns);
           const filePath = resolveConfinedPath(dir, `${sessionId}.json`);
-          if (!existsSync17(filePath)) {
+          if (!existsSync18(filePath)) {
             const globalDir = resolveSafeGlobalConfigDir();
             if (globalDir) {
-              const globalNsDir = join22(globalDir, ".pantheon", "persistence", ns);
-              if (existsSync17(join22(globalNsDir, `${sessionId}.json`))) {
+              const globalNsDir = join23(globalDir, ".pantheon", "persistence", ns);
+              if (existsSync18(join23(globalNsDir, `${sessionId}.json`))) {
                 const globalFile = resolveConfinedPath(globalNsDir, `${sessionId}.json`);
-                if (existsSync17(globalFile)) {
+                if (existsSync18(globalFile)) {
                   return jsonResult3(JSON.parse(readFileSync14(globalFile, "utf8")));
                 }
               }
@@ -16621,7 +17572,7 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
           }
           const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           runAutoMigration(cwd);
-          const goalsDir = join22(cwd, ".pantheon", "goals");
+          const goalsDir = join23(cwd, ".pantheon", "goals");
           const filePath = resolveConfinedPath(goalsDir, `${rawId}.json`);
           const nowIso = (/* @__PURE__ */ new Date()).toISOString();
           const goal = {
@@ -16657,15 +17608,15 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
         try {
           const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           runAutoMigration(cwd);
-          const goalsDir = join22(cwd, ".pantheon", "goals");
-          mkdirSync10(goalsDir, { recursive: true });
+          const goalsDir = join23(cwd, ".pantheon", "goals");
+          mkdirSync11(goalsDir, { recursive: true });
           if (typeof input.id === "string" && input.id.trim()) {
             const id = input.id.trim();
             if (!isSafeSegment(id)) {
               return jsonResult3({ ok: false, error: "id must be a safe identifier" });
             }
             const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
-            if (!existsSync17(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
+            if (!existsSync18(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
             return jsonResult3(JSON.parse(readFileSync14(filePath, "utf8")));
           }
           const files = readdirSync3(goalsDir).filter((f) => f.endsWith(".json")).sort();
@@ -16702,9 +17653,9 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
           }
           const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           runAutoMigration(cwd);
-          const goalsDir = join22(cwd, ".pantheon", "goals");
+          const goalsDir = join23(cwd, ".pantheon", "goals");
           const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
-          if (!existsSync17(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
+          if (!existsSync18(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
           const existing = JSON.parse(readFileSync14(filePath, "utf8"));
           const updated = {
             ...existing,
@@ -16743,9 +17694,9 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
           }
           const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           runAutoMigration(cwd);
-          const goalsDir = join22(cwd, ".pantheon", "goals");
+          const goalsDir = join23(cwd, ".pantheon", "goals");
           const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
-          if (!existsSync17(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
+          if (!existsSync18(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
           const existing = JSON.parse(readFileSync14(filePath, "utf8"));
           const updated = {
             ...existing,
@@ -17753,10 +18704,10 @@ function assertSafeStepKey(stepKey) {
 }
 function resolveLedgerPath(workspaceDir) {
   const sharedRoot = resolveSharedPantheonRoot(workspaceDir);
-  const dir = join23(sharedRoot, ".pantheon", "ledger");
-  mkdirSync11(dir, { recursive: true });
+  const dir = join24(sharedRoot, ".pantheon", "ledger");
+  mkdirSync12(dir, { recursive: true });
   const canonicalDir = realpathSync9(dir);
-  const filePath = resolve18(canonicalDir, "step-ledger.json");
+  const filePath = resolve19(canonicalDir, "step-ledger.json");
   const prefix = canonicalDir.endsWith(sep8) ? canonicalDir : `${canonicalDir}${sep8}`;
   if (!filePath.startsWith(prefix)) {
     throw new Error("Path traversal denied for step-ledger.json");
@@ -17764,7 +18715,7 @@ function resolveLedgerPath(workspaceDir) {
   return filePath;
 }
 function readLedgerFileAtPath(filePath) {
-  if (!existsSync18(filePath)) return { version: 1, steps: {} };
+  if (!existsSync19(filePath)) return { version: 1, steps: {} };
   let raw;
   try {
     raw = readFileSync15(filePath, "utf8");
@@ -17811,7 +18762,7 @@ function sleepMs(ms) {
   Atomics.wait(sleepBuffer, 0, 0, ms);
 }
 function resolveLockPath(ledgerPath) {
-  return join23(dirname14(ledgerPath), ".step-ledger.lock");
+  return join24(dirname14(ledgerPath), ".step-ledger.lock");
 }
 function createLockToken() {
   return `${process.pid}:${randomUUID4()}`;
@@ -17840,9 +18791,9 @@ function sweepOrphanTempFiles(filePath) {
   const now = Date.now();
   for (const entry of entries) {
     if (!entry.startsWith(prefix)) continue;
-    const candidate = join23(dir, entry);
+    const candidate = join24(dir, entry);
     try {
-      if (now - statSync6(candidate).mtimeMs > TMP_SWEEP_AGE_MS) unlinkSync4(candidate);
+      if (now - statSync6(candidate).mtimeMs > TMP_SWEEP_AGE_MS) unlinkSync5(candidate);
     } catch {
     }
   }
@@ -17861,13 +18812,13 @@ function breakStaleLock(lockPath, observedToken) {
     } catch {
     }
     try {
-      unlinkSync4(quarantine);
+      unlinkSync5(quarantine);
     } catch {
     }
     return;
   }
   try {
-    unlinkSync4(quarantine);
+    unlinkSync5(quarantine);
   } catch {
   }
 }
@@ -17917,7 +18868,7 @@ function acquireLedgerLock(lockPath) {
 function releaseLedgerLock(lockPath, token) {
   if (readLockToken(lockPath) !== token) return;
   try {
-    unlinkSync4(lockPath);
+    unlinkSync5(lockPath);
   } catch {
   }
 }
@@ -17944,7 +18895,7 @@ function writeLedgerFileAtomic(filePath, store2) {
     renameSync4(tmpPath, filePath);
   } catch (err) {
     try {
-      if (existsSync18(tmpPath)) unlinkSync4(tmpPath);
+      if (existsSync19(tmpPath)) unlinkSync5(tmpPath);
     } catch {
     }
     throw err;
@@ -18166,7 +19117,7 @@ function describeLedgerError(err) {
 }
 async function preserveLedgerBytes(cwd, fn) {
   const filePath = resolveLedgerPath(cwd);
-  const beforeText = existsSync18(filePath) ? readFileSync15(filePath, "utf8") : void 0;
+  const beforeText = existsSync19(filePath) ? readFileSync15(filePath, "utf8") : void 0;
   let snapshot;
   if (beforeText !== void 0) {
     try {
@@ -18180,7 +19131,7 @@ async function preserveLedgerBytes(cwd, fn) {
   }
   const result = await fn();
   if (!snapshot) return result;
-  const afterText = existsSync18(filePath) ? readFileSync15(filePath, "utf8") : void 0;
+  const afterText = existsSync19(filePath) ? readFileSync15(filePath, "utf8") : void 0;
   if (afterText === beforeText) return result;
   restoreLedgerSnapshotUnderLock(cwd, snapshot);
   return result;
@@ -18240,7 +19191,7 @@ function emitBlocked(stepKey, entry) {
 function createStepLedgerTool(fallbackDir, sessionDomain) {
   return {
     name: "pantheon_step_ledger",
-    description: "Manage atomic Step-Ledger execution contracts with hard verification gates, Git checkpoints, bugfix reproduction tracking, and isolated sub-session step runner. Lifecycle: init_step | execute_step -> [record_reproduction] -> record_mutation -> record_verification -> complete_step | rollback_step | unblock_step | status.",
+    description: "Manage atomic Step-Ledger execution contracts with hard verification gates, Git checkpoints, bugfix reproduction tracking, and isolated sub-session step runner. Lifecycle: init_step | execute_step -> [record_reproduction] -> record_mutation -> record_verification -> complete_step | rollback_step | unblock_step | status. Ephemeral handoff: spawn_ephemeral -> verify_ephemeral -> merge_ephemeral (preview mints a single-use MERGE- token; apply squashes it unstaged, or discard deletes the branch).",
     input: {
       type: "object",
       additionalProperties: false,
@@ -18259,10 +19210,11 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             "complete_step",
             "rollback_step",
             "unblock_step",
+            "merge_ephemeral",
             "scrub_checkpoints",
             "status"
           ],
-          description: "Ledger operation (init_step | execute_step | spawn_ephemeral | verify_ephemeral | record_reproduction | record_mutation | record_verification | complete_step | rollback_step | unblock_step | scrub_checkpoints | status)"
+          description: "Ledger operation (init_step | execute_step | spawn_ephemeral | verify_ephemeral | record_reproduction | record_mutation | record_verification | complete_step | rollback_step | unblock_step | merge_ephemeral | scrub_checkpoints | status)"
         },
         stepKey: {
           type: "string",
@@ -18375,6 +19327,23 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
         dryRun: {
           type: "boolean",
           description: "scrub_checkpoints: report what would be rewritten without persisting"
+        },
+        mode: {
+          type: "string",
+          enum: ["preview", "apply", "discard"],
+          description: "merge_ephemeral mode: preview (mint token, change nothing) | apply (squash merge) | discard (delete the branch)"
+        },
+        confirmToken: {
+          type: "string",
+          description: 'merge_ephemeral: the single-use MERGE-\u2026 token returned by mode:"preview" (required for apply/discard)'
+        },
+        allowDirty: {
+          type: "boolean",
+          description: "merge_ephemeral: permit an unstaged/untracked working tree (staged changes are always refused)"
+        },
+        commit: {
+          type: "boolean",
+          description: "merge_ephemeral apply: commit the squash instead of leaving it unstaged (default false, review-first)"
         }
       }
     },
@@ -18431,6 +19400,22 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
           return jsonResult4(outcome);
         }
         const key = assertSafeStepKey(input.stepKey);
+        if (action === "merge_ephemeral") {
+          const callerSidMerge = typeof context?.sessionID === "string" ? context.sessionID : void 0;
+          const mergeOut = await mergeEphemeralStep({
+            cwd,
+            stepKey: key,
+            // The tool input is untyped JSON: pass the raw string through so the
+            // module can refuse an unknown mode instead of silently previewing.
+            ...typeof input.mode === "string" ? { mode: input.mode } : {},
+            ...typeof input.confirmToken === "string" && input.confirmToken.trim() ? { confirmToken: input.confirmToken.trim() } : {},
+            ...typeof input.allowDirty === "boolean" ? { allowDirty: input.allowDirty } : {},
+            ...typeof input.commit === "boolean" ? { commit: input.commit } : {},
+            ...typeof input.cascade === "boolean" ? { cascade: input.cascade } : {},
+            ...callerSidMerge ? { sessionID: callerSidMerge } : {}
+          });
+          return jsonResult4(mergeOut);
+        }
         if (action === "init_step") {
           const objective = typeof input.objective === "string" ? input.objective.trim() : "";
           if (!objective) return jsonResult4({ ok: false, error: "objective is required" });
@@ -19122,7 +20107,7 @@ function runHook(script, payload, opts = {}) {
       timedOut: false
     });
   }
-  return new Promise((resolve25) => {
+  return new Promise((resolve26) => {
     const stdoutBuf = { value: "" };
     const stderrBuf = { value: "" };
     let settled = false;
@@ -19132,7 +20117,7 @@ function runHook(script, payload, opts = {}) {
       if (!settled) {
         settled = true;
         if (timeoutHandle !== void 0) clearTimeout(timeoutHandle);
-        resolve25(result);
+        resolve26(result);
       }
     };
     const spawnOpts = {
@@ -20237,31 +21222,31 @@ var TodoEnforcer = class {
 
 // src/pantheon/tools.ts
 import { exec } from "node:child_process";
-import { existsSync as existsSync26 } from "node:fs";
-import { promisify as promisify6 } from "node:util";
+import { existsSync as existsSync27 } from "node:fs";
+import { promisify as promisify7 } from "node:util";
 
 // src/pantheon/agent-forge-tool.ts
 import {
-  existsSync as existsSync20,
-  mkdirSync as mkdirSync12,
+  existsSync as existsSync21,
+  mkdirSync as mkdirSync13,
   readdirSync as readdirSync5,
   readFileSync as readFileSync17,
   realpathSync as realpathSync10,
-  rmSync as rmSync3,
+  rmSync as rmSync4,
   writeFileSync as writeFileSync9
 } from "node:fs";
-import { join as join25, resolve as resolve20, sep as sep9 } from "node:path";
+import { join as join26, resolve as resolve21, sep as sep9 } from "node:path";
 
 // scripts/stack-detector.mjs
-import { existsSync as existsSync19, readFileSync as readFileSync16 } from "node:fs";
-import { join as join24, resolve as resolve19 } from "node:path";
+import { existsSync as existsSync20, readFileSync as readFileSync16 } from "node:fs";
+import { join as join25, resolve as resolve20 } from "node:path";
 function detectRepositoryStacks(workspaceDir) {
-  const root = resolve19(workspaceDir);
+  const root = resolve20(workspaceDir);
   const stacks = [];
   const suggestedSpecialists = [];
   const suggestedDocs = /* @__PURE__ */ new Set();
-  const pkgPath = join24(root, "package.json");
-  if (existsSync19(pkgPath)) {
+  const pkgPath = join25(root, "package.json");
+  if (existsSync20(pkgPath)) {
     try {
       const pkg = JSON.parse(readFileSync16(pkgPath, "utf8"));
       const deps = { ...pkg.dependencies, ...pkg.devDependencies };
@@ -20314,12 +21299,12 @@ function detectRepositoryStacks(workspaceDir) {
     } catch {
     }
   }
-  const pyProjPath = join24(root, "pyproject.toml");
-  const reqPath = join24(root, "requirements.txt");
-  if (existsSync19(pyProjPath) || existsSync19(reqPath)) {
+  const pyProjPath = join25(root, "pyproject.toml");
+  const reqPath = join25(root, "requirements.txt");
+  if (existsSync20(pyProjPath) || existsSync20(reqPath)) {
     const rawPy = [
-      existsSync19(pyProjPath) ? readFileSync16(pyProjPath, "utf8") : "",
-      existsSync19(reqPath) ? readFileSync16(reqPath, "utf8") : ""
+      existsSync20(pyProjPath) ? readFileSync16(pyProjPath, "utf8") : "",
+      existsSync20(reqPath) ? readFileSync16(reqPath, "utf8") : ""
     ].join("\n").toLowerCase();
     const frameworks = [];
     for (const fw of ["fastapi", "django", "flask", "sqlalchemy", "pydantic", "pytest"]) {
@@ -20327,7 +21312,7 @@ function detectRepositoryStacks(workspaceDir) {
     }
     const testRunner = rawPy.includes("pytest") ? "pytest -q" : "python3 -m unittest";
     const linter = rawPy.includes("ruff") ? "ruff check" : "pyright";
-    const pyManifest = existsSync19(pyProjPath) ? "pyproject.toml" : "requirements.txt";
+    const pyManifest = existsSync20(pyProjPath) ? "pyproject.toml" : "requirements.txt";
     stacks.push({
       id: "python",
       manifest: pyManifest,
@@ -20345,8 +21330,8 @@ function detectRepositoryStacks(workspaceDir) {
     });
     suggestedDocs.add(pyManifest);
   }
-  const goModPath = join24(root, "go.mod");
-  if (existsSync19(goModPath)) {
+  const goModPath = join25(root, "go.mod");
+  if (existsSync20(goModPath)) {
     const rawGo = readFileSync16(goModPath, "utf8").toLowerCase();
     const frameworks = ["gin", "echo", "fiber", "chi"].filter((fw) => rawGo.includes(fw));
     stacks.push({
@@ -20366,8 +21351,8 @@ function detectRepositoryStacks(workspaceDir) {
     });
     suggestedDocs.add("go.mod");
   }
-  const cargoPath = join24(root, "Cargo.toml");
-  if (existsSync19(cargoPath)) {
+  const cargoPath = join25(root, "Cargo.toml");
+  if (existsSync20(cargoPath)) {
     const rawCargo = readFileSync16(cargoPath, "utf8").toLowerCase();
     const frameworks = ["tokio", "axum", "actix-web", "serde", "sqlx"].filter(
       (fw) => rawCargo.includes(fw)
@@ -20407,12 +21392,12 @@ function isValidAgentSlug(value) {
   return typeof value === "string" && SAFE_AGENT_NAME_RE.test(value) && !value.includes("..") && !value.includes("/") && !value.includes("\\");
 }
 function resolveAgentsDir(workspaceDir) {
-  const dir = join25(workspaceDir, ".opencode", "agents");
-  mkdirSync12(dir, { recursive: true });
+  const dir = join26(workspaceDir, ".opencode", "agents");
+  mkdirSync13(dir, { recursive: true });
   return realpathSync10(dir);
 }
 function resolveConfinedAgentFile(agentsDir, name) {
-  const filePath = resolve20(agentsDir, `${name}.md`);
+  const filePath = resolve21(agentsDir, `${name}.md`);
   const prefix = agentsDir.endsWith(sep9) ? agentsDir : `${agentsDir}${sep9}`;
   if (!filePath.startsWith(prefix)) {
     throw new Error("Path traversal denied: agent file escapes .opencode/agents");
@@ -20541,7 +21526,7 @@ function createAgentForgeTool(fallbackDir) {
           const files = readdirSync5(agentsDir).filter((f) => f.endsWith(".md") && f.toLowerCase() !== "readme.md").sort();
           const agents = files.map((file) => {
             const id = file.replace(/\.md$/, "");
-            const raw = readFileSync17(join25(agentsDir, file), "utf8");
+            const raw = readFileSync17(join26(agentsDir, file), "utf8");
             const descMatch = raw.match(/^description:\s*(.+)$/m);
             return {
               name: id,
@@ -20560,7 +21545,7 @@ function createAgentForgeTool(fallbackDir) {
         }
         const filePath = resolveConfinedAgentFile(agentsDir, name);
         if (action === "inspect") {
-          if (!existsSync20(filePath)) {
+          if (!existsSync21(filePath)) {
             return jsonResult5({ ok: false, error: "agent_not_found", name });
           }
           return jsonResult5({
@@ -20571,10 +21556,10 @@ function createAgentForgeTool(fallbackDir) {
           });
         }
         if (action === "remove") {
-          if (!existsSync20(filePath)) {
+          if (!existsSync21(filePath)) {
             return jsonResult5({ ok: false, error: "agent_not_found", name });
           }
-          rmSync3(filePath, { force: true });
+          rmSync4(filePath, { force: true });
           return jsonResult5({ ok: true, removed: true, name });
         }
         if (action === "create") {
@@ -20630,7 +21615,7 @@ function createAgentForgeTool(fallbackDir) {
 
 // src/pantheon/ast-tools.ts
 import { readdirSync as readdirSync6, readFileSync as readFileSync18, statSync as statSync7, writeFileSync as writeFileSync10 } from "node:fs";
-import { extname as extname3, join as join26, relative as relative5, resolve as resolve21 } from "node:path";
+import { extname as extname3, join as join27, relative as relative5, resolve as resolve22 } from "node:path";
 var SKIP_DIRS = /* @__PURE__ */ new Set([".git", "node_modules", ".pantheon", ".venv", "dist", "build"]);
 var SUPPORTED_EXTS = /* @__PURE__ */ new Set([
   ".ts",
@@ -20847,7 +21832,7 @@ function collectFiles(targetPath) {
   const walk = (dir) => {
     for (const entry of readdirSync6(dir, { withFileTypes: true })) {
       if (SKIP_DIRS.has(entry.name)) continue;
-      const full = join26(dir, entry.name);
+      const full = join27(dir, entry.name);
       if (entry.isDirectory()) walk(full);
       else if (entry.isFile() && SUPPORTED_EXTS.has(extname3(entry.name).toLowerCase())) {
         out.push(full);
@@ -20937,7 +21922,7 @@ function createAstTools(fallbackDir) {
         const files = collectFiles(targetAbs);
         const results = [];
         for (const f of files) {
-          const rel = relative5(resolve21(cwd), f).replace(/\\/g, "/") || f;
+          const rel = relative5(resolve22(cwd), f).replace(/\\/g, "/") || f;
           for (const m of findAstMatchesInFile(f, rel, pattern)) {
             results.push({
               file: m.file,
@@ -21012,7 +21997,7 @@ function createAstTools(fallbackDir) {
         const previews = [];
         let totalReplacements = 0;
         for (const f of files) {
-          const rel = relative5(resolve21(cwd), f).replace(/\\/g, "/") || f;
+          const rel = relative5(resolve22(cwd), f).replace(/\\/g, "/") || f;
           const spans = findAstMatchesInFile(f, rel, pattern);
           if (spans.length === 0) continue;
           const original = readFileSync18(f, "utf8");
@@ -21051,9 +22036,9 @@ function createAstTools(fallbackDir) {
 }
 
 // src/pantheon/codemap-tools.ts
-import { createHash as createHash8 } from "node:crypto";
-import { existsSync as existsSync21, mkdirSync as mkdirSync13, readdirSync as readdirSync7, readFileSync as readFileSync19, realpathSync as realpathSync11, statSync as statSync8 } from "node:fs";
-import { extname as extname4, join as join27, relative as relative6, resolve as resolve22, sep as sep10 } from "node:path";
+import { createHash as createHash9 } from "node:crypto";
+import { existsSync as existsSync22, mkdirSync as mkdirSync14, readdirSync as readdirSync7, readFileSync as readFileSync19, realpathSync as realpathSync11, statSync as statSync8 } from "node:fs";
+import { extname as extname4, join as join28, relative as relative6, resolve as resolve23, sep as sep10 } from "node:path";
 import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
 var IGNORED_DIRS = /* @__PURE__ */ new Set([
   ".git",
@@ -21079,10 +22064,10 @@ var SUPPORTED_EXT_LANG = {
 };
 var codemapDbCache = /* @__PURE__ */ new Map();
 function getCodemapDb(workspaceDir) {
-  const memoryDir = join27(workspaceDir, ".pantheon", "memory");
-  mkdirSync13(memoryDir, { recursive: true });
+  const memoryDir = join28(workspaceDir, ".pantheon", "memory");
+  mkdirSync14(memoryDir, { recursive: true });
   const canonicalBase = realpathSync11(memoryDir);
-  const dbPath = resolve22(canonicalBase, "memory.db");
+  const dbPath = resolve23(canonicalBase, "memory.db");
   const prefix = canonicalBase.endsWith(sep10) ? canonicalBase : `${canonicalBase}${sep10}`;
   if (!dbPath.startsWith(prefix)) {
     throw new Error("Path traversal denied for codemap database");
@@ -21284,12 +22269,12 @@ function collectSourceFiles(currentDir, maxFiles = 500) {
       const name = String(entry.name);
       if (entry.isDirectory()) {
         if (!IGNORED_DIRS.has(name) && !name.startsWith(".")) {
-          walk(join27(dir, name));
+          walk(join28(dir, name));
         }
       } else if (entry.isFile()) {
         const ext = extname4(name).toLowerCase();
         if (ext in SUPPORTED_EXT_LANG) {
-          results.push(join27(dir, name));
+          results.push(join28(dir, name));
         }
       }
     }
@@ -21311,7 +22296,7 @@ function pruneMissingFilesInScope(db, canonicalRoot, subRel) {
   let pruned = 0;
   for (const row of rows) {
     if (typeof row?.path !== "string") continue;
-    if (!existsSync21(resolve22(canonicalRoot, row.path))) {
+    if (!existsSync22(resolve23(canonicalRoot, row.path))) {
       deleteIndexedFile(db, row.path);
       pruned += 1;
     }
@@ -21327,7 +22312,7 @@ function filterAndPruneExistingRows(db, canonicalRoot, rows) {
       kept.push(row);
       continue;
     }
-    if (missing.has(file) || !existsSync21(resolve22(canonicalRoot, file))) {
+    if (missing.has(file) || !existsSync22(resolve23(canonicalRoot, file))) {
       if (!missing.has(file)) {
         missing.add(file);
         deleteIndexedFile(db, file);
@@ -21363,12 +22348,12 @@ function createCodemapTools(fallbackDir) {
           const cwd = resolveToolCwd(context, fallbackDir);
           const canonicalRoot = realpathSync11(cwd);
           const subPath = typeof input.path === "string" && input.path.trim() ? input.path.trim() : ".";
-          const targetPath = resolve22(canonicalRoot, subPath);
+          const targetPath = resolve23(canonicalRoot, subPath);
           const rootPrefix = canonicalRoot.endsWith(sep10) ? canonicalRoot : `${canonicalRoot}${sep10}`;
           if (targetPath !== canonicalRoot && !targetPath.startsWith(rootPrefix)) {
             return jsonResult7({ ok: false, error: "path escapes workspace root" });
           }
-          if (!existsSync21(targetPath)) {
+          if (!existsSync22(targetPath)) {
             return jsonResult7({ ok: false, error: `path not found: ${subPath}` });
           }
           const force = input.force === true;
@@ -21386,7 +22371,7 @@ function createCodemapTools(fallbackDir) {
             if (!lang) continue;
             const relFile = relative6(canonicalRoot, filePath).replace(/\\/g, "/");
             const content = readFileSync19(filePath, "utf8");
-            const hash = createHash8("sha256").update(content).digest("hex");
+            const hash = createHash9("sha256").update(content).digest("hex");
             const existing = db.prepare("SELECT hash FROM code_files WHERE path = ?").get(relFile);
             if (!force && existing?.hash === hash) {
               skipped += 1;
@@ -21547,20 +22532,20 @@ function createCodemapTools(fallbackDir) {
 }
 
 // src/pantheon/cost-command.ts
-import { execFile as execFile6 } from "node:child_process";
-import { accessSync as accessSync2, constants as constants4, existsSync as existsSync23, statSync as statSync9 } from "node:fs";
-import { delimiter, dirname as dirname16, join as join30 } from "node:path";
+import { execFile as execFile7 } from "node:child_process";
+import { accessSync as accessSync2, constants as constants4, existsSync as existsSync24, statSync as statSync9 } from "node:fs";
+import { delimiter, dirname as dirname16, join as join31 } from "node:path";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
 import { z } from "zod";
 
 // src/plugins/tui/src/cost-data.ts
 import { homedir as homedir8 } from "node:os";
-import { join as join29 } from "node:path";
+import { join as join30 } from "node:path";
 
 // src/plugins/tui/src/model-pricing.ts
-import { existsSync as existsSync22, mkdirSync as mkdirSync14, readFileSync as readFileSync20, renameSync as renameSync5, writeFileSync as writeFileSync11 } from "node:fs";
+import { existsSync as existsSync23, mkdirSync as mkdirSync15, readFileSync as readFileSync20, renameSync as renameSync5, writeFileSync as writeFileSync11 } from "node:fs";
 import { homedir as homedir7 } from "node:os";
-import { dirname as dirname15, join as join28 } from "node:path";
+import { dirname as dirname15, join as join29 } from "node:path";
 var MODELS_DEV_URL = "https://models.dev/api.json";
 var PRICING_CACHE_VERSION = 1;
 var PRICING_TTL_MS = 24 * 60 * 60 * 1e3;
@@ -21569,11 +22554,11 @@ function resolvePricingCacheDir(env = process.env) {
   const explicit = env.PANTHEON_HOME?.trim();
   if (explicit !== void 0 && explicit !== "") return explicit;
   const xdg = env.XDG_CONFIG_HOME?.trim();
-  const base = xdg !== void 0 && xdg !== "" ? xdg : join28(homedir7(), ".config");
-  return join28(base, "opencode");
+  const base = xdg !== void 0 && xdg !== "" ? xdg : join29(homedir7(), ".config");
+  return join29(base, "opencode");
 }
 function resolvePricingCachePath(env = process.env) {
-  return join28(resolvePricingCacheDir(env), "cache", "models-dev.json");
+  return join29(resolvePricingCacheDir(env), "cache", "models-dev.json");
 }
 function isRecord19(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -21704,7 +22689,7 @@ function parseCachedCatalog(raw) {
 }
 function readPricingCache(cachePath) {
   try {
-    if (!existsSync22(cachePath)) return void 0;
+    if (!existsSync23(cachePath)) return void 0;
     return parseCachedCatalog(JSON.parse(readFileSync20(cachePath, "utf8")));
   } catch {
     return void 0;
@@ -21713,7 +22698,7 @@ function readPricingCache(cachePath) {
 function writePricingCache(cachePath, catalog) {
   const temp = `${cachePath}.tmp-${process.pid}`;
   try {
-    mkdirSync14(dirname15(cachePath), { recursive: true });
+    mkdirSync15(dirname15(cachePath), { recursive: true });
     writeFileSync11(temp, `${JSON.stringify(catalog)}
 `, "utf8");
     renameSync5(temp, cachePath);
@@ -21863,8 +22848,8 @@ var VERSION_SOURCES = {
 };
 function defaultDbPath() {
   const xdg = process.env.XDG_DATA_HOME;
-  const dataHome = xdg !== void 0 && xdg !== "" ? xdg : join29(homedir8(), ".local", "share");
-  return join29(dataHome, "opencode", "opencode.db");
+  const dataHome = xdg !== void 0 && xdg !== "" ? xdg : join30(homedir8(), ".local", "share");
+  return join30(dataHome, "opencode", "opencode.db");
 }
 function requestedVersion() {
   const configured = process.env.PANTHEON_OPENCODE_VERSION;
@@ -21935,7 +22920,7 @@ var costArgs = {
 };
 function findExistingDb(override) {
   const candidate = override === void 0 ? resolveCostDbPath() : resolveCostDbPath({ dbPath: override });
-  return existsSync23(candidate) ? candidate : void 0;
+  return existsSync24(candidate) ? candidate : void 0;
 }
 var COST_AGGREGATE_SQL = {
   message: (sessionId) => `
@@ -22558,8 +23543,8 @@ function defaultIsExecutable(path6) {
   }
 }
 function defaultExecFile(file, args) {
-  return new Promise((resolve25, reject) => {
-    execFile6(file, [...args], { encoding: "utf8" }, (error, stdout, stderr) => {
+  return new Promise((resolve26, reject) => {
+    execFile7(file, [...args], { encoding: "utf8" }, (error, stdout, stderr) => {
       if (error) {
         const failure = error;
         if (typeof failure.stdout !== "string") failure.stdout = stdout;
@@ -22567,7 +23552,7 @@ function defaultExecFile(file, args) {
         reject(failure);
         return;
       }
-      resolve25({ stdout, stderr });
+      resolve26({ stdout, stderr });
     });
   });
 }
@@ -22579,7 +23564,7 @@ function resolveNodeFromPath(env, isExecutable = defaultIsExecutable) {
   for (const dir of pathValue.split(delimiter)) {
     if (dir === "") continue;
     for (const ext of extensions) {
-      const candidate = join30(dir, `node${ext}`);
+      const candidate = join31(dir, `node${ext}`);
       if (isExecutable(candidate)) return candidate;
     }
   }
@@ -22616,9 +23601,9 @@ function truncateForError(text2) {
   const trimmed = text2.trim();
   return trimmed.length > 200 ? `${trimmed.slice(0, 200)}\u2026` : trimmed;
 }
-async function assertNodeSqliteSupport(nodePath, execFileAsync6) {
+async function assertNodeSqliteSupport(nodePath, execFileAsync7) {
   try {
-    await execFileAsync6(nodePath, ["-e", "require('node:sqlite')"]);
+    await execFileAsync7(nodePath, ["-e", "require('node:sqlite')"]);
   } catch (err) {
     throw new Error(
       `resolved Node binary "${nodePath}" does not support node:sqlite (Node.js >= ${NODE_SQLITE_MIN_VERSION} required): ${execErrorMessage(err)}`
@@ -22641,10 +23626,10 @@ function extractScriptFailure(err) {
 }
 async function queryWithCliFallback(dbPath, days, deps) {
   const env = deps?.env ?? process.env;
-  const execFileAsync6 = deps?.execFile ?? defaultExecFile;
+  const execFileAsync7 = deps?.execFile ?? defaultExecFile;
   const isExecutable = deps?.isExecutable ?? defaultIsExecutable;
-  const costScript = join30(__dirname, "..", "..", "scripts", "cost.mjs");
-  if (!existsSync23(costScript)) {
+  const costScript = join31(__dirname, "..", "..", "scripts", "cost.mjs");
+  if (!existsSync24(costScript)) {
     throw new Error(`CLI fallback script not found: ${costScript}`);
   }
   const node = resolveNodeExecutable(env, isExecutable);
@@ -22653,11 +23638,11 @@ async function queryWithCliFallback(dbPath, days, deps) {
       `no Node.js executable found for the node:sqlite CLI fallback: set PANTHEON_NODE to a Node.js >= ${NODE_SQLITE_MIN_VERSION} binary or put "node" on PATH`
     );
   }
-  await assertNodeSqliteSupport(node.path, execFileAsync6);
+  await assertNodeSqliteSupport(node.path, execFileAsync7);
   let stdout;
   try {
     ;
-    ({ stdout } = await execFileAsync6(node.path, [
+    ({ stdout } = await execFileAsync7(node.path, [
       costScript,
       "--db-path",
       dbPath,
@@ -22785,7 +23770,7 @@ ${renderMarkdown(query, days, pricing)}`;
 import { z as z3 } from "zod";
 
 // src/pantheon/deepwork/plan-projection.ts
-import { join as join31 } from "node:path";
+import { join as join32 } from "node:path";
 function generateChatProjection(plan, cwd = process.cwd()) {
   const pendingDecisions = plan.decisions_needed.filter((d) => d.status === "pending");
   const totalTasks = plan.tasks.length;
@@ -22795,8 +23780,8 @@ function generateChatProjection(plan, cwd = process.cwd()) {
   const readyTasks = plan.tasks.filter((t) => t.state === "ready");
   const nextTask = inProgressTasks[0] || readyTasks[0] || plan.tasks.find((t) => t.state === "pending");
   const percent = totalTasks > 0 ? Math.round(doneTasks / totalTasks * 100) : 0;
-  const absPlanMd = join31(cwd, ".pantheon", "deepwork", plan.plan_id, "PLAN.md");
-  const absPlanJson = join31(cwd, ".pantheon", "deepwork", plan.plan_id, "plan.json");
+  const absPlanMd = join32(cwd, ".pantheon", "deepwork", plan.plan_id, "PLAN.md");
+  const absPlanJson = join32(cwd, ".pantheon", "deepwork", plan.plan_id, "plan.json");
   const lines = [];
   lines.push(`### Deepwork: ${plan.title} (\`${plan.plan_id}\`)`);
   lines.push(
@@ -22970,9 +23955,9 @@ function buildApprovalQuestion(plan) {
 }
 
 // src/pantheon/deepwork/plan-tracker.ts
-import { existsSync as existsSync24 } from "node:fs";
+import { existsSync as existsSync25 } from "node:fs";
 import { appendFile as appendFile4, mkdir as mkdir7, readdir, readFile as readFile7, rename as rename5, writeFile as writeFile3 } from "node:fs/promises";
-import { join as join32 } from "node:path";
+import { join as join33 } from "node:path";
 
 // src/pantheon/deepwork/plan-schema.ts
 import { z as z2 } from "zod";
@@ -23042,7 +24027,7 @@ var DeepworkPlanSchema = z2.object({
 
 // src/pantheon/deepwork/plan-tracker.ts
 function deepworkRootDir(cwd = process.cwd()) {
-  return join32(cwd, ".pantheon", "deepwork");
+  return join33(cwd, ".pantheon", "deepwork");
 }
 function deepworkPlanDir(cwd = process.cwd(), slug) {
   const safeSlug = String(slug ?? "").trim();
@@ -23051,16 +24036,16 @@ function deepworkPlanDir(cwd = process.cwd(), slug) {
       `Invalid deepwork plan slug "${slug}": path traversal or separator characters are not allowed`
     );
   }
-  return join32(deepworkRootDir(cwd), safeSlug);
+  return join33(deepworkRootDir(cwd), safeSlug);
 }
 function deepworkPlanJsonPath(cwd = process.cwd(), slug) {
-  return join32(deepworkPlanDir(cwd, slug), "plan.json");
+  return join33(deepworkPlanDir(cwd, slug), "plan.json");
 }
 function deepworkPlanMdPath(cwd = process.cwd(), slug) {
-  return join32(deepworkPlanDir(cwd, slug), "PLAN.md");
+  return join33(deepworkPlanDir(cwd, slug), "PLAN.md");
 }
 function deepworkJournalPath(cwd = process.cwd(), slug) {
-  return join32(deepworkPlanDir(cwd, slug), "journal.ndjson");
+  return join33(deepworkPlanDir(cwd, slug), "journal.ndjson");
 }
 function computeTaskReadiness(plan) {
   const doneIds = new Set(plan.tasks.filter((t) => t.state === "done").map((t) => t.id));
@@ -23257,8 +24242,8 @@ async function withPlanLock(cwd, slug, fn) {
   const key = `${cwd}::${slug}`;
   const prev = planLocks.get(key) ?? Promise.resolve();
   let resolveCurrent;
-  const current = new Promise((resolve25) => {
-    resolveCurrent = resolve25;
+  const current = new Promise((resolve26) => {
+    resolveCurrent = resolve26;
   });
   planLocks.set(key, current);
   try {
@@ -23441,7 +24426,7 @@ async function resolvePlanDecision(cwd = process.cwd(), slug, decisionId, chosen
 }
 async function listPlans(cwd = process.cwd()) {
   const root = deepworkRootDir(cwd);
-  if (!existsSync24(root)) return [];
+  if (!existsSync25(root)) return [];
   const entries = await readdir(root, { withFileTypes: true });
   const result = [];
   for (const entry of entries) {
@@ -23741,7 +24726,7 @@ ${JSON.stringify(todoPayload, null, 2)}
 
 // src/pantheon/hashline/tool.ts
 import { readFile as readFile8, rename as rename6, rm, writeFile as writeFile4 } from "node:fs/promises";
-import { isAbsolute as isAbsolute6, resolve as resolve23, sep as sep11 } from "node:path";
+import { isAbsolute as isAbsolute7, resolve as resolve24, sep as sep11 } from "node:path";
 import { z as z4 } from "zod";
 var hashlineEditOpArgs = {
   op: z4.enum(["replace", "append", "prepend", "delete"]),
@@ -23755,9 +24740,9 @@ var hashlineEditArgs = {
   edits: z4.array(z4.object(hashlineEditOpArgs)).min(1)
 };
 function resolveFile(file, ctx, fallbackDir) {
-  if (isAbsolute6(file)) return { ok: true, file: resolve23(file) };
-  const base = resolve23(resolveToolCwd(ctx, fallbackDir));
-  const resolved = resolve23(base, file);
+  if (isAbsolute7(file)) return { ok: true, file: resolve24(file) };
+  const base = resolve24(resolveToolCwd(ctx, fallbackDir));
+  const resolved = resolve24(base, file);
   if (resolved !== base && !resolved.startsWith(base + sep11)) {
     return {
       ok: false,
@@ -24008,7 +24993,7 @@ import { randomBytes } from "node:crypto";
 import { constants as constants5 } from "node:fs";
 import { lstat as lstat2, mkdir as mkdir8, open as open3, rename as rename7, unlink as unlink4 } from "node:fs/promises";
 import { homedir as homedir9 } from "node:os";
-import { basename as basename8, dirname as dirname17, join as join33, resolve as resolve24 } from "node:path";
+import { basename as basename8, dirname as dirname17, join as join34, resolve as resolve25 } from "node:path";
 import { z as z5 } from "zod";
 var MODEL_REF_PATTERN2 = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._:+-]*$/;
 var SAFE_PRESET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -24097,7 +25082,7 @@ async function createTemporaryFile(path6) {
   const prefix = `.${basename8(path6)}.tmp-`;
   const flags = constants5.O_WRONLY | constants5.O_CREAT | constants5.O_EXCL | NO_FOLLOW;
   for (let attempt = 0; attempt < 10; attempt += 1) {
-    const temporaryPath = join33(directory, `${prefix}${randomBytes(16).toString("hex")}`);
+    const temporaryPath = join34(directory, `${prefix}${randomBytes(16).toString("hex")}`);
     try {
       return { path: temporaryPath, file: await open3(temporaryPath, flags, DEFAULT_FILE_MODE) };
     } catch (error) {
@@ -24164,30 +25149,30 @@ function envValue(options) {
   return options.env ?? process.env;
 }
 function projectConfigPath(options) {
-  return options.projectConfigPath ?? join33(options.cwd ?? process.cwd(), "opencode.json");
+  return options.projectConfigPath ?? join34(options.cwd ?? process.cwd(), "opencode.json");
 }
 function defaultGlobalConfigPath(options) {
   const env = envValue(options);
   const home = env.HOME?.trim() || homedir9();
-  const xdg = env.XDG_CONFIG_HOME?.trim() || join33(home, ".config");
-  return join33(xdg, "opencode", "opencode.json");
+  const xdg = env.XDG_CONFIG_HOME?.trim() || join34(home, ".config");
+  return join34(xdg, "opencode", "opencode.json");
 }
 function globalConfigCandidates(options) {
   if (options.globalConfigPath !== void 0) return [options.globalConfigPath];
   const canonical = defaultGlobalConfigPath(options);
   const home = envValue(options).HOME?.trim() || homedir9();
-  const legacy = join33(home, ".opencode", "opencode.json");
+  const legacy = join34(home, ".opencode", "opencode.json");
   return [.../* @__PURE__ */ new Set([canonical, legacy])];
 }
 function activePresetCandidatesList(options) {
   if (options.activePresetCandidates !== void 0) {
-    return options.activePresetCandidates.map((p) => resolve24(p));
+    return options.activePresetCandidates.map((p) => resolve25(p));
   }
-  const projectPreset = join33(dirname17(projectConfigPath(options)), ".pantheon", "active-preset.json");
+  const projectPreset = join34(dirname17(projectConfigPath(options)), ".pantheon", "active-preset.json");
   const globalPresets = globalConfigCandidates(options).map(
-    (p) => join33(dirname17(p), ".pantheon", "active-preset.json")
+    (p) => join34(dirname17(p), ".pantheon", "active-preset.json")
   );
-  return [...new Set([projectPreset, ...globalPresets].map((p) => resolve24(p)))];
+  return [...new Set([projectPreset, ...globalPresets].map((p) => resolve25(p)))];
 }
 function presetPathForScope(options, scope) {
   const candidates = activePresetCandidatesList(options);
@@ -24199,7 +25184,7 @@ function presetPathForScope(options, scope) {
   const second = candidates[1];
   if (second) return second;
   const globalCandidates = globalConfigCandidates(options).map(
-    (p) => resolve24(join33(dirname17(p), ".pantheon", "active-preset.json"))
+    (p) => resolve25(join34(dirname17(p), ".pantheon", "active-preset.json"))
   );
   const fallback = globalCandidates[0] ?? candidates[0];
   if (!fallback) throw new ModelCommandError("global preset path is unavailable");
@@ -24922,9 +25907,9 @@ function createReviewVerdictTool(sessionDomain) {
 }
 
 // src/pantheon/skill-search-tool.ts
-import { existsSync as existsSync25, readdirSync as readdirSync8, readFileSync as readFileSync21 } from "node:fs";
+import { existsSync as existsSync26, readdirSync as readdirSync8, readFileSync as readFileSync21 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
-import { join as join34 } from "node:path";
+import { join as join35 } from "node:path";
 
 // scripts/skill-search.mjs
 import { spawnSync } from "node:child_process";
@@ -25181,14 +26166,14 @@ function scanInstalledSkills(cwd = process.cwd()) {
   }
   const scanDir = (baseDir, scope) => {
     try {
-      if (!existsSync25(baseDir)) return;
+      if (!existsSync26(baseDir)) return;
       const entries = readdirSync8(baseDir, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
         const skillName = entry.name;
         if (skillName.startsWith(".")) continue;
-        const skillMd = join34(baseDir, skillName, "SKILL.md");
-        if (existsSync25(skillMd)) {
+        const skillMd = join35(baseDir, skillName, "SKILL.md");
+        if (existsSync26(skillMd)) {
           try {
             const raw = readFileSync21(skillMd, "utf8");
             const { name, description } = extractSkillMetadata(raw, skillName);
@@ -25206,12 +26191,12 @@ function scanInstalledSkills(cwd = process.cwd()) {
     } catch {
     }
   };
-  const xdgConfig = process.env.XDG_CONFIG_HOME || join34(homedir10(), ".config");
-  scanDir(join34(xdgConfig, "opencode", "skills"), "global");
-  scanDir(join34(homedir10(), ".agents", "skills"), "global");
-  scanDir(join34(cwd, ".opencode", "skills"), "project");
-  scanDir(join34(cwd, ".agents", "skills"), "project");
-  scanDir(join34(cwd, "skills"), "project");
+  const xdgConfig = process.env.XDG_CONFIG_HOME || join35(homedir10(), ".config");
+  scanDir(join35(xdgConfig, "opencode", "skills"), "global");
+  scanDir(join35(homedir10(), ".agents", "skills"), "global");
+  scanDir(join35(cwd, ".opencode", "skills"), "project");
+  scanDir(join35(cwd, ".agents", "skills"), "project");
+  scanDir(join35(cwd, "skills"), "project");
   return map;
 }
 var TOOL_DESCRIPTION3 = "Advisory discovery tool for skills. Queries installed Pantheon skills and external registries (Anthropic catalog, skills.sh, GitHub). Returns matched skill IDs, descriptions, install counts, and provenance tiers. Zeus uses this to recommend project-scoped skills (.agents/skills/) before proactively prompting the user via the question tool.";
@@ -25852,7 +26837,7 @@ var todoreadTool = {
     };
   }
 };
-var execAsync = promisify6(exec);
+var execAsync = promisify7(exec);
 var SHELL_TIMEOUT_MS = 12e4;
 function resolveShellBin() {
   if (process.platform === "win32") {
@@ -25861,11 +26846,11 @@ function resolveShellBin() {
       "C:\\Program Files (x86)\\Git\\bin\\bash.exe"
     ];
     for (const candidate of gitBashCandidates) {
-      if (existsSync26(candidate)) return candidate;
+      if (existsSync27(candidate)) return candidate;
     }
     return process.env.COMSPEC || "cmd.exe";
   }
-  return existsSync26("/bin/bash") ? "/bin/bash" : "/bin/sh";
+  return existsSync27("/bin/bash") ? "/bin/bash" : "/bin/sh";
 }
 var SHELL_BIN = resolveShellBin();
 var SHELL_INPUT = {
@@ -26160,7 +27145,7 @@ function readCanonicalRoster() {
       path5.join(process.cwd(), "src", "agents", "roster.json")
     ];
     for (const p of candidates) {
-      if (existsSync27(p)) {
+      if (existsSync28(p)) {
         const raw = readFileSync22(p, "utf8");
         const data = JSON.parse(raw);
         if (data && typeof data.agents === "object") return data.agents;
@@ -26338,7 +27323,7 @@ function resolveCanonicalCommandsDir() {
     path5.join(activeHostWorkspaceDir ?? process.cwd(), "src", "commands")
   ];
   for (const candidate of candidates) {
-    if (existsSync27(candidate)) return candidate;
+    if (existsSync28(candidate)) return candidate;
   }
   return void 0;
 }
@@ -26347,7 +27332,7 @@ function readCanonicalCommandTemplate(commandName, fallbackDescription) {
     const dir = resolveCanonicalCommandsDir();
     if (dir) {
       const mdPath = path5.join(dir, `${commandName}.md`);
-      if (existsSync27(mdPath)) {
+      if (existsSync28(mdPath)) {
         const raw = readFileSync22(mdPath, "utf8");
         const body = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
         if (body) return body;
@@ -26439,7 +27424,7 @@ function transformReferences(draft) {
     fileURLToPath6(new URL("../../AGENTS.md", import.meta.url)),
     fileURLToPath6(new URL("../../../AGENTS.md", import.meta.url))
   ];
-  const resolvedPath = candidates.find((p) => existsSync27(p)) ?? fileURLToPath6(new URL("../AGENTS.md", import.meta.url));
+  const resolvedPath = candidates.find((p) => existsSync28(p)) ?? fileURLToPath6(new URL("../AGENTS.md", import.meta.url));
   draft.add("pantheon-agents", {
     type: "local",
     path: resolvedPath,
@@ -26456,7 +27441,7 @@ function resolveCanonicalSkillsDir() {
     path5.join(activeHostWorkspaceDir ?? process.cwd(), "src", "skills")
   ];
   for (const candidate of candidates) {
-    if (existsSync27(candidate)) return candidate;
+    if (existsSync28(candidate)) return candidate;
   }
   return void 0;
 }
@@ -26487,7 +27472,7 @@ function transformSkills(draft) {
         if (!entry.isDirectory()) continue;
         const skillId = entry.name;
         const skillMdPath = path5.join(skillsDir, skillId, "SKILL.md");
-        if (!existsSync27(skillMdPath)) continue;
+        if (!existsSync28(skillMdPath)) continue;
         try {
           if (typeof editor.get === "function" && editor.get(skillId)) continue;
           const content = readFileSync22(skillMdPath, "utf8");
@@ -26979,7 +27964,7 @@ function appendV2HookLog(line) {
   if (body === "") return false;
   try {
     const dir = path5.join(process.cwd(), ".pantheon", "logs");
-    mkdirSync15(dir, { recursive: true });
+    mkdirSync16(dir, { recursive: true });
     appendFileSync3(path5.join(dir, "hooks.log"), `${body}
 `, "utf8");
     return true;

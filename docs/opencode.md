@@ -37,7 +37,9 @@ with zero external Python dependency, automatically available in any workspace v
 - **Mechanical gates, atomic steps & agent forge:** `pantheon_step_ledger` (`init_step`,
   `record_reproduction`, `record_mutation`, `record_verification`, `rollback_step`,
   `complete_step`, `status` with isolated temp-index git checkpoints and bugfix `RED` gates,
-  plus `dependsOn` prerequisites — see [Step dependencies](#step-dependencies-and-readiness)),
+  plus `dependsOn` prerequisites — see [Step dependencies](#step-dependencies-and-readiness);
+  and `merge_ephemeral` to land a preserved worker branch behind a single-use token — see
+  [Ephemeral branch merge](#ephemeral-branch-merge)),
   `pantheon_review_verdict` (typed `@themis` verdict + bounded `ctx.session.synthetic` remediation),
   `pantheon_deepwork`, `pantheon_agent_forge` (including `detect_stack`), and `pantheon_skill_search`.
 - **Editing, LSP diagnostics, telemetry & routing:** `hashline_edit` (workspace-confined
@@ -150,6 +152,72 @@ A step may declare prerequisites with `dependsOn`:
   fast as re-entrant misuse. Writes go to `*.tmp.<pid>` + `renameSync`, orphan
   temp files older than 60 s are swept, and a corrupt ledger is quarantined as
   `step-ledger.json.corrupt.<ts>` instead of being overwritten with an empty store.
+
+## Ephemeral branch merge
+
+`spawn_ephemeral` preserves a worker's edits on `pantheon/eph/<stepKey>` and
+records `ephemeral.branch` + `ephemeral.baseHead` on the ledger entry (plus
+`baseHead` in the tool result). `pantheon_step_ledger(action="merge_ephemeral")`
+is the only supported way to land that branch:
+
+```json
+{ "action": "merge_ephemeral", "stepKey": "a-schema", "mode": "preview" }
+```
+
+- **Two steps, one token.** `mode:"preview"` returns
+  `MERGE-<sha256(stepKey|branch|baseHead|headNow|diffDigest)[:12]>`, valid for 10
+  minutes. `mode:"apply"`/`"discard"` require it as `confirmToken`: it is
+  single-use (a failed attempt burns it), and it is bound to the exact branch
+  content *and* HEAD, so any new commit on either side makes it unusable
+  (`confirm_token_required`, with `already_used` / `expired` / `stale` / `missing`
+  in the message).
+- **Preview never touches your checkout.** The trial merge runs through
+  `git merge-tree --write-tree --name-only` (git ≥ 2.38); older git merges inside
+  a disposable worktree at
+  `<project-parent>/.pantheon-worktrees/<repo>/merge-preview-<stepKey>` that is
+  removed afterwards. A preview returns `treeUntouched: true` after comparing
+  HEAD and `git status` before/after, plus `mergeTree`, `changes`, `conflicts`,
+  `blockers`, and `readyToApply`.
+- **Preview reports, `apply` refuses.** Preview deliberately keeps working on a
+  drifted, dirty, or already-conflicting tree so the token is always obtainable
+  (otherwise a branch could never be cleaned up); `readyToApply: false` and
+  `blockers` name exactly what an `apply` would refuse with.
+- **Refusals, all before the first mutation** (`treeUntouched` / `noOp: true`):
+  `not_a_git_repository`, `detached_head`, `step_not_found`, `missing_branch`,
+  `branch_missing`, `missing_base_head`, `unknown_base_head`,
+  `dirty_index` (staged changes are never an `allowDirty` case — see below),
+  `worktree_dirty` (without `allowDirty: true`), `head_drift` (HEAD moved past
+  `ephemeral.baseHead`: the Themis verdict no longer covers that tree),
+  `lease_conflict` (`{file, holder, source: 'dirty' | 'lease' | 'branch'}`),
+  `nothing_to_merge`, `merge_conflict`, `merge_state_left_behind`.
+  `unsupported_option` is returned for `cascade: true`: `merge_ephemeral` is not a
+  rollback, and silently accepting a flag that changes nothing would be a lie.
+- **Overlap sources.** `dirty` is a local edit to a file the branch rewrites;
+  `lease` is another session's active `ownedFiles`/`forbiddenFiles` claim
+  (`listActiveLeases()`, the real registry accessor — the caller's own lease is
+  excluded); `branch` is a second live `pantheon/eph/*` branch (no
+  `ephemeral.mergedAt`) whose own diff overlaps.
+- **Try before you touch.** The merge is validated with `git merge-tree` before
+  any git command mutates the checkout, so a conflict is a refusal with an
+  untouched tree.
+- **Apply leaves changes unstaged** (`commit: true` opts into a commit that honours
+  your hooks). After the squash: a pre-merge checkpoint is captured, the squash is
+  unstaged with `git reset`, `ephemeral.mergedAt`/`mergeTree` are written back,
+  `step:merge` is emitted, and a `[done]` board slot announces the merge. The
+  branch is **kept**; only `mode:"discard"` deletes it (and records
+  `ephemeral.discardedAt`).
+- **Never a half-merged tree.** Every failure after the first mutation runs the
+  same recovery: `git merge --abort` when `MERGE_HEAD` exists (a squashed merge
+  never creates one), `git reset --merge` to drop unmerged index entries and
+  conflict markers, then a restore of the pre-merge checkpoint when the tree still
+  differs. `treeRestored` is only ever `true` after a verified comparison, and a
+  surviving `MERGE_HEAD`/`MERGE_MSG` is reported as `merge_state_left_behind`
+  rather than hidden. `commit: true` that a user hook rejects is undone the same
+  way (`commit_failed` + `recovery`).
+- **Why staged changes are refused outright.** `git merge --squash` will not run
+  with a dirty index, and `git reset --merge` discards staged content
+  irrecoverably — so an index with staged entries cannot be restored exactly. The
+  gate refuses instead of pretending it can compensate.
 
 ## Per-agent MCP permissions
 
