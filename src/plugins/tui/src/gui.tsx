@@ -26,7 +26,6 @@ import {
 } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import {
   Command,
   ComposerPill,
@@ -63,6 +62,11 @@ import {
   PER_DECISION_USD_CYCLE,
   parseUsd,
 } from './autonomy-state'
+import {
+  computeRadialHubLayout,
+  computeTidyDagLayout,
+  type TidyDagNodeStatus,
+} from './cockpit-state'
 import { queryUsageHistory } from './cost-data'
 import {
   applyDecisionRow,
@@ -117,18 +121,10 @@ import {
 } from './preset-state'
 import { resolveLanguage } from './settings-i18n'
 import {
-  ACCENT_COLORS_CYCLE,
   applyTuiRow,
-  BAR_SHAPES_CYCLE,
-  BAR_WIDTHS_CYCLE,
   DEFAULT_TUI_PREFS,
-  GAUGE_STYLES,
   LANGUAGE_CYCLE,
-  LAYOUT_PRESETS_CYCLE,
   normalizeTuiPrefs,
-  SEPARATOR_STYLES_CYCLE,
-  SETTINGS_VIEW_MODES,
-  THEME_MODES_CYCLE,
   type TuiPrefs,
 } from './tui-prefs'
 import {
@@ -162,6 +158,7 @@ interface BoardMsg {
   channel?: string
   from: string
   mentions: string[]
+  replyToSeq?: number
   tag?: string
   body: string
   ephemeral?: {
@@ -176,6 +173,8 @@ interface CockpitEvent {
   type?: string
   timestamp: number
   agent?: string
+  baseAgent?: string
+  role?: string
   status?: string
   detail?: string
   severity?: string
@@ -290,7 +289,7 @@ function readNdjsonLines<T>(filePath: string, limit = 80): T[] {
   if (!existsSync(filePath)) return []
   try {
     const raw = readFileSync(filePath, 'utf8')
-    const lines = raw.trim().split('\n').filter(Boolean)
+    const lines = raw.trim().split(/\r?\n/).filter(Boolean)
     const slice = lines.slice(-limit)
     const parsed: T[] = []
     for (const line of slice) {
@@ -344,6 +343,14 @@ async function openSqliteReadOnly(dbPath: string): Promise<SqliteDbLike | null> 
     return null
   }
 }
+
+const COST_CACHE_TTL_MS = 10_000
+let guiCachedCosts: {
+  todayCostUSD: number
+  monthCostUSD: number
+  modelSpend: ModelSpendItem[]
+  fetchedAt: number
+} | null = null
 
 async function readOpenCodeCosts(): Promise<{
   todayCostUSD: number
@@ -1112,7 +1119,18 @@ async function readSnapshotFromDisk(directory: string): Promise<GuiSnapshot> {
     }
   }
 
-  const { todayCostUSD, monthCostUSD, modelSpend } = await readOpenCodeCosts()
+  let costs = guiCachedCosts
+  const nowMs = Date.now()
+  if (!costs || nowMs - costs.fetchedAt >= COST_CACHE_TTL_MS) {
+    try {
+      const fresh = await readOpenCodeCosts()
+      costs = { ...fresh, fetchedAt: nowMs }
+      guiCachedCosts = costs
+    } catch {
+      costs = costs ?? { todayCostUSD: 0, monthCostUSD: 0, modelSpend: [], fetchedAt: nowMs }
+    }
+  }
+  const { todayCostUSD, monthCostUSD, modelSpend } = costs
 
   return {
     messages,
@@ -1569,20 +1587,134 @@ function resolveActiveDirectory(ctx: SetupContext<any>, explicit?: () => string)
   return activeDirectory().trim()
 }
 
+function renderMythEmblem(agentId: string, x: number, y: number, color: string) {
+  const id = agentId.toLowerCase()
+  return (
+    <g transform={`translate(${x}, ${y})`} fill="none" stroke={color} stroke-width="1.3">
+      {id === 'zeus' ? (
+        <path d="M7 1L2 7h4l-1 4 5-6H6l1-4z" fill={color} stroke="none" />
+      ) : id === 'athena' ? (
+        <path d="M6 1L2 2.8v3c0 2.6 1.7 4.5 4 5.2 2.3-.7 4-2.6 4-5.2v-3L6 1z" />
+      ) : id === 'hermes' ? (
+        <path d="M1.5 7.5C3.5 4.5 6.5 3 10.5 2c-1 2.8-3 4.6-6 5.5l-3 0zm2.5 2c2-.8 4-1.8 5.5-3-.8 1.8-2.4 2.8-4.5 3.5L4 9.5z" />
+      ) : id === 'apollo' ? (
+        <g>
+          <circle cx="6" cy="6" r="2.2" />
+          <path d="M6 1v1.5M6 9.5V11M1 6h1.5M9.5 6H11M2.5 2.5l1 1M8.5 8.5l1 1M9.5 2.5l-1 1M3.5 8.5l-1 1" />
+        </g>
+      ) : id === 'themis' ? (
+        <path d="M6 1.5v9M2 3.5h8M3 3.5L1.5 7h3L3 3.5zm6 0L7.5 7h3L9 3.5zM4 10.5h4" />
+      ) : id === 'aphrodite' ? (
+        <path d="M6 1l1.4 3.6L11 6 7.4 7.4 6 11 4.6 7.4 1 6l3.6-1.4L6 1z" />
+      ) : id === 'demeter' ? (
+        <path d="M10 2C5 2 2 5 2 10c5 0 8-3 8-8zM2 10l4.5-4.5" />
+      ) : id === 'iris' ? (
+        <path d="M1.5 8.5a4.5 4.5 0 0 1 9 0M3.5 8.5a2.5 2.5 0 0 1 5 0" />
+      ) : (
+        <path d="M6 1.5v9M1.5 6h9M2.8 2.8l6.4 6.4M9.2 2.8L2.8 9.2" />
+      )}
+    </g>
+  )
+}
+
+const OLYMPUS_ROSTER_INFO = [
+  {
+    id: 'zeus',
+    en: 'Coordinator · orchestrates slices, gates & synthesis',
+    pt: 'Coordenador · orquestra fatias, portões e síntese',
+  },
+  {
+    id: 'athena',
+    en: 'Planner · architecture, Deepwork blueprints & risk',
+    pt: 'Planejadora · arquitetura, blueprints Deepwork e risco',
+  },
+  {
+    id: 'hermes',
+    en: 'Backend Specialist · APIs, services, CLI & tests',
+    pt: 'Especialista Backend · APIs, serviços, CLI e testes',
+  },
+  {
+    id: 'apollo',
+    en: 'Researcher · read-only codebase & web discovery',
+    pt: 'Pesquisador · descoberta read-only de código e web',
+  },
+  {
+    id: 'themis',
+    en: 'Verifier · IntentGate, 3-layer review & branch diff',
+    pt: 'Verificadora · IntentGate, revisão 3 camadas e diff',
+  },
+  {
+    id: 'aphrodite',
+    en: 'Frontend Specialist · UI/UX, Solid/React & styles',
+    pt: 'Especialista Frontend · UI/UX, Solid/React e estilos',
+  },
+  {
+    id: 'demeter',
+    en: 'Data Specialist · schemas, migrations & SQLite/SQL',
+    pt: 'Especialista Dados · schemas, migrações e SQLite/SQL',
+  },
+  {
+    id: 'iris',
+    en: 'Custodian · git custody, memory-bank & releases',
+    pt: 'Guardiã · custódia git, memory-bank e releases',
+  },
+  {
+    id: 'ephemeral',
+    en: 'Ephemeral Workers · isolated worktree slice executors',
+    pt: 'Workers Efêmeros · executores isolados em worktrees',
+  },
+] as const
+
 function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => string }) {
   const [subTab, setSubTab] = createSignal<GuiSubTab>('topology')
-  const [topoView, setTopoView] = createSignal<'dag' | 'gantt'>('dag')
+  const [topoView, setTopoView] = createSignal<'dag' | 'gantt' | 'interactions'>('dag')
+  const [dagStyle, setDagStyle] = createSignal<'radial' | 'tree'>('radial')
+  const [dagZoom, setDagZoom] = createSignal(1)
+  const [panX, setPanX] = createSignal(0)
+  const [panY, setPanY] = createSignal(0)
+  const [isPanning, setIsPanning] = createSignal(false)
+  const [bottomHeight, setBottomHeight] = createSignal(190)
+  const [bottomTab, setBottomTab] = createSignal<'inspector' | 'members'>('inspector')
+  const [selectedAgent, setSelectedAgent] = createSignal('zeus')
   const [scrubberSeq, setScrubberSeq] = createSignal<number | null>(null)
   const [draftMsg, setDraftMsg] = createSignal('')
   const [draftChannel, setDraftChannel] = createSignal('default')
 
+  let panStartX = 0
+  let panStartY = 0
+  let panOriginX = 0
+  let panOriginY = 0
+
+  const startBottomResize = (e: MouseEvent) => {
+    e.preventDefault()
+    const startY = e.clientY
+    const startHeight = bottomHeight()
+    const onMove = (ev: MouseEvent) => {
+      const next = Math.min(420, Math.max(110, startHeight - (ev.clientY - startY)))
+      setBottomHeight(next)
+    }
+    const onUp = () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('mousemove', onMove)
+        window.removeEventListener('mouseup', onUp)
+      }
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('mousemove', onMove)
+      window.addEventListener('mouseup', onUp)
+    }
+  }
+
   const effectiveDirectory = () => resolveActiveDirectory(props.ctx, props.directory)
+  let refreshSeq = 0
 
   const refresh = async () => {
+    const seq = ++refreshSeq
     try {
       const dir = effectiveDirectory()
       if (dir) setActiveDirectory(dir)
       const raw = await props.ctx.main(PantheonBridge).snapshot(dir)
+      if (seq !== refreshSeq) return
       setSharedSnapshot(JSON.parse(raw) as GuiSnapshot)
     } catch {
       /* fail-open when main process bridge is unavailable (e.g. Web) */
@@ -1618,7 +1750,27 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
     if (dir) setActiveDirectory(dir)
     void refresh()
     const timer = setInterval(() => void refresh(), 3000)
-    onCleanup(() => clearInterval(timer))
+    const onFocus = () => void refresh()
+    const onVisibility = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        void refresh()
+      }
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', onFocus)
+    }
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVisibility)
+    }
+    onCleanup(() => {
+      clearInterval(timer)
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus', onFocus)
+      }
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisibility)
+      }
+    })
   })
 
   const maxSeq = createMemo(() => {
@@ -1630,6 +1782,41 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
     const cap = scrubberSeq()
     const msgs = sharedSnapshot().messages
     return cap === null ? msgs : msgs.filter((m) => m.seq <= cap)
+  })
+
+  const interactionEdges = createMemo(() => {
+    const edges: Array<{
+      from: string
+      target: string
+      seq: number
+      tag?: string
+      replyToSeq?: number
+      timestamp: number
+      bodyPreview: string
+    }> = []
+    for (const m of visibleMessages()) {
+      const from = m.from.trim().replace(/^@+/, '') || 'unknown'
+      const rawTargets =
+        m.mentions.length > 0
+          ? m.mentions.map((t) => t.trim().replace(/^@+/, ''))
+          : Array.from(m.body.matchAll(/(?:^|[\s(])@([A-Za-z0-9][A-Za-z0-9_-]*)/g), (x) => x[1])
+      const seen = new Set<string>()
+      const preview = m.body.trim().replace(/\s+/g, ' ').slice(0, 72)
+      for (const target of rawTargets) {
+        if (!target || seen.has(target)) continue
+        seen.add(target)
+        edges.push({
+          from,
+          target,
+          seq: m.seq,
+          tag: m.tag,
+          replyToSeq: m.replyToSeq,
+          timestamp: m.timestamp,
+          bodyPreview: preview,
+        })
+      }
+    }
+    return edges
   })
 
   const ephemeralWorkers = createMemo(() =>
@@ -1665,6 +1852,80 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
     }
     return [...set].slice(0, 10)
   })
+
+  const treeDagLayout = createMemo(() =>
+    computeTidyDagLayout({
+      events: sharedSnapshot().events,
+      messages: visibleMessages(),
+      activeJobs: sharedSnapshot().activeJobs,
+    }),
+  )
+
+  const radialDagLayout = createMemo(() => computeRadialHubLayout(treeDagLayout()))
+  const activeDagLayout = createMemo(() =>
+    dagStyle() === 'radial' ? radialDagLayout() : treeDagLayout(),
+  )
+
+  const selectedNodeInfo = createMemo(() => {
+    const id = selectedAgent()
+    const node = activeDagLayout().nodes.find((n) => n.id === id) ?? activeDagLayout().nodes[0]
+    const nodeId = node?.id ?? id
+    const childCount = activeDagLayout().nodes.filter((n) => n.parentId === nodeId).length
+    const msgs = visibleMessages()
+      .filter((m) => {
+        const from = m.from.trim().replace(/^@+/, '')
+        const mentions = m.mentions.map((x) => x.trim().replace(/^@+/, ''))
+        return from === nodeId || mentions.includes(nodeId)
+      })
+      .slice(-5)
+      .reverse()
+    const events = sharedSnapshot()
+      .events.filter((ev) => {
+        const a = ev.agent?.trim().replace(/^@+/, '')
+        const b = ev.baseAgent?.trim().replace(/^@+/, '')
+        const r = ev.role?.trim().replace(/^@+/, '')
+        return a === nodeId || b === nodeId || r === nodeId
+      })
+      .slice(-5)
+      .reverse()
+    const mentionCount = interactionEdges().filter(
+      (e) => e.from === nodeId || e.target === nodeId,
+    ).length
+    return {
+      id: nodeId,
+      label: node?.label ?? nodeId,
+      status: node?.status ?? ('idle' as TidyDagNodeStatus),
+      childCount,
+      mentionCount,
+      msgs,
+      events,
+    }
+  })
+
+  const dagSummaryCounts = createMemo(() => {
+    const nodes = activeDagLayout().nodes
+    return {
+      total: nodes.length,
+      active: nodes.filter((n) => n.status === 'running').length,
+      done: nodes.filter((n) => n.status === 'done').length,
+      blocked: nodes.filter((n) => n.status === 'blocked').length,
+    }
+  })
+
+  const dagStatusColor = (status: TidyDagNodeStatus): string => {
+    switch (status) {
+      case 'root':
+        return '#fba970'
+      case 'running':
+        return '#38bdf8'
+      case 'done':
+        return '#22c55e'
+      case 'blocked':
+        return '#ef4444'
+      default:
+        return '#64748b'
+    }
+  }
 
   const totalCost = createMemo(() =>
     sharedSnapshot().activeJobs.reduce((sum, j) => sum + (Number.isFinite(j.cost) ? j.cost : 0), 0),
@@ -1786,7 +2047,15 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
 
       {/* Tab 1: Olympus Topology (DAG + Timeline) */}
       <Show when={subTab() === 'topology'}>
-        <div style={{ display: 'flex', 'flex-direction': 'column', gap: '10px' }}>
+        <div
+          style={{
+            flex: 1,
+            'min-height': 0,
+            display: 'flex',
+            'flex-direction': 'column',
+            gap: '10px',
+          }}
+        >
           <div
             style={{
               display: 'flex',
@@ -1840,93 +2109,719 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
               >
                 {tr('Timeline', 'Linha do Tempo')}
               </button>
+              <button
+                type="button"
+                onClick={() => setTopoView('interactions')}
+                style={{
+                  padding: '2px 8px',
+                  'border-radius': '4px',
+                  border: '1px solid var(--border-weak-base, #3f3f46)',
+                  background: topoView() === 'interactions' ? '#fba970' : 'transparent',
+                  color: topoView() === 'interactions' ? '#111' : 'inherit',
+                  cursor: 'pointer',
+                }}
+              >
+                {tr('Interactions', 'Interações')}
+              </button>
             </div>
           </div>
 
-          <Show
-            when={topoView() === 'dag'}
-            fallback={
-              <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
-                <For each={uniqueAgents()}>
-                  {(agent, idx) => (
-                    <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
-                      <span style={{ width: '96px', 'font-family': 'monospace' }}>{agent}</span>
+          <Show when={topoView() === 'gantt'}>
+            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
+              <For each={uniqueAgents()}>
+                {(agent, idx) => (
+                  <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
+                    <span style={{ width: '96px', 'font-family': 'monospace' }}>{agent}</span>
+                    <div
+                      style={{
+                        flex: 1,
+                        height: '10px',
+                        background: 'rgba(128,128,128,0.18)',
+                        'border-radius': '4px',
+                        overflow: 'hidden',
+                      }}
+                    >
                       <div
                         style={{
-                          flex: 1,
-                          height: '10px',
-                          background: 'rgba(128,128,128,0.18)',
-                          'border-radius': '4px',
-                          overflow: 'hidden',
+                          height: '100%',
+                          width: `${Math.max(20, 95 - idx() * 15)}%`,
+                          background: agent === 'zeus' ? '#fba970' : '#38bdf8',
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
+
+          <Show when={topoView() === 'interactions'}>
+            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  'justify-content': 'space-between',
+                  'align-items': 'center',
+                  opacity: 0.8,
+                  'font-size': '11px',
+                }}
+              >
+                <span>
+                  {`${interactionEdges().length} ${tr('@mention edges', 'arestas @mention')} · ${visibleMessages().length}/${sharedSnapshot().messages.length} ${tr('msgs up to', 'msgs até')} #${scrubberSeq() ?? maxSeq()}`}
+                </span>
+                <Show when={scrubberSeq() !== null}>
+                  <button
+                    type="button"
+                    onClick={() => setScrubberSeq(null)}
+                    style={{
+                      padding: '1px 6px',
+                      'border-radius': '4px',
+                      border: '1px solid var(--border-weak-base, #3f3f46)',
+                      background: 'transparent',
+                      color: '#fba970',
+                      cursor: 'pointer',
+                      'font-size': '11px',
+                    }}
+                  >
+                    {tr('Live', 'Ao vivo')}
+                  </button>
+                </Show>
+              </div>
+              <For
+                each={interactionEdges()}
+                fallback={
+                  <div style={{ opacity: 0.6 }}>
+                    {tr(
+                      'No @mention interactions up to this #seq.',
+                      'Nenhuma interação @mention até este #seq.',
+                    )}
+                  </div>
+                }
+              >
+                {(edge) => {
+                  const tagColor =
+                    edge.tag === 'done'
+                      ? '#34d399'
+                      : edge.tag === 'blocker' || edge.tag === 'deadlock'
+                        ? '#f87171'
+                        : edge.tag === 'claim' || edge.tag === 'handoff'
+                          ? '#fba970'
+                          : '#38bdf8'
+                  return (
+                    <div
+                      style={{
+                        display: 'flex',
+                        'flex-direction': 'column',
+                        gap: '3px',
+                        padding: '6px 8px',
+                        'border-radius': '6px',
+                        border: '1px solid var(--border-weak-base, #2e2e32)',
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: 'flex',
+                          'justify-content': 'space-between',
+                          'align-items': 'center',
+                          gap: '8px',
                         }}
                       >
-                        <div
-                          style={{
-                            height: '100%',
-                            width: `${Math.max(20, 95 - idx() * 15)}%`,
-                            background: agent === 'zeus' ? '#fba970' : '#38bdf8',
-                          }}
-                        />
+                        <span style={{ 'font-family': 'monospace' }}>
+                          {`#${edge.seq} ${edge.from} → @${edge.target}`}
+                          {edge.replyToSeq !== undefined ? ` (re:#${edge.replyToSeq})` : ''}
+                        </span>
+                        <Show when={edge.tag}>
+                          <span
+                            style={{
+                              padding: '1px 6px',
+                              'border-radius': '999px',
+                              border: `1px solid ${tagColor}`,
+                              color: tagColor,
+                              'font-size': '10px',
+                              'font-family': 'monospace',
+                            }}
+                          >
+                            {`[${edge.tag}]`}
+                          </span>
+                        </Show>
                       </div>
+                      <Show when={edge.bodyPreview.length > 0}>
+                        <div style={{ opacity: 0.7, 'font-size': '11px' }}>{edge.bodyPreview}</div>
+                      </Show>
                     </div>
-                  )}
-                </For>
-              </div>
-            }
-          >
-            <svg viewBox="0 0 640 200" style={{ width: '100%', height: '200px' }}>
-              <title>{tr('Olympus Topology DAG', 'Topologia Olympus (DAG)')}</title>
-              <rect
-                x="245"
-                y="10"
-                width="150"
-                height="36"
-                rx="6"
-                fill="none"
-                stroke="#fba970"
-                stroke-width="2"
-              />
-              <text
-                x="320"
-                y="32"
-                text-anchor="middle"
-                fill="currentColor"
-                font-size="12"
-                font-weight="600"
-              >
-                {tr('zeus (root)', 'zeus (raiz)')}
-              </text>
-              <For each={uniqueAgents().filter((a) => a !== 'zeus')}>
-                {(agent, idx) => {
-                  const count = Math.max(1, uniqueAgents().length - 1)
-                  const x = 20 + (idx() * 600) / count
-                  const cx = x + 55
-                  return (
-                    <g>
-                      <path
-                        d={`M 320 46 C 320 78, ${cx} 72, ${cx} 104`}
-                        fill="none"
-                        stroke="#38bdf8"
-                        stroke-width="1.5"
-                      />
-                      <rect
-                        x={x}
-                        y="104"
-                        width="110"
-                        height="40"
-                        rx="6"
-                        fill="none"
-                        stroke="#38bdf8"
-                        stroke-width="1.4"
-                      />
-                      <text x={cx} y="128" text-anchor="middle" fill="currentColor" font-size="11">
-                        {agent}
-                      </text>
-                    </g>
                   )
                 }}
               </For>
-            </svg>
+            </div>
+          </Show>
+
+          <Show when={topoView() === 'dag'}>
+            {/* biome-ignore lint/a11y/noStaticElementInteractions: interactive pan/wheel-zoom graph canvas */}
+            <div
+              onWheel={(e) => {
+                e.preventDefault()
+                const delta = e.deltaY < 0 ? 0.1 : -0.1
+                setDagZoom((z) => Math.min(2.2, Math.max(0.4, Number((z + delta).toFixed(2)))))
+              }}
+              onMouseDown={(e) => {
+                const target = e.target as Element | null
+                if (target?.closest('g[role="button"], button')) return
+                setIsPanning(true)
+                panStartX = e.clientX
+                panStartY = e.clientY
+                panOriginX = panX()
+                panOriginY = panY()
+              }}
+              onMouseMove={(e) => {
+                if (!isPanning()) return
+                setPanX(panOriginX + (e.clientX - panStartX))
+                setPanY(panOriginY + (e.clientY - panStartY))
+              }}
+              onMouseUp={() => setIsPanning(false)}
+              onMouseLeave={() => setIsPanning(false)}
+              style={{
+                position: 'relative',
+                flex: 1,
+                'min-height': '180px',
+                overflow: 'hidden',
+                cursor: isPanning() ? 'grabbing' : 'grab',
+                'user-select': 'none',
+                border: '1px solid var(--border-weak-base, #2e2e32)',
+                'border-radius': '8px',
+                'background-color': 'rgba(15, 17, 23, 0.55)',
+                'background-image': 'radial-gradient(rgba(255,255,255,0.06) 1px, transparent 1px)',
+                'background-size': '18px 18px',
+                padding: '8px',
+              }}
+            >
+              {/* Floating style + zoom controls */}
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '8px',
+                  right: '8px',
+                  'z-index': 2,
+                  display: 'flex',
+                  gap: '4px',
+                  padding: '4px',
+                  'border-radius': '6px',
+                  background: 'rgba(17, 20, 28, 0.88)',
+                  border: '1px solid var(--border-weak-base, #3f3f46)',
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setDagStyle('radial')}
+                  style={{
+                    padding: '2px 7px',
+                    'border-radius': '4px',
+                    border: '1px solid var(--border-weak-base, #3f3f46)',
+                    background: dagStyle() === 'radial' ? '#fba970' : 'transparent',
+                    color: dagStyle() === 'radial' ? '#111' : 'inherit',
+                    'font-size': '11px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {tr('Hub Radial', 'Hub Radial')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDagStyle('tree')}
+                  style={{
+                    padding: '2px 7px',
+                    'border-radius': '4px',
+                    border: '1px solid var(--border-weak-base, #3f3f46)',
+                    background: dagStyle() === 'tree' ? '#fba970' : 'transparent',
+                    color: dagStyle() === 'tree' ? '#111' : 'inherit',
+                    'font-size': '11px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {tr('Tree DAG', 'Árvore DAG')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDagZoom((z) => Math.max(0.4, Number((z - 0.15).toFixed(2))))}
+                  style={{
+                    padding: '2px 6px',
+                    'border-radius': '4px',
+                    border: '1px solid var(--border-weak-base, #3f3f46)',
+                    background: 'transparent',
+                    color: 'inherit',
+                    'font-size': '11px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  -
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDagZoom(1)
+                    setPanX(0)
+                    setPanY(0)
+                  }}
+                  style={{
+                    padding: '2px 6px',
+                    'border-radius': '4px',
+                    border: '1px solid var(--border-weak-base, #3f3f46)',
+                    background: 'transparent',
+                    color: 'inherit',
+                    'font-size': '11px',
+                    'font-family': 'monospace',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {`${Math.round(dagZoom() * 100)}%`}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDagZoom((z) => Math.min(2.2, Number((z + 0.15).toFixed(2))))}
+                  style={{
+                    padding: '2px 6px',
+                    'border-radius': '4px',
+                    border: '1px solid var(--border-weak-base, #3f3f46)',
+                    background: 'transparent',
+                    color: 'inherit',
+                    'font-size': '11px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  +
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDagZoom(0.85)
+                    setPanX(0)
+                    setPanY(0)
+                  }}
+                  style={{
+                    padding: '2px 6px',
+                    'border-radius': '4px',
+                    border: '1px solid var(--border-weak-base, #3f3f46)',
+                    background: 'transparent',
+                    color: 'inherit',
+                    'font-size': '11px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {tr('Fit', 'Ajustar')}
+                </button>
+              </div>
+
+              <div
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  display: 'flex',
+                  'align-items': 'center',
+                  'justify-content': 'center',
+                  transform: `translate(${panX()}px, ${panY()}px) scale(${dagZoom()})`,
+                  'transform-origin': 'center center',
+                  transition: isPanning() ? 'none' : 'transform 80ms ease-out',
+                }}
+              >
+                <svg
+                  width={activeDagLayout().width}
+                  height={activeDagLayout().height}
+                  viewBox={`0 0 ${activeDagLayout().width} ${activeDagLayout().height}`}
+                  style={{ display: 'block', overflow: 'visible' }}
+                >
+                  <title>{tr('Olympus Topology DAG', 'Topologia Olympus (DAG)')}</title>
+                  <style>{`
+                    @keyframes pantheonDashFlow {
+                      to { stroke-dashoffset: -20; }
+                    }
+                    @keyframes pantheonPulse {
+                      0%, 100% { opacity: 0.22; }
+                      50% { opacity: 0.78; }
+                    }
+                  `}</style>
+                  {/* Parent-child tree/radial edges */}
+                  <For each={activeDagLayout().edges}>
+                    {(edge) => {
+                      const stroke = dagStatusColor(edge.status)
+                      const isActive = edge.status === 'running'
+                      const pathD =
+                        dagStyle() === 'radial'
+                          ? (() => {
+                              const mx = (edge.x1 + edge.x2) / 2
+                              const my = (edge.y1 + edge.y2) / 2
+                              const dx = edge.x2 - edge.x1
+                              const dy = edge.y2 - edge.y1
+                              const cx = mx - dy * 0.08
+                              const cy = my + dx * 0.08
+                              return `M ${edge.x1} ${edge.y1} Q ${cx} ${cy}, ${edge.x2} ${edge.y2}`
+                            })()
+                          : (() => {
+                              const midY = (edge.y1 + edge.y2) / 2
+                              return `M ${edge.x1} ${edge.y1} C ${edge.x1} ${midY}, ${edge.x2} ${midY}, ${edge.x2} ${edge.y2}`
+                            })()
+                      return (
+                        <path
+                          d={pathD}
+                          fill="none"
+                          stroke={stroke}
+                          stroke-width={isActive ? '2' : '1.6'}
+                          stroke-dasharray={isActive ? '6 4' : undefined}
+                          opacity="0.88"
+                          style={
+                            isActive
+                              ? { animation: 'pantheonDashFlow 1s linear infinite' }
+                              : undefined
+                          }
+                        />
+                      )
+                    }}
+                  </For>
+
+                  {/* Subtle dashed @mention cross-edges in radial mode */}
+                  <Show when={dagStyle() === 'radial'}>
+                    <For each={interactionEdges().slice(-24)}>
+                      {(edge) => {
+                        const fromNode = activeDagLayout().nodes.find((n) => n.id === edge.from)
+                        const toNode = activeDagLayout().nodes.find((n) => n.id === edge.target)
+                        if (!fromNode || !toNode || fromNode.id === toNode.id) return null
+                        if (toNode.parentId === fromNode.id || fromNode.parentId === toNode.id) {
+                          return null
+                        }
+                        const x1 = fromNode.x + fromNode.width / 2
+                        const y1 = fromNode.y + fromNode.height / 2
+                        const x2 = toNode.x + toNode.width / 2
+                        const y2 = toNode.y + toNode.height / 2
+                        return (
+                          <path
+                            d={`M ${x1} ${y1} Q ${(x1 + x2) / 2} ${(y1 + y2) / 2 - 22}, ${x2} ${y2}`}
+                            fill="none"
+                            stroke="#94a3b8"
+                            stroke-width="1"
+                            stroke-dasharray="4 4"
+                            opacity="0.45"
+                          />
+                        )
+                      }}
+                    </For>
+                  </Show>
+
+                  {/* Richer clickable node cards with mythological emblems */}
+                  <For each={activeDagLayout().nodes}>
+                    {(node) => {
+                      const stroke = dagStatusColor(node.status)
+                      const isSelected = () => selectedAgent() === node.id
+                      const isActive = node.status === 'running'
+                      const label =
+                        node.id === 'zeus'
+                          ? tr('zeus (root)', 'zeus (raiz)')
+                          : node.label.length > 14
+                            ? `${node.label.slice(0, 13)}…`
+                            : node.label
+                      return (
+                        // biome-ignore lint/a11y/useSemanticElements: SVG <g> represents interactive graph node
+                        <g
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => setSelectedAgent(node.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') setSelectedAgent(node.id)
+                          }}
+                          style={{ cursor: 'pointer' }}
+                        >
+                          <Show when={isActive}>
+                            <rect
+                              x={node.x - 4}
+                              y={node.y - 4}
+                              width={node.width + 8}
+                              height={node.height + 8}
+                              rx="11"
+                              fill="none"
+                              stroke={stroke}
+                              stroke-width="1.5"
+                              style={{ animation: 'pantheonPulse 1.8s ease-in-out infinite' }}
+                            />
+                          </Show>
+                          <rect
+                            x={node.x}
+                            y={node.y}
+                            width={node.width}
+                            height={node.height}
+                            rx="8"
+                            fill="#131722"
+                            stroke={stroke}
+                            stroke-width={isSelected() ? '2.5' : node.id === 'zeus' ? '2' : '1.4'}
+                          />
+                          {renderMythEmblem(node.id, node.x + 8, node.y + 9, stroke)}
+                          <text
+                            x={node.x + 25}
+                            y={node.y + 19}
+                            fill="currentColor"
+                            font-size={node.id === 'zeus' ? '12' : '11'}
+                            font-weight={node.id === 'zeus' || isSelected() ? '600' : '500'}
+                          >
+                            {label}
+                          </text>
+                          <circle cx={node.x + 14} cy={node.y + 31} r="3" fill={stroke} />
+                          <text
+                            x={node.x + 22}
+                            y={node.y + 34}
+                            fill="#94a3b8"
+                            font-size="9.5"
+                            font-family="monospace"
+                          >
+                            {`${node.status} · L${node.depth}`}
+                          </text>
+                        </g>
+                      )
+                    }}
+                  </For>
+                </svg>
+              </div>
+            </div>
+
+            {/* Resizable 6px split-pane handle */}
+            {/* biome-ignore lint/a11y/noStaticElementInteractions: draggable split-pane divider */}
+            <div
+              onMouseDown={startBottomResize}
+              title={tr('Drag to resize panel', 'Arraste para redimensionar')}
+              style={{
+                height: '6px',
+                cursor: 'row-resize',
+                background: 'rgba(148, 163, 184, 0.16)',
+                'border-radius': '3px',
+                width: '100%',
+                'flex-shrink': 0,
+              }}
+            />
+
+            {/* Bottom Panel: Inspector | Members & Structure */}
+            <div
+              style={{
+                height: `${bottomHeight()}px`,
+                'min-height': '110px',
+                'border-radius': '8px',
+                border: '1px solid var(--border-weak-base, #2e2e32)',
+                background: 'rgba(19, 23, 34, 0.72)',
+                padding: '8px 10px',
+                display: 'flex',
+                'flex-direction': 'column',
+                gap: '6px',
+                overflow: 'hidden',
+                'flex-shrink': 0,
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  'justify-content': 'space-between',
+                  'align-items': 'center',
+                }}
+              >
+                <div style={{ display: 'flex', 'align-items': 'center', gap: '6px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setBottomTab('inspector')}
+                    style={{
+                      padding: '2px 8px',
+                      'border-radius': '4px',
+                      border: '1px solid var(--border-weak-base, #3f3f46)',
+                      background: bottomTab() === 'inspector' ? '#fba970' : 'transparent',
+                      color: bottomTab() === 'inspector' ? '#111' : 'inherit',
+                      'font-size': '11px',
+                      'font-weight': bottomTab() === 'inspector' ? 600 : 400,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {tr('Inspector', 'Inspetor')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBottomTab('members')}
+                    style={{
+                      padding: '2px 8px',
+                      'border-radius': '4px',
+                      border: '1px solid var(--border-weak-base, #3f3f46)',
+                      background: bottomTab() === 'members' ? '#fba970' : 'transparent',
+                      color: bottomTab() === 'members' ? '#111' : 'inherit',
+                      'font-size': '11px',
+                      'font-weight': bottomTab() === 'members' ? 600 : 400,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {tr('Members & Structure', 'Membros & Estrutura')}
+                  </button>
+                  <Show when={bottomTab() === 'inspector'}>
+                    <span style={{ 'font-weight': 600, 'font-family': 'monospace' }}>
+                      {`@${selectedNodeInfo().id}`}
+                    </span>
+                    <span
+                      style={{
+                        padding: '1px 7px',
+                        'border-radius': '999px',
+                        border: `1px solid ${dagStatusColor(selectedNodeInfo().status)}`,
+                        color: dagStatusColor(selectedNodeInfo().status),
+                        'font-size': '10px',
+                        'font-family': 'monospace',
+                      }}
+                    >
+                      {selectedNodeInfo().status}
+                    </span>
+                  </Show>
+                </div>
+                <span style={{ opacity: 0.75, 'font-size': '11px', 'font-family': 'monospace' }}>
+                  {`${tr('children', 'filhos')}: ${selectedNodeInfo().childCount} · @mentions: ${selectedNodeInfo().mentionCount}`}
+                </span>
+              </div>
+
+              <Show when={bottomTab() === 'inspector'}>
+                <div
+                  style={{
+                    flex: 1,
+                    'min-height': 0,
+                    overflow: 'auto',
+                    display: 'flex',
+                    'flex-direction': 'column',
+                    gap: '3px',
+                    'font-size': '11px',
+                  }}
+                >
+                  <For each={selectedNodeInfo().msgs}>
+                    {(m) => (
+                      <div style={{ display: 'flex', gap: '6px', opacity: 0.9 }}>
+                        <span style={{ 'font-family': 'monospace', color: '#fba970' }}>
+                          {`#${m.seq}`}
+                        </span>
+                        <Show when={m.tag}>
+                          <span style={{ 'font-family': 'monospace', opacity: 0.75 }}>
+                            {`[${m.tag}]`}
+                          </span>
+                        </Show>
+                        <span style={{ opacity: 0.85 }}>
+                          {m.body.trim().replace(/\s+/g, ' ').slice(0, 96)}
+                        </span>
+                      </div>
+                    )}
+                  </For>
+                  <For each={selectedNodeInfo().events}>
+                    {(ev) => (
+                      <div style={{ display: 'flex', gap: '6px', opacity: 0.75 }}>
+                        <span style={{ 'font-family': 'monospace', color: '#38bdf8' }}>
+                          {ev.kind ?? ev.type ?? 'event'}
+                        </span>
+                        <span>{ev.stepKey ?? ev.role ?? ev.status ?? ''}</span>
+                      </div>
+                    )}
+                  </For>
+                  <Show
+                    when={
+                      selectedNodeInfo().msgs.length === 0 && selectedNodeInfo().events.length === 0
+                    }
+                  >
+                    <span style={{ opacity: 0.6 }}>
+                      {tr(
+                        'No board messages or telemetry events recorded for this node yet.',
+                        'Nenhuma mensagem ou evento de telemetria registrado para este nó ainda.',
+                      )}
+                    </span>
+                  </Show>
+                </div>
+              </Show>
+
+              <Show when={bottomTab() === 'members'}>
+                <div
+                  style={{
+                    flex: 1,
+                    'min-height': 0,
+                    overflow: 'auto',
+                    display: 'flex',
+                    'flex-direction': 'column',
+                    gap: '4px',
+                    'font-size': '11px',
+                  }}
+                >
+                  <div
+                    style={{
+                      opacity: 0.8,
+                      'font-family': 'monospace',
+                      'font-size': '10.5px',
+                      'padding-bottom': '2px',
+                    }}
+                  >
+                    {tr(
+                      'Hierarchy: Zeus (Coordinator) → Athena (Plan) / Specialists → Ephemeral Workers → Themis (Verifier)',
+                      'Hierarquia: Zeus (Coordenador) → Athena (Plano) / Especialistas → Workers Efêmeros → Themis (Verificadora)',
+                    )}
+                  </div>
+                  <For each={OLYMPUS_ROSTER_INFO}>
+                    {(member) => {
+                      const liveNode = () => activeDagLayout().nodes.find((n) => n.id === member.id)
+                      const status = () => liveNode()?.status ?? 'idle'
+                      const color = () => dagStatusColor(status())
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedAgent(member.id)}
+                          style={{
+                            display: 'flex',
+                            'align-items': 'center',
+                            'justify-content': 'space-between',
+                            gap: '8px',
+                            padding: '3px 6px',
+                            'border-radius': '4px',
+                            border:
+                              selectedAgent() === member.id
+                                ? '1px solid #fba970'
+                                : '1px solid transparent',
+                            background: 'rgba(255, 255, 255, 0.03)',
+                            color: 'inherit',
+                            cursor: 'pointer',
+                            'text-align': 'left',
+                          }}
+                        >
+                          <div style={{ display: 'flex', 'align-items': 'center', gap: '6px' }}>
+                            <svg width="14" height="14" viewBox="0 0 12 12">
+                              <title>{member.id}</title>
+                              {renderMythEmblem(member.id, 0, 0, color())}
+                            </svg>
+                            <span style={{ 'font-family': 'monospace', 'font-weight': 600 }}>
+                              {`@${member.id}`}
+                            </span>
+                            <span style={{ opacity: 0.78 }}>{tr(member.en, member.pt)}</span>
+                          </div>
+                          <span
+                            style={{
+                              'font-family': 'monospace',
+                              'font-size': '10px',
+                              color: color(),
+                            }}
+                          >
+                            {status()}
+                          </span>
+                        </button>
+                      )
+                    }}
+                  </For>
+                </div>
+              </Show>
+
+              <div
+                style={{
+                  display: 'flex',
+                  'justify-content': 'space-between',
+                  'border-top': '1px solid var(--border-weak-base, #2e2e32)',
+                  'padding-top': '4px',
+                  'font-size': '10.5px',
+                  'font-family': 'monospace',
+                  opacity: 0.8,
+                }}
+              >
+                <span>{`Agents: ${dagSummaryCounts().total}`}</span>
+                <span>{`Active: ${dagSummaryCounts().active}`}</span>
+                <span>{`Done: ${dagSummaryCounts().done}`}</span>
+                <span>{`Blocked: ${dagSummaryCounts().blocked}`}</span>
+                <span>{`Board: #${maxSeq()}`}</span>
+                <span>{`Cost: $${totalCost().toFixed(2)}`}</span>
+              </div>
+            </div>
           </Show>
         </div>
       </Show>
@@ -2091,7 +2986,6 @@ type SettingsSectionTab =
   | 'preset'
   | 'decision'
   | 'autonomy'
-  | 'tui'
   | 'updates'
   | 'doctor'
 
@@ -2217,27 +3111,6 @@ function PantheonSettingsControls(props: {
 
   const tui = () => sharedSnapshot().tuiPrefs
 
-  const renderTuiToggle = (id: string, label: string, current: boolean, note?: string) => (
-    <div style={rowStyle}>
-      <div style={{ display: 'flex', 'flex-direction': 'column' }}>
-        <span style={{ 'font-size': '12px' }}>{label}</span>
-        <Show when={note}>
-          <span style={{ opacity: 0.65, 'font-size': '10px' }}>{note}</span>
-        </Show>
-      </div>
-      <button
-        type="button"
-        onClick={() => void savePatch({ tuiPref: { id, value: current ? 'disabled' : 'enabled' } })}
-        style={{
-          ...pillButtonStyle(false),
-          color: current ? '#4ade80' : '#f87171',
-        }}
-      >
-        {current ? tr('enabled', 'ativado') : tr('disabled', 'desativado')}
-      </button>
-    </div>
-  )
-
   const renderTuiCycle = (
     id: string,
     label: string,
@@ -2306,7 +3179,6 @@ function PantheonSettingsControls(props: {
             ['preset', tr('Presets & Models', 'Presets & Modelos')],
             ['decision', tr('Decision (Jev)', 'Decisão (Jev)')],
             ['autonomy', tr('Autonomy & J1', 'Autonomia & J1')],
-            ['tui', tr('TUI & Layout', 'TUI & Layout')],
             ['updates', tr('Updates & Cleanup', 'Atualizações & Limpeza')],
             ['doctor', tr('Doctor & About', 'Doctor & Sobre')],
           ] as const
@@ -2408,6 +3280,12 @@ function PantheonSettingsControls(props: {
                 : tr('disabled', 'desativado')}
             </button>
           </div>
+          {renderTuiCycle(
+            'tui.layout.language',
+            tr('Language / Idioma', 'Idioma / Language'),
+            tui().layout.language ?? 'auto',
+            LANGUAGE_CYCLE,
+          )}
         </div>
 
         <div style={{ opacity: 0.75, 'font-size': '11px' }}>
@@ -2899,167 +3777,7 @@ function PantheonSettingsControls(props: {
         </div>
       </Show>
 
-      {/* 6. TUI & Layout Preferences */}
-      <Show when={section() === 'tui'}>
-        <div style={cardStyle}>
-          <div style={{ 'font-weight': 600 }}>{tr('Preset & Layout', 'Predefinição & Layout')}</div>
-          {renderTuiCycle(
-            'tui.layout.preset',
-            tr('Layout Preset', 'Predefinição de Layout'),
-            tui().layout.preset,
-            LAYOUT_PRESETS_CYCLE,
-          )}
-          {renderTuiCycle(
-            'tui.layout.separator',
-            tr('Separator', 'Separador'),
-            tui().layout.separator,
-            SEPARATOR_STYLES_CYCLE,
-          )}
-          {renderTuiCycle(
-            'tui.layout.settingsView',
-            tr('Settings Surface', 'Superfície de Configurações'),
-            tui().layout.settingsView ?? 'docked',
-            SETTINGS_VIEW_MODES,
-          )}
-          {renderTuiCycle(
-            'tui.layout.language',
-            tr('Language / Idioma', 'Idioma / Language'),
-            tui().layout.language ?? 'auto',
-            LANGUAGE_CYCLE,
-          )}
-        </div>
-
-        <div style={cardStyle}>
-          <div style={{ 'font-weight': 600 }}>{tr('Colors & Theme', 'Cores & Tema')}</div>
-          {renderTuiCycle(
-            'tui.theme.mode',
-            tr('Theme Mode', 'Modo do Tema'),
-            tui().theme?.mode ?? 'auto',
-            THEME_MODES_CYCLE,
-          )}
-          {renderTuiCycle(
-            'tui.theme.accent',
-            tr('Accent Color', 'Cor de Destaque'),
-            tui().theme?.accent ?? 'host',
-            ACCENT_COLORS_CYCLE,
-          )}
-        </div>
-
-        <div style={cardStyle}>
-          <div style={{ 'font-weight': 600 }}>{tr('Bars & Gauges', 'Barras & Medidores')}</div>
-          {renderTuiCycle(
-            'tui.sidebar.context.barShape',
-            tr('Bar Shape', 'Formato da Barra'),
-            tui().sidebar.context.barShape,
-            BAR_SHAPES_CYCLE,
-          )}
-          {renderTuiCycle(
-            'tui.sidebar.context.barWidth',
-            tr('Bar Width', 'Largura da Barra'),
-            tui().sidebar.context.barWidth,
-            BAR_WIDTHS_CYCLE,
-          )}
-          {renderTuiCycle(
-            'tui.sidebar.context.gauge',
-            tr('Gauge Style', 'Estilo do Medidor'),
-            tui().sidebar.context.gauge,
-            GAUGE_STYLES,
-          )}
-          {renderTuiToggle(
-            'tui.sidebar.context.evenMark',
-            tr('Even-Use Mark (50%)', 'Marca Central (50%)'),
-            tui().sidebar.context.evenMark,
-          )}
-        </div>
-
-        <div style={cardStyle}>
-          <div style={{ 'font-weight': 600 }}>
-            {tr('Sidebar Header, Blocks & Footers', 'Cabeçalho, Blocos & Rodapés da Barra Lateral')}
-          </div>
-          {renderTuiToggle(
-            'tui.sidebar.header.version',
-            tr('Header: Version', 'Cabeçalho: Versão'),
-            tui().sidebar.header.version,
-          )}
-          {renderTuiToggle(
-            'tui.sidebar.header.preset',
-            tr('Header: Preset', 'Cabeçalho: Preset'),
-            tui().sidebar.header.preset,
-          )}
-          {renderTuiToggle(
-            'tui.sidebar.header.session',
-            tr('Header: Session', 'Cabeçalho: Sessão'),
-            tui().sidebar.header.session,
-          )}
-          {renderTuiToggle(
-            'tui.sidebar.block.context',
-            tr('Block: Context', 'Bloco: Contexto'),
-            tui().sidebar.blocks.context,
-          )}
-          {renderTuiToggle(
-            'tui.sidebar.block.git',
-            tr('Block: Git', 'Bloco: Git'),
-            tui().sidebar.blocks.git,
-          )}
-          {renderTuiToggle(
-            'tui.sidebar.block.todo',
-            tr('Block: Todo', 'Bloco: Tarefas (Todo)'),
-            tui().sidebar.blocks.todo ?? true,
-          )}
-          {renderTuiToggle(
-            'tui.sidebar.block.dispatch',
-            tr('Block: Dispatch', 'Bloco: Dispatch'),
-            tui().sidebar.blocks.dispatch,
-          )}
-          {renderTuiToggle(
-            'tui.sidebar.context.tokens',
-            tr('Context: Tokens Row', 'Contexto: Linha de Tokens'),
-            tui().sidebar.context.tokens,
-          )}
-          {renderTuiToggle(
-            'tui.sidebar.context.spent',
-            tr('Context: Spent Row', 'Contexto: Linha de Custo'),
-            tui().sidebar.context.spent,
-          )}
-          {renderTuiToggle(
-            'tui.sidebar.context.modelUsage',
-            tr('Context: Model Usage', 'Contexto: Uso de Modelos'),
-            tui().sidebar.context.modelUsage,
-          )}
-          {renderTuiToggle(
-            'tui.sidebar.context.performance',
-            tr('Context: Performance', 'Contexto: Desempenho'),
-            tui().sidebar.context.performance,
-          )}
-          {renderTuiToggle(
-            'tui.sidebar.context.turnCost',
-            tr('Context: Turn Cost', 'Contexto: Custo do Turno'),
-            tui().sidebar.context.turnCost,
-          )}
-          {renderTuiToggle(
-            'tui.sidebar.context.tokenAnatomy',
-            tr('Context: Token Anatomy', 'Contexto: Anatomia de Tokens'),
-            tui().sidebar.context.tokenAnatomy,
-          )}
-          {renderTuiToggle(
-            'tui.sidebar.context.localSpend',
-            tr('Context: Local Spend', 'Contexto: Gasto Local'),
-            tui().sidebar.context.localSpend,
-          )}
-          {renderTuiToggle(
-            'tui.footer.prompt',
-            tr('Footer: Prompt', 'Rodapé: Prompt'),
-            tui().footer.prompt,
-          )}
-          {renderTuiToggle(
-            'tui.footer.home',
-            tr('Footer: Home Status', 'Rodapé: Status Inicial'),
-            tui().footer.home,
-          )}
-        </div>
-      </Show>
-
-      {/* 7. Updates & Legacy Cleanup */}
+      {/* 6. Updates & Legacy Cleanup */}
       <Show when={section() === 'updates'}>
         <div style={cardStyle}>
           <div style={{ 'font-weight': 600 }}>{tr('Plugin Updates', 'Atualizações do Plugin')}</div>

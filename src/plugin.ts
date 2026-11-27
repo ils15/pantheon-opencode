@@ -143,6 +143,7 @@ import {
 } from './pantheon/delegation-policy.ts'
 import { evaluateEditGuardrail } from './pantheon/edit-guardrails.ts'
 import { createV2ExecuteAfter, resolveV2SandboxConfig } from './pantheon/execute-after.ts'
+import { checkFileLease } from './pantheon/file-leases.ts'
 import { resolveGoalLoopConfig } from './pantheon/goal-loop-config.ts'
 import { GoalStore } from './pantheon/goal-store.ts'
 import { createGuardPathResolver } from './pantheon/guard-path.ts'
@@ -189,6 +190,7 @@ import { buildPrefixCachedPrompt } from './pantheon/prompt-cache-order.ts'
 import { evaluateReproductionGate } from './pantheon/reproduction-gate.ts'
 import { getSharedBoard } from './pantheon/shared-board.ts'
 import { createV2ShellHooks, type V2ShellRunner } from './pantheon/shell-hooks.ts'
+import { checkShellWriteLease } from './pantheon/shell-write-guard.ts'
 import { wireSwarmWatchdog } from './pantheon/swarm-watchdog.ts'
 import {
   TODO_ENFORCER_DEFAULTS,
@@ -2702,6 +2704,32 @@ async function registerV2ToolHooks(
         })
         if (!reproVerdict.allowed) {
           throw new Error(reproVerdict.message)
+        }
+        if (
+          input.tool === 'edit' ||
+          input.tool === 'write' ||
+          input.tool === 'hashline_edit' ||
+          input.tool === 'patch' ||
+          input.tool === 'ast_rewrite'
+        ) {
+          const leaseArgs = (output.args ?? {}) as Record<string, unknown>
+          const rawTarget =
+            leaseArgs.filePath ?? leaseArgs.file_path ?? leaseArgs.file ?? leaseArgs.path ?? ''
+          if (typeof rawTarget === 'string' && rawTarget.trim() !== '') {
+            const leaseVerdict = checkFileLease(input.sessionID, rawTarget)
+            if (!leaseVerdict.allowed) {
+              throw new Error(leaseVerdict.reason ?? 'File lease violation')
+            }
+          }
+        } else if (input.tool === 'bash' || input.tool === 'shell') {
+          const shellArgs = (output.args ?? {}) as Record<string, unknown>
+          const rawCommand = shellArgs.command ?? shellArgs.cmd ?? ''
+          if (typeof rawCommand === 'string' && rawCommand.trim() !== '') {
+            const shellLeaseVerdict = checkShellWriteLease(input.sessionID, rawCommand)
+            if (!shellLeaseVerdict.allowed) {
+              throw new Error(shellLeaseVerdict.reason ?? 'File lease violation')
+            }
+          }
         }
         const boundedReadOrigin = boundedReadOrigins?.capture(event)
         const eventTool = (event as V2ToolExecuteBeforeEvent | null)?.tool

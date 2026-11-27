@@ -42,6 +42,10 @@ export interface StepFinishPayload {
   readonly receiptId?: string
 }
 
+export const DEFAULT_WALL_CLOCK_MS = 300_000
+
+export type StepHaltReason = 'wall_clock_exceeded' | 'max_cost_exceeded'
+
 export interface AtomicStepRunInput {
   readonly sessionDomain: SubSessionDomainLike
   readonly cwd: string
@@ -56,6 +60,13 @@ export interface AtomicStepRunInput {
   readonly reuseSessionID?: string
   readonly maxTurns?: number
   readonly requireFinishPayload?: boolean
+  readonly wallClockMs?: number
+  readonly maxCostUsd?: number
+  readonly ownedFiles?: readonly string[]
+  readonly forbiddenFiles?: readonly string[]
+  readonly getSessionCostUsd?: (
+    sessionID: string,
+  ) => Promise<number | undefined> | number | undefined
 }
 
 export interface AtomicStepRunResult {
@@ -67,6 +78,9 @@ export interface AtomicStepRunResult {
   readonly reusedSession?: boolean
   readonly turnsUsed?: number
   readonly finishPayload?: StepFinishPayload
+  readonly haltedReason?: StepHaltReason
+  readonly elapsedMs?: number
+  readonly costUsd?: number
   readonly error?: string
 }
 
@@ -232,24 +246,108 @@ export async function forkStepContext(
   }
 }
 
+function extractMessageCostUsd(msg: unknown): number | undefined {
+  if (!msg || typeof msg !== 'object') return undefined
+  const rec = msg as Record<string, unknown>
+  const direct =
+    typeof rec.costUsd === 'number'
+      ? rec.costUsd
+      : typeof rec.cost === 'number'
+        ? rec.cost
+        : undefined
+  if (direct !== undefined && Number.isFinite(direct) && direct >= 0) return direct
+
+  const info = rec.info as Record<string, unknown> | undefined
+  if (info && typeof info === 'object') {
+    const infoCost =
+      typeof info.costUsd === 'number'
+        ? info.costUsd
+        : typeof info.cost === 'number'
+          ? info.cost
+          : undefined
+    if (infoCost !== undefined && Number.isFinite(infoCost) && infoCost >= 0) return infoCost
+  }
+
+  const usage = rec.usage as Record<string, unknown> | undefined
+  if (usage && typeof usage === 'object') {
+    const usageCost =
+      typeof usage.costUsd === 'number'
+        ? usage.costUsd
+        : typeof usage.cost === 'number'
+          ? usage.cost
+          : undefined
+    if (usageCost !== undefined && Number.isFinite(usageCost) && usageCost >= 0) return usageCost
+  }
+  return undefined
+}
+
+async function resolveCumulativeCostUsd(
+  input: AtomicStepRunInput,
+  sessionID: string,
+): Promise<number | undefined> {
+  if (typeof input.getSessionCostUsd === 'function') {
+    const custom = await input.getSessionCostUsd(sessionID)
+    if (typeof custom === 'number' && Number.isFinite(custom) && custom >= 0) {
+      return custom
+    }
+  }
+  if (typeof input.sessionDomain.messages !== 'function') return undefined
+  try {
+    const raw = await input.sessionDomain.messages({ sessionID })
+    const list = Array.isArray(raw)
+      ? raw
+      : raw && typeof raw === 'object' && Array.isArray((raw as { data?: unknown }).data)
+        ? (raw as { data: unknown[] }).data
+        : []
+    let total = 0
+    let found = false
+    for (const item of list) {
+      const c = extractMessageCostUsd(item)
+      if (c !== undefined) {
+        total += c
+        found = true
+      }
+    }
+    return found ? total : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** Build the strict single-step contract prompt (objective + ledger key only). */
 export function buildAtomicStepPrompt(input: {
   readonly stepKey: string
   readonly objective: string
   readonly agent: string
   readonly extraContext?: string
+  readonly ownedFiles?: readonly string[]
+  readonly forbiddenFiles?: readonly string[]
 }): string {
+  const owned = input.ownedFiles?.map((f) => f.trim()).filter(Boolean) ?? []
+  const forbidden = input.forbiddenFiles?.map((f) => f.trim()).filter(Boolean) ?? []
   const lines = [
     `[ATOMIC STEP CONTRACT]`,
     `stepKey: ${input.stepKey}`,
     `agent: ${input.agent}`,
     `objective: ${input.objective}`,
+    ...(owned.length > 0 ? [`ownedFiles: ${owned.join(', ')}`] : []),
+    ...(forbidden.length > 0 ? [`forbiddenFiles: ${forbidden.join(', ')}`] : []),
     '',
     'Rules:',
     `1. Operate strictly on the objective above; report mutations with pantheon_step_ledger(action="record_mutation", stepKey="${input.stepKey}", files=[...]).`,
     `2. Run targeted verification and record via pantheon_step_ledger(action="record_verification", stepKey="${input.stepKey}", command="...", exitCode=0).`,
     `3. Finish by calling pantheon_step_ledger(action="complete_step", stepKey="${input.stepKey}").`,
   ]
+  if (owned.length > 0) {
+    lines.push(
+      `4. File ownership boundary: ONLY mutate files within ownedFiles (${owned.join(', ')}).`,
+    )
+  }
+  if (forbidden.length > 0) {
+    lines.push(
+      `${owned.length > 0 ? '5' : '4'}. Forbidden files: NEVER modify or touch forbiddenFiles (${forbidden.join(', ')}).`,
+    )
+  }
   if (input.extraContext?.trim()) {
     lines.push('', 'Bounded context:', input.extraContext.trim())
   }
@@ -303,9 +401,23 @@ export async function runAtomicStepSubSession(
     typeof input.maxTurns === 'number' && Number.isInteger(input.maxTurns)
       ? Math.max(1, Math.min(20, input.maxTurns))
       : 1
+  const wallClockMs =
+    typeof input.wallClockMs === 'number' && Number.isFinite(input.wallClockMs)
+      ? Math.max(0, input.wallClockMs)
+      : DEFAULT_WALL_CLOCK_MS
+  const maxCostUsd =
+    typeof input.maxCostUsd === 'number' &&
+    Number.isFinite(input.maxCostUsd) &&
+    input.maxCostUsd >= 0
+      ? input.maxCostUsd
+      : undefined
 
+  const startedAt = Date.now()
   let createdId: string | undefined = reuseId
   let turnsUsed = 0
+  let haltedReason: StepHaltReason | undefined
+  let haltError: string | undefined
+  let lastCostUsd: number | undefined
   try {
     if (!reusedSession) {
       // biome-ignore lint/style/noNonNullAssertion: guarded above when !reusedSession
@@ -322,6 +434,13 @@ export async function runAtomicStepSubSession(
 
     const activeSessionId = createdId as string
     for (let turn = 1; turn <= maxTurns; turn += 1) {
+      const preTurnElapsed = Date.now() - startedAt
+      if (preTurnElapsed > wallClockMs || (wallClockMs === 0 && turn >= 1)) {
+        haltedReason = 'wall_clock_exceeded'
+        haltError = `wall-clock timeout exceeded (${preTurnElapsed}ms > ${wallClockMs}ms)`
+        break
+      }
+
       turnsUsed = turn
       const text =
         turn === 1
@@ -330,6 +449,10 @@ export async function runAtomicStepSubSession(
               objective,
               agent,
               ...(input.extraContext !== undefined ? { extraContext: input.extraContext } : {}),
+              ...(input.ownedFiles !== undefined ? { ownedFiles: input.ownedFiles } : {}),
+              ...(input.forbiddenFiles !== undefined
+                ? { forbiddenFiles: input.forbiddenFiles }
+                : {}),
             })
           : [
               `[ATOMIC STEP CONTINUATION turn ${turn}/${maxTurns}]`,
@@ -347,13 +470,48 @@ export async function runAtomicStepSubSession(
       if (typeof sessionDomain.wait === 'function') {
         await sessionDomain.wait({ sessionID: activeSessionId })
       }
+
       const snapshot = readStepLedger(ledgerRoot).steps[stepKey]
-      if (
+      const isTerminal =
         snapshot?.state === 'done' ||
         snapshot?.state === 'blocked' ||
         snapshot?.state === 'rolled_back'
-      ) {
+
+      if (maxCostUsd !== undefined) {
+        lastCostUsd = await resolveCumulativeCostUsd(input, activeSessionId)
+        if (lastCostUsd !== undefined && lastCostUsd > maxCostUsd) {
+          haltedReason = 'max_cost_exceeded'
+          haltError = `max cost exceeded ($${lastCostUsd.toFixed(4)} > $${maxCostUsd.toFixed(4)})`
+          break
+        }
+      }
+
+      if (isTerminal) {
         break
+      }
+
+      const postTurnElapsed = Date.now() - startedAt
+      if (postTurnElapsed > wallClockMs) {
+        haltedReason = 'wall_clock_exceeded'
+        haltError = `wall-clock timeout exceeded (${postTurnElapsed}ms > ${wallClockMs}ms)`
+        break
+      }
+    }
+
+    const elapsedMs = Date.now() - startedAt
+    if (haltedReason !== undefined) {
+      const latest = readStepLedger(ledgerRoot).steps[stepKey]
+      return {
+        ok: false,
+        stepKey,
+        sessionID: activeSessionId,
+        reusedSession,
+        turnsUsed,
+        haltedReason,
+        elapsedMs,
+        ...(lastCostUsd !== undefined ? { costUsd: lastCostUsd } : {}),
+        ...(latest?.state !== undefined ? { stepState: latest.state } : {}),
+        ...(haltError !== undefined ? { error: haltError } : {}),
       }
     }
 
@@ -379,6 +537,8 @@ export async function runAtomicStepSubSession(
       sessionID: activeSessionId,
       reusedSession,
       turnsUsed,
+      elapsedMs,
+      ...(lastCostUsd !== undefined ? { costUsd: lastCostUsd } : {}),
       ...(latest?.state !== undefined ? { stepState: latest.state } : {}),
       ...(latest?.receiptId !== undefined ? { receiptId: latest.receiptId } : {}),
       ...(finishPayload !== undefined ? { finishPayload } : {}),

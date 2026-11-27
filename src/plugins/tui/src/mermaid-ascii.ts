@@ -257,7 +257,7 @@ function renderFlowchart(lines: readonly string[], maxWidth: number): string[] |
         const node = nodes.get(cur)
         if (!node) break
         chain.push(node)
-        const nextEdge = outEdges.get(cur)?.[0]
+        const nextEdge: FlowEdge | undefined = outEdges.get(cur)?.[0]
         if (!nextEdge) break
         chainEdges.push(nextEdge)
         cur = nextEdge.to

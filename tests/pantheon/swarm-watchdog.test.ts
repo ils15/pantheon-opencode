@@ -7,7 +7,7 @@ import { BackgroundJobBoard } from '../../src/pantheon/background-job-board.ts'
 import { readBoardMessages } from '../../src/pantheon/board-messages.ts'
 import { getSharedBus, type SwarmStallDetectedEventPayload } from '../../src/pantheon/bus.ts'
 import { readCockpitBusEvents, wireCockpitBusRecorder } from '../../src/pantheon/cockpit-events.ts'
-import { SwarmWatchdog } from '../../src/pantheon/swarm-watchdog.ts'
+import { clearWaitEdge, recordWaitEdge, SwarmWatchdog } from '../../src/pantheon/swarm-watchdog.ts'
 
 test('SwarmWatchdog detects stalled running jobs with exponential backoff and caps at maxAlertsPerJob', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pantheon-watchdog-'))
@@ -118,5 +118,79 @@ test('SwarmWatchdog detects unreconciled terminal jobs and resets on reconcile o
     assert.equal((await watchdog.checkOnce()).length, 0)
   } finally {
     watchdog.stop()
+  }
+})
+
+test('SwarmWatchdog detects circular wait cycles and posts [deadlock] alert with backoff', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-watchdog-deadlock-'))
+  const board = new BackgroundJobBoard()
+  let fakeNow = Date.now()
+  const watchdog = new SwarmWatchdog({
+    board,
+    workspaceDir: dir,
+    now: () => fakeNow,
+    stallThresholdMs: 100_000,
+    unreconciledThresholdMs: 100_000,
+    baseBackoffMs: 10_000,
+    maxAlertsPerJob: 2,
+  })
+
+  try {
+    recordWaitEdge('hermes', 'themis')
+    recordWaitEdge('themis', 'hermes')
+
+    // First check: posts [deadlock]
+    await watchdog.checkOnce()
+    await new Promise((r) => setTimeout(r, 30))
+    let msgs = readBoardMessages(dir, { channel: 'swarm' }).messages.filter(
+      (m) => m.tag === 'deadlock',
+    )
+    assert.equal(msgs.length, 1)
+    assert.ok(msgs[0]?.body.includes('[deadlock]'))
+    assert.ok(msgs[0]?.mentions.includes('hermes'))
+    assert.ok(msgs[0]?.mentions.includes('themis'))
+
+    // Within backoff (5s < 10s): suppressed
+    fakeNow += 5_000
+    await watchdog.checkOnce()
+    await new Promise((r) => setTimeout(r, 30))
+    msgs = readBoardMessages(dir, { channel: 'swarm' }).messages.filter((m) => m.tag === 'deadlock')
+    assert.equal(msgs.length, 1)
+
+    // Past backoff (10s): attempt 2 fires
+    fakeNow += 6_000
+    await watchdog.checkOnce()
+    await new Promise((r) => setTimeout(r, 30))
+    msgs = readBoardMessages(dir, { channel: 'swarm' }).messages.filter((m) => m.tag === 'deadlock')
+    assert.equal(msgs.length, 2)
+
+    // Capped at maxAlertsPerJob = 2
+    fakeNow += 60_000
+    await watchdog.checkOnce()
+    await new Promise((r) => setTimeout(r, 30))
+    msgs = readBoardMessages(dir, { channel: 'swarm' }).messages.filter((m) => m.tag === 'deadlock')
+    assert.equal(msgs.length, 2)
+
+    // Clear cycle -> backoff resets, no new alerts
+    clearWaitEdge('themis')
+    fakeNow += 60_000
+    await watchdog.checkOnce()
+    await new Promise((r) => setTimeout(r, 30))
+    msgs = readBoardMessages(dir, { channel: 'swarm' }).messages.filter((m) => m.tag === 'deadlock')
+    assert.equal(msgs.length, 2)
+
+    // Re-introduce 3-node cycle -> alerts again
+    recordWaitEdge('themis', 'apollo')
+    recordWaitEdge('apollo', 'hermes')
+    await watchdog.checkOnce()
+    await new Promise((r) => setTimeout(r, 30))
+    msgs = readBoardMessages(dir, { channel: 'swarm' }).messages.filter((m) => m.tag === 'deadlock')
+    assert.equal(msgs.length, 3)
+  } finally {
+    clearWaitEdge('hermes')
+    clearWaitEdge('themis')
+    clearWaitEdge('apollo')
+    watchdog.stop()
+    rmSync(dir, { recursive: true, force: true })
   }
 })

@@ -422,6 +422,42 @@ export function CockpitView(props: {
             </Show>
           </box>
 
+          {/* @mention Interaction Graph */}
+          <box marginTop={1} flexDirection="column">
+            <text fg={accent()} attributes={1}>
+              {`${t(I18N.cockpit.interactionGraph, lang())} (${snapshot().interactions.edges.length})`}
+            </text>
+            <Show
+              when={snapshot().interactions.edges.length > 0}
+              fallback={<text fg={muted()}>{t(I18N.cockpit.noInteractions, lang())}</text>}
+            >
+              <For each={snapshot().interactions.edges.slice(-8)}>
+                {(edge) => {
+                  const tagColor =
+                    edge.tag === 'done'
+                      ? '#34d399'
+                      : edge.tag === 'blocker' || edge.tag === 'deadlock'
+                        ? errFg()
+                        : edge.tag === 'claim' || edge.tag === 'handoff'
+                          ? accent()
+                          : '#38bdf8'
+                  const replyRef = edge.replyToSeq !== undefined ? ` re:#${edge.replyToSeq}` : ''
+                  const tagPill = edge.tag ? ` [${edge.tag}]` : ''
+                  return (
+                    <box flexDirection="row">
+                      <text fg={muted()}>{`  #${edge.seq} `}</text>
+                      <text fg={fg()}>{`@${edge.from} → @${edge.target}`}</text>
+                      <text fg={tagColor}>{tagPill}</text>
+                      <Show when={replyRef.length > 0}>
+                        <text fg={muted()}>{replyRef}</text>
+                      </Show>
+                    </box>
+                  )
+                }}
+              </For>
+            </Show>
+          </box>
+
           {/* Olympus Topology (DAG) */}
           <Show when={snapshot().swarm.rows.length > 0}>
             <box marginTop={1} flexDirection="column">

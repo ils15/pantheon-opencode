@@ -39,6 +39,102 @@ const DEFAULT_UNRECONCILED_THRESHOLD_MS = 45_000
 const DEFAULT_BASE_BACKOFF_MS = 30_000
 const DEFAULT_MAX_ALERTS_PER_JOB = 3
 const QUOTA_ERROR_RE = /quota|rate.?limit|too many requests|429|capacity/i
+const WAIT_GRAPH_KEY = '__pantheonWatchdogWaitGraph'
+
+function getGlobalWaitGraph(): Map<string, Set<string>> {
+  const host = globalThis as { [WAIT_GRAPH_KEY]?: Map<string, Set<string>> }
+  if (host[WAIT_GRAPH_KEY] instanceof Map) return host[WAIT_GRAPH_KEY]
+  const map = new Map<string, Set<string>>()
+  host[WAIT_GRAPH_KEY] = map
+  return map
+}
+
+function normalizeWaitNode(value: string): string {
+  return value.trim().replace(/^@/, '').toLowerCase()
+}
+
+/** Record a directed `(waiter -> target)` wait dependency edge for deadlock detection. */
+export function recordWaitEdge(waiter: string, target: string): void {
+  const from = typeof waiter === 'string' ? normalizeWaitNode(waiter) : ''
+  const to = typeof target === 'string' ? normalizeWaitNode(target) : ''
+  if (!from || !to || from === to) return
+  const graph = getGlobalWaitGraph()
+  let targets = graph.get(from)
+  if (!targets) {
+    targets = new Set()
+    graph.set(from, targets)
+  }
+  targets.add(to)
+}
+
+/** Clear wait dependency edge(s) for `waiter` (all targets if `target` is omitted). */
+export function clearWaitEdge(waiter: string, target?: string): void {
+  const from = typeof waiter === 'string' ? normalizeWaitNode(waiter) : ''
+  if (!from) return
+  const graph = getGlobalWaitGraph()
+  if (typeof target === 'string' && target.trim()) {
+    const to = normalizeWaitNode(target)
+    const targets = graph.get(from)
+    if (!targets) return
+    targets.delete(to)
+    if (targets.size === 0) graph.delete(from)
+    return
+  }
+  graph.delete(from)
+}
+
+function canonicalizeCycle(nodes: readonly string[]): string[] {
+  if (nodes.length === 0) return []
+  let minIdx = 0
+  for (let i = 1; i < nodes.length; i += 1) {
+    const cur = nodes[i] ?? ''
+    const best = nodes[minIdx] ?? ''
+    if (cur < best) minIdx = i
+  }
+  const rotated = [...nodes.slice(minIdx), ...nodes.slice(0, minIdx)]
+  const first = rotated[0]
+  return first !== undefined ? [...rotated, first] : rotated
+}
+
+function detectWaitCycles(graph: ReadonlyMap<string, ReadonlySet<string>>): string[][] {
+  const state = new Map<string, 'visiting' | 'visited'>()
+  const stack: string[] = []
+  const seenKeys = new Set<string>()
+  const cycles: string[][] = []
+
+  const dfs = (node: string): void => {
+    state.set(node, 'visiting')
+    stack.push(node)
+
+    for (const next of graph.get(node) ?? []) {
+      const nextState = state.get(next)
+      if (nextState === 'visiting') {
+        const idx = stack.indexOf(next)
+        if (idx >= 0) {
+          const cycle = canonicalizeCycle(stack.slice(idx))
+          const key = cycle.join('->')
+          if (!seenKeys.has(key)) {
+            seenKeys.add(key)
+            cycles.push(cycle)
+          }
+        }
+      } else if (!nextState) {
+        dfs(next)
+      }
+    }
+
+    stack.pop()
+    state.set(node, 'visited')
+  }
+
+  for (const node of graph.keys()) {
+    if (!state.has(node)) {
+      dfs(node)
+    }
+  }
+
+  return cycles
+}
 
 export class SwarmWatchdog {
   private readonly board: BackgroundJobBoard
@@ -55,6 +151,7 @@ export class SwarmWatchdog {
   private readonly lastActivityByTask = new Map<string, number>()
   private readonly lastActivityByAgent = new Map<string, number>()
   private readonly alertsByTask = new Map<string, AlertTracking>()
+  private readonly deadlockAlerts = new Map<string, AlertTracking>()
   private readonly busUnsubs: Array<() => void> = []
   private timer: NodeJS.Timeout | null = null
   private started = false
@@ -232,7 +329,51 @@ export class SwarmWatchdog {
       }
     }
 
+    this.checkWaitCycles(currentTime)
+
     return emitted
+  }
+
+  private checkWaitCycles(currentTime: number): void {
+    const cycles = detectWaitCycles(getGlobalWaitGraph())
+    const activeKeys = new Set<string>()
+
+    for (const cycle of cycles) {
+      const cycleKey = cycle.join('->')
+      activeKeys.add(cycleKey)
+
+      const tracker = this.deadlockAlerts.get(cycleKey) ?? { attempts: 0, lastAlertAt: 0 }
+      if (tracker.attempts >= this.maxAlertsPerJob) continue
+
+      if (tracker.attempts > 0) {
+        const requiredWait = this.baseBackoffMs * 2 ** (tracker.attempts - 1)
+        if (currentTime - tracker.lastAlertAt < requiredWait) continue
+      }
+
+      const attempt = tracker.attempts + 1
+      this.deadlockAlerts.set(cycleKey, { attempts: attempt, lastAlertAt: currentTime })
+
+      const participants = Array.from(new Set(cycle))
+      if (this.workspaceDir && this.appendAlertMessage) {
+        void appendBoardMessage(this.workspaceDir, {
+          channel: 'swarm',
+          threadId: 'watchdog',
+          from: 'watchdog',
+          to: [...participants, 'zeus'],
+          tag: 'deadlock',
+          body: `[deadlock] ${participants.map((p) => `@${p}`).join(' ')} @zeus circular wait detected: ${cycle.join(' -> ')} (attempt ${attempt}/${this.maxAlertsPerJob})`,
+          timestamp: currentTime,
+        }).catch(() => {
+          /* watchdog board alert is strictly best-effort */
+        })
+      }
+    }
+
+    for (const trackedKey of Array.from(this.deadlockAlerts.keys())) {
+      if (!activeKeys.has(trackedKey)) {
+        this.deadlockAlerts.delete(trackedKey)
+      }
+    }
   }
 }
 

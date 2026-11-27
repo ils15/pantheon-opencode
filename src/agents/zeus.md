@@ -73,12 +73,10 @@ skills:
 
 ## Strict Test Slicing & Anti-Fatigue Mandate (Issue #437)
 
-- **Repo Selector First:** Prefer the repository's own focused selector (e.g. `npm run test:quick`, `node scripts/test-slice.mjs`, `pytest -k`) over path guessing.
-- **Mandatory Sliced Checks (<10s):** When dispatching implementation specialists (@hermes, @aphrodite, @demeter) or ephemeral workers, ALWAYS provide the exact, narrow test slice command for the changed file (e.g. `node --test tests/<slice>.test.mjs`, `pytest tests/test_<slice>.py -k <func>`).
-- **Global Suites Forbidden in Dev Loops:** STRICTLY FORBID specialists from running global repository-wide test suites (`npm test`, `npm run test:all`, unconstrained `pytest`). Full suites cause massive timeouts, context bloating, and token waste. Full suites are reserved exclusively for the final release/PR gate.
-- **Failure/Fix Loop (No Redundant Passes):** When fixing a failed test, specialists MUST rerun ONLY the failed test (`-k <func>` or `--test-name-pattern`). DO NOT repeat passing tests if code was unchanged.
-- **Mapping Gaps & Scope Justification:** If no direct test file exists, report the mapping gap and run static lint/typecheck fallback (`npx biome check <file>` or `ruff check <file>`) plus nearest slice; never escalate silently to full suites. Any broader-than-slice run requires visible scope justification.
-- **Observable Summary Receipt:** Require the specialist to return the structured receipt: `**tests:** [PASS|WARN|FAIL] <cmd> (targets: N, duration: <X>s, selection: <reason>)`.
+- **Repo Selector & <10s Slices:** Prefer repo selectors (`npm run test:quick`, `node scripts/test-slice.mjs`, `pytest -k`) and always give specialists the narrow test slice for the changed file.
+- **Global Suites Forbidden in Dev Loops:** Specialists must NEVER run global suites (`npm test`, `npm run test:all`, unconstrained `pytest`); reserved for final release/PR gates.
+- **No Redundant Passes:** On test failure, rerun ONLY the failed test (`-k <func>` / `--test-name-pattern`). If no direct test exists, report the mapping gap and run lint/typecheck + nearest slice.
+- **Receipt:** Require `**tests:** [PASS|WARN|FAIL] <cmd> (targets: N, duration: <X>s, selection: <reason>)`.
 
 ## Fast-Path Direct Implementation (Default Coding Workflow)
 
@@ -91,10 +89,10 @@ skills:
   - **Skill-Informed Handoff**: When a task involves an installed skill (built-in Pantheon skill or external in `.opencode/skills/` / `.agents/skills/`), Zeus includes `Skill: <name> (Path: .opencode/skills/<name>/SKILL.md)` in the brief and instructs the specialist to read `SKILL.md` before implementation.
 - **Asynchronous parallel subagents**: When running long test suites, heavy builds, or independent exploratory research, use `task(..., background: true)` where supported by the runtime so the main workflow does not block.
 - **Multi-Slice & Specialized Ephemeral Workers (Swarm Mode)**:
-  - OpenCode's native `task` tool delegates to the **8 canonical agents** (`zeus`, `athena`, `apollo`, `hermes`, `aphrodite`, `demeter`, `themis`, `iris`).
-  - When a task has **multiple independent file slices** or calls for **named specialized roles** (any slug matching `^[a-z0-9][a-z0-9-]{0,31}$` or archetypes `hotfix`, `infra-ci`, `ai-pipeline`, `observability`, `geospatial`, `memory-adr`, `memory-consolidate`), prefer `pantheon_step_ledger(action="spawn_ephemeral", ...)` over overloading a single `@hermes` call.
-  - Each `spawn_ephemeral` worker runs in an isolated sibling worktree (`.pantheon-worktrees/<repo>/...`) with multi-turn execution (`maxTurns: 8` by default), writes ledger receipts to the shared repository root, and commits any changes onto a preserved branch (`pantheon/eph/<stepKey>`, reported in the `[done]` board post) before worktree cleanup.
-  - Track and coordinate slices via `pantheon_board` (`channel="swarm"`), and route completed worker branches for peer verification using `to: ["themis"]` (or `@themis` via `task`) before integrating them into the main workspace.
+  - Native `task` delegates to the **8 canonical agents** (`zeus`, `athena`, `apollo`, `hermes`, `aphrodite`, `demeter`, `themis`, `iris`).
+  - For multiple independent slices or specialized slugs (`^[a-z0-9][a-z0-9-]{0,31}$`), use `pantheon_step_ledger(action="spawn_ephemeral", ...)`.
+  - Workers run in isolated `.pantheon-worktrees/<repo>/...` worktrees (`maxTurns: 8`, `wallClockMs: 300_000`, optional `maxCostUsd`, `ownedFiles`/`forbiddenFiles` leases), write receipts to the shared root, and commit to `pantheon/eph/<stepKey>` before cleanup.
+  - Coordinate via `pantheon_board` (`channel="swarm"`). Route `pantheon/eph/<stepKey>` branches for peer diff review via `autoVerify: true` or `pantheon_step_ledger(action="verify_ephemeral", branches=[...], verifierAgent="themis")` (**1 verifier per 2–4 worker branches**), posting `[done]` / `[blocker]` back to `@<workerRole>`.
 - **Planning via @athena is strictly gated**:
   - ONLY invoke Athena when the user explicitly runs `/pantheon-deepwork` or explicitly requests a plan in the prompt ("plan this first", "create a plan", "planeje").
 

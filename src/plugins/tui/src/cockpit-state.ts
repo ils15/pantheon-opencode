@@ -86,6 +86,25 @@ export interface CockpitThreadGroup {
   readonly threads: readonly CockpitThreadEntry[]
 }
 
+export interface BoardInteractionEdge {
+  readonly from: string
+  readonly target: string
+  readonly seq: number
+  readonly tag?: BoardMessageTag
+  readonly replyToSeq?: number
+  readonly timestamp: number
+  readonly channel?: string
+  readonly threadId?: string
+  readonly bodyPreview?: string
+}
+
+export interface BoardInteractionGraph {
+  readonly edges: readonly BoardInteractionEdge[]
+  readonly nodes: readonly string[]
+  readonly maxSeq: number
+  readonly edgeCountByPair: Readonly<Record<string, number>>
+}
+
 export interface CockpitChildEntry {
   readonly id: string
   readonly agent: string
@@ -169,6 +188,7 @@ export interface CockpitSnapshot {
     readonly headSeq: number
     readonly groups: readonly CockpitThreadGroup[]
   }
+  readonly interactions: BoardInteractionGraph
   readonly attention: readonly CockpitAttentionItem[]
   readonly flightdeck: {
     readonly allowed: number
@@ -820,6 +840,96 @@ function buildRankedAttentionQueue(params: {
     .slice(0, 20)
 }
 
+function normalizeAgentHandle(raw: string): string {
+  return raw.trim().replace(/^@+/, '')
+}
+
+function extractBodyMentions(body: string): string[] {
+  const found: string[] = []
+  const seen = new Set<string>()
+  const re = /(?:^|[\s(])@([A-Za-z0-9][A-Za-z0-9_-]*)/g
+  for (const match of body.matchAll(re)) {
+    const handle = match[1]
+    if (handle && !seen.has(handle)) {
+      seen.add(handle)
+      found.push(handle)
+    }
+  }
+  return found
+}
+
+/**
+ * Extract directed `@mention` interaction edges (`from -> target`, `seq`, `tag`,
+ * `replyToSeq`, `timestamp`) from Agora Board messages, optionally capped at
+ * `maxSeqCap` for `#seq` causal replay.
+ */
+export function buildBoardInteractionGraph(
+  messages: readonly CockpitBoardMessage[],
+  maxSeqCap?: number,
+): BoardInteractionGraph {
+  const sorted = [...messages]
+    .filter((m) => maxSeqCap === undefined || m.seq <= maxSeqCap)
+    .sort((a, b) => a.seq - b.seq)
+
+  const edges: BoardInteractionEdge[] = []
+  const nodes: string[] = []
+  const seenNodes = new Set<string>()
+  const edgeCountByPair: Record<string, number> = {}
+
+  const addNode = (name: string) => {
+    if (!name || seenNodes.has(name)) return
+    seenNodes.add(name)
+    nodes.push(name)
+  }
+
+  for (const msg of sorted) {
+    const from = normalizeAgentHandle(msg.from) || 'unknown'
+    addNode(from)
+
+    const rawTargets =
+      msg.mentions.length > 0
+        ? msg.mentions.map(normalizeAgentHandle)
+        : extractBodyMentions(msg.body)
+    const dedupTargets: string[] = []
+    const seenTargets = new Set<string>()
+    for (const target of rawTargets) {
+      if (!target || seenTargets.has(target)) continue
+      seenTargets.add(target)
+      dedupTargets.push(target)
+    }
+
+    const preview = msg.body.trim().replace(/\s+/g, ' ').slice(0, 72)
+    for (const target of dedupTargets) {
+      addNode(target)
+      const pairKey = `${from}->${target}`
+      edgeCountByPair[pairKey] = (edgeCountByPair[pairKey] ?? 0) + 1
+      edges.push({
+        from,
+        target,
+        seq: msg.seq,
+        tag: msg.tag,
+        replyToSeq: msg.replyToSeq,
+        timestamp: msg.timestamp,
+        channel: msg.channel,
+        threadId: msg.threadId,
+        bodyPreview: preview || undefined,
+      })
+    }
+  }
+
+  const maxSeq = sorted.length > 0 ? (sorted[sorted.length - 1]?.seq ?? 0) : 0
+  return {
+    edges,
+    nodes,
+    maxSeq,
+    edgeCountByPair,
+  }
+}
+
+function sanitizeMermaidParticipant(name: string): string {
+  return name.replace(/[^A-Za-z0-9_-]/g, '') || 'specialist'
+}
+
 export function buildCockpitSnapshot(input: CockpitInput): CockpitSnapshot {
   const isPt = Boolean(input.isPt)
   const ctxTokens = Math.max(0, input.contextTokens ?? 0)
@@ -867,6 +977,7 @@ export function buildCockpitSnapshot(input: CockpitInput): CockpitSnapshot {
   }
   const boardMessages = Array.from(boardDedup.values()).sort((a, b) => a.seq - b.seq)
   const threads = buildOutcomeThreads(boardMessages, isPt)
+  const interactions = buildBoardInteractionGraph(boardMessages)
   const attention = buildRankedAttentionQueue({
     messages: boardMessages,
     events,
@@ -929,6 +1040,7 @@ export function buildCockpitSnapshot(input: CockpitInput): CockpitSnapshot {
       rows: swarmRows,
     },
     threads,
+    interactions,
     attention,
     flightdeck: {
       allowed,
@@ -966,19 +1078,33 @@ export function formatCockpitReplayArtifact(
     '  participant You',
     '  participant Zeus',
   ]
-  const seenAgents = new Set<string>()
-  for (const row of snapshot.swarm.rows.slice(0, 12)) {
-    const cleanAgent = row.agent.replace(/[^A-Za-z0-9_-]/g, '') || 'specialist'
-    if (!seenAgents.has(cleanAgent)) {
-      seenAgents.add(cleanAgent)
-      seqLines.push(`  participant ${cleanAgent}`)
+  const seenAgents = new Set<string>(['You', 'Zeus'])
+  const ensureParticipant = (raw: string): string => {
+    const clean = sanitizeMermaidParticipant(raw)
+    if (!seenAgents.has(clean)) {
+      seenAgents.add(clean)
+      seqLines.push(`  participant ${clean}`)
     }
+    return clean
+  }
+
+  const interactionEdges = snapshot.interactions?.edges ?? []
+  for (const edge of interactionEdges.slice(0, 24)) {
+    const cleanFrom = ensureParticipant(edge.from)
+    const cleanTarget = ensureParticipant(edge.target)
+    const tagPart = edge.tag ? ` [${edge.tag}]` : ''
+    const replyPart = edge.replyToSeq !== undefined ? ` (re:#${edge.replyToSeq})` : ''
+    seqLines.push(`  ${cleanFrom}->>${cleanTarget}: #${edge.seq}${tagPart}${replyPart}`)
+  }
+
+  for (const row of snapshot.swarm.rows.slice(0, 12)) {
+    const cleanAgent = ensureParticipant(row.agent)
     seqLines.push(
       `  Zeus->>${cleanAgent}: ${row.kind} ($${row.cost.toFixed(3)}, ${row.durationSec}s)`,
     )
     seqLines.push(`  ${cleanAgent}-->>Zeus: ${row.status}`)
   }
-  if (snapshot.swarm.rows.length === 0) {
+  if (interactionEdges.length === 0 && snapshot.swarm.rows.length === 0) {
     seqLines.push('  You->>Zeus: active session telemetry snapshot')
     seqLines.push('  Zeus-->>You: Flightdeck gate check')
   }
@@ -1036,6 +1162,18 @@ export function formatCockpitReplayArtifact(
           .join('\n')
       : '- No board threads recorded.'
 
+  const interactionLines =
+    interactionEdges.length > 0
+      ? interactionEdges
+          .map((edge) => {
+            const tagPart = edge.tag ? ` \`[${edge.tag}]\`` : ''
+            const replyPart = edge.replyToSeq !== undefined ? ` (re: #${edge.replyToSeq})` : ''
+            const preview = edge.bodyPreview ? ` — ${edge.bodyPreview}` : ''
+            return `- #${edge.seq} **@${edge.from} → @${edge.target}**${tagPart}${replyPart}${preview}`
+          })
+          .join('\n')
+      : '- No @mention interaction edges recorded.'
+
   const markdown = [
     `# Pantheon Cockpit Flightdeck Replay`,
     '',
@@ -1048,6 +1186,10 @@ export function formatCockpitReplayArtifact(
     '## Execution Replay Diagram',
     '',
     ...seqLines,
+    '',
+    '## @mention Interaction Graph (#seq Causal Replay)',
+    '',
+    interactionLines,
     '',
     '## Ranked Attention Queue',
     '',
@@ -1093,4 +1235,527 @@ export function writeCockpitReplayArtifact(
   }
   writeFileSync(target, artifact.markdown, 'utf8')
   return artifact.relPath
+}
+
+export type TidyDagNodeStatus = 'root' | 'running' | 'done' | 'blocked' | 'idle'
+
+export interface TidyDagInputEvent {
+  kind?: string
+  type?: string
+  agent?: string
+  parentAgent?: string
+  baseAgent?: string
+  role?: string
+  stepKey?: string
+  status?: string
+}
+
+export interface TidyDagInputMessage {
+  seq: number
+  from: string
+  mentions?: string[]
+  replyToSeq?: number
+  tag?: string
+}
+
+export interface TidyDagInputJob {
+  agent: string
+  status?: string
+}
+
+export interface TidyDagNode {
+  id: string
+  label: string
+  parentId: string | null
+  depth: number
+  status: TidyDagNodeStatus
+  x: number
+  y: number
+  width: number
+  height: number
+  children?: TidyDagNode[]
+}
+
+export interface TidyDagEdge {
+  fromId: string
+  toId: string
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  status: TidyDagNodeStatus
+}
+
+export interface TidyDagLayout {
+  nodes: TidyDagNode[]
+  edges: TidyDagEdge[]
+  width: number
+  height: number
+}
+
+const TIDY_DAG_IGNORED_AGENTS = new Set(['user', 'pantheon', 'ledger', 'all', 'unknown'])
+
+function normalizeDagAgentId(raw: string | undefined): string | null {
+  if (!raw) return null
+  const cleaned = raw.trim().replace(/^@+/, '')
+  if (!cleaned || TIDY_DAG_IGNORED_AGENTS.has(cleaned.toLowerCase())) return null
+  return cleaned
+}
+
+function statusFromString(raw: string | undefined): TidyDagNodeStatus | undefined {
+  if (!raw) return undefined
+  const s = raw.trim().toLowerCase()
+  if (s === 'running' || s === 'active' || s === 'working' || s === 'in_progress') return 'running'
+  if (s === 'done' || s === 'completed' || s === 'approve' || s === 'approved') return 'done'
+  if (s === 'blocked' || s === 'failed' || s === 'error' || s === 'block' || s === 'stuck')
+    return 'blocked'
+  return undefined
+}
+
+function mergeDagStatus(
+  prev: TidyDagNodeStatus | undefined,
+  next: TidyDagNodeStatus | undefined,
+): TidyDagNodeStatus {
+  if (!next) return prev ?? 'idle'
+  if (prev === 'root') return 'root'
+  if (next === 'blocked' || prev === 'blocked') return 'blocked'
+  if (next === 'running' || prev === 'running') return 'running'
+  if (next === 'done' || prev === 'done') return 'done'
+  return next
+}
+
+/**
+ * Computes a non-overlapping multi-level tidy tree layout rooted at `zeus`.
+ * Uses bottom-up subtree width measurement (Reingold-Tilford style) with cycle protection.
+ */
+export function computeTidyDagLayout(input: {
+  events?: readonly TidyDagInputEvent[]
+  messages?: readonly TidyDagInputMessage[]
+  activeJobs?: readonly TidyDagInputJob[]
+  nodeWidth?: number
+  nodeHeight?: number
+  siblingSpacing?: number
+  levelSpacing?: number
+}): TidyDagLayout {
+  const nodeWidth = input.nodeWidth ?? 132
+  const nodeHeight = input.nodeHeight ?? 44
+  const siblingSpacing = input.siblingSpacing ?? 16
+  const levelSpacing = input.levelSpacing ?? 48
+  const padX = 16
+  const padY = 12
+
+  const parentOf = new Map<string, string>()
+  const statusOf = new Map<string, TidyDagNodeStatus>([['zeus', 'root']])
+
+  const wouldCreateCycle = (childId: string, candidateParentId: string): boolean => {
+    let cur: string | undefined = candidateParentId
+    const visited = new Set<string>([childId])
+    while (cur) {
+      if (visited.has(cur)) return true
+      visited.add(cur)
+      cur = parentOf.get(cur)
+    }
+    return false
+  }
+
+  const linkNode = (
+    parentRaw: string | undefined,
+    childRaw: string | undefined,
+    status?: TidyDagNodeStatus,
+  ) => {
+    const child = normalizeDagAgentId(childRaw)
+    if (!child) return
+    if (status) statusOf.set(child, mergeDagStatus(statusOf.get(child), status))
+    if (child === 'zeus') return
+
+    const parent = normalizeDagAgentId(parentRaw) ?? 'zeus'
+    if (parent === child) return
+
+    const existing = parentOf.get(child)
+    if (!existing || (existing === 'zeus' && parent !== 'zeus')) {
+      if (!wouldCreateCycle(child, parent)) {
+        parentOf.set(child, parent)
+      } else if (!existing) {
+        parentOf.set(child, 'zeus')
+      }
+    }
+    if (!statusOf.has(child)) statusOf.set(child, 'idle')
+  }
+
+  for (const ev of input.events ?? []) {
+    const kind = (ev.kind ?? ev.type ?? '').trim()
+    const st =
+      statusFromString(ev.status) ??
+      (kind === 'subagent:start' ? 'running' : kind === 'subagent:stop' ? 'done' : undefined)
+    if (kind === 'ephemeral:worker') {
+      const child = ev.role || ev.stepKey || ev.agent
+      const parent = ev.baseAgent || ev.parentAgent || 'zeus'
+      linkNode(parent, child, st)
+    } else if (ev.parentAgent && ev.agent) {
+      linkNode(ev.parentAgent, ev.agent, st)
+    } else if (ev.agent) {
+      linkNode('zeus', ev.agent, st)
+    }
+  }
+
+  const seqSender = new Map<number, string>()
+  for (const m of input.messages ?? []) {
+    const sender = normalizeDagAgentId(m.from)
+    if (sender) seqSender.set(m.seq, sender)
+  }
+
+  for (const m of input.messages ?? []) {
+    const from = normalizeDagAgentId(m.from)
+    const tagStatus = statusFromString(m.tag)
+    if (from) {
+      if (m.replyToSeq !== undefined) {
+        const origSender = seqSender.get(m.replyToSeq)
+        if (origSender && origSender !== from) {
+          linkNode(origSender, from, tagStatus)
+        } else {
+          linkNode('zeus', from, tagStatus)
+        }
+      } else {
+        linkNode('zeus', from, tagStatus)
+      }
+    }
+    for (const target of m.mentions ?? []) {
+      linkNode(from ?? 'zeus', target, tagStatus)
+    }
+  }
+
+  for (const job of input.activeJobs ?? []) {
+    linkNode('zeus', job.agent, statusFromString(job.status))
+  }
+
+  // Ensure every referenced parent is attached to the root tree.
+  for (const p of [...parentOf.values()]) {
+    if (p !== 'zeus' && !parentOf.has(p)) {
+      if (!wouldCreateCycle(p, 'zeus')) {
+        parentOf.set(p, 'zeus')
+      }
+      if (!statusOf.has(p)) statusOf.set(p, 'idle')
+    }
+  }
+
+  const childrenMap = new Map<string, string[]>()
+  for (const [child, parent] of parentOf.entries()) {
+    const list = childrenMap.get(parent)
+    if (list) list.push(child)
+    else childrenMap.set(parent, [child])
+  }
+
+  interface Measured {
+    id: string
+    children: Measured[]
+    subtreeWidth: number
+    childrenWidth: number
+  }
+
+  const measureVisited = new Set<string>()
+  const measure = (id: string): Measured => {
+    measureVisited.add(id)
+    const rawChildren = childrenMap.get(id) ?? []
+    const measuredChildren: Measured[] = []
+    for (const childId of rawChildren) {
+      if (!measureVisited.has(childId)) {
+        measuredChildren.push(measure(childId))
+      }
+    }
+    const childrenWidth =
+      measuredChildren.reduce((sum, c) => sum + c.subtreeWidth, 0) +
+      Math.max(0, measuredChildren.length - 1) * siblingSpacing
+    return {
+      id,
+      children: measuredChildren,
+      subtreeWidth: Math.max(nodeWidth, childrenWidth),
+      childrenWidth,
+    }
+  }
+
+  const rootMeasured = measure('zeus')
+  const nodes: TidyDagNode[] = []
+  const nodeById = new Map<string, TidyDagNode>()
+  let maxDepth = 0
+
+  const assign = (m: Measured, leftX: number, depth: number, parentId: string | null) => {
+    if (depth > maxDepth) maxDepth = depth
+    const y = padY + depth * (nodeHeight + levelSpacing)
+    let x = leftX + (m.subtreeWidth - nodeWidth) / 2
+
+    if (m.children.length > 0) {
+      let cursorX = leftX + (m.subtreeWidth - m.childrenWidth) / 2
+      for (const child of m.children) {
+        assign(child, cursorX, depth + 1, m.id)
+        cursorX += child.subtreeWidth + siblingSpacing
+      }
+      const firstChildId = m.children[0]?.id
+      const lastChildId = m.children[m.children.length - 1]?.id
+      const firstChild = firstChildId ? nodeById.get(firstChildId) : undefined
+      const lastChild = lastChildId ? nodeById.get(lastChildId) : undefined
+      if (firstChild && lastChild) {
+        const midCenter = (firstChild.x + nodeWidth / 2 + (lastChild.x + nodeWidth / 2)) / 2
+        x = midCenter - nodeWidth / 2
+      }
+    }
+
+    const node: TidyDagNode = {
+      id: m.id,
+      label: m.id === 'zeus' ? 'zeus (root)' : m.id,
+      parentId,
+      depth,
+      status: statusOf.get(m.id) ?? 'idle',
+      x,
+      y,
+      width: nodeWidth,
+      height: nodeHeight,
+    }
+    nodes.push(node)
+    nodeById.set(m.id, node)
+  }
+
+  assign(rootMeasured, padX, 0, null)
+
+  const edges: TidyDagEdge[] = []
+  for (const node of nodes) {
+    if (!node.parentId) continue
+    const parent = nodeById.get(node.parentId)
+    if (!parent) continue
+    edges.push({
+      fromId: parent.id,
+      toId: node.id,
+      x1: parent.x + nodeWidth / 2,
+      y1: parent.y + nodeHeight,
+      x2: node.x + nodeWidth / 2,
+      y2: node.y,
+      status: node.status,
+    })
+  }
+
+  const width = Math.max(320, Math.ceil(rootMeasured.subtreeWidth + padX * 2))
+  const height = Math.max(
+    160,
+    Math.ceil((maxDepth + 1) * nodeHeight + maxDepth * levelSpacing + padY * 2),
+  )
+
+  return { nodes, edges, width, height }
+}
+
+export interface RadialHubLayoutOptions {
+  width?: number
+  height?: number
+  innerRadius?: number
+  ringStep?: number
+  nodeWidth?: number
+  nodeHeight?: number
+}
+
+interface RadialTreeNode {
+  id: string
+  label: string
+  parentId: string | null
+  depth: number
+  status: TidyDagNodeStatus
+  children: RadialTreeNode[]
+  leafCount: number
+}
+
+function toRadialTree(input: TidyDagNode | TidyDagLayout): RadialTreeNode {
+  if ('nodes' in input) {
+    const map = new Map<string, RadialTreeNode>()
+    for (const n of input.nodes) {
+      map.set(n.id, {
+        id: n.id,
+        label: n.label,
+        parentId: n.parentId,
+        depth: n.depth,
+        status: n.status,
+        children: [],
+        leafCount: 1,
+      })
+    }
+    let root: RadialTreeNode | undefined
+    for (const n of input.nodes) {
+      const node = map.get(n.id)
+      if (!node) continue
+      if (n.parentId && map.has(n.parentId)) {
+        map.get(n.parentId)?.children.push(node)
+      } else if (n.id === 'zeus' || !root) {
+        root = node
+      }
+    }
+    const resolvedRoot: RadialTreeNode = root ?? {
+      id: 'zeus',
+      label: 'zeus (root)',
+      parentId: null,
+      depth: 0,
+      status: 'root',
+      children: [],
+      leafCount: 1,
+    }
+    const computeLeaves = (node: RadialTreeNode, depth: number): number => {
+      node.depth = depth
+      if (node.children.length === 0) {
+        node.leafCount = 1
+        return 1
+      }
+      let sum = 0
+      for (const c of node.children) sum += computeLeaves(c, depth + 1)
+      node.leafCount = Math.max(1, sum)
+      return node.leafCount
+    }
+    computeLeaves(resolvedRoot, 0)
+    return resolvedRoot
+  }
+
+  const cloneNode = (n: TidyDagNode, depth: number): RadialTreeNode => {
+    const children = (n.children ?? []).map((c) => cloneNode(c, depth + 1))
+    const leafCount = children.length === 0 ? 1 : children.reduce((sum, c) => sum + c.leafCount, 0)
+    return {
+      id: n.id,
+      label: n.label,
+      parentId: n.parentId,
+      depth,
+      status: n.status,
+      children,
+      leafCount: Math.max(1, leafCount),
+    }
+  }
+  return cloneNode(input, 0)
+}
+
+/**
+ * Computes a coordinator-centered radial hub layout where `zeus` sits at the center
+ * and Level-1+ subtrees fan out in proportional angular sectors without overlapping.
+ */
+export function computeRadialHubLayout(
+  rootOrLayout: TidyDagNode | TidyDagLayout,
+  options?: RadialHubLayoutOptions,
+): TidyDagLayout {
+  const nodeWidth = options?.nodeWidth ?? 132
+  const nodeHeight = options?.nodeHeight ?? 44
+  const innerRadius = options?.innerRadius ?? 170
+  const ringStep = options?.ringStep ?? 145
+  const padX = 24
+  const padY = 24
+
+  const tree = toRadialTree(rootOrLayout)
+  const totalLeaves = Math.max(1, tree.leafCount)
+  const minCircumference = totalLeaves * (nodeWidth + 24)
+  const minRadiusForRing = minCircumference / (2 * Math.PI)
+
+  const placed: Array<{ node: TidyDagNode; angle: number; radius: number }> = []
+  const nodeById = new Map<string, TidyDagNode>()
+
+  const placeNode = (
+    item: RadialTreeNode,
+    startAngle: number,
+    endAngle: number,
+    cx: number,
+    cy: number,
+  ) => {
+    const midAngle = (startAngle + endAngle) / 2
+    const radius =
+      item.depth === 0
+        ? 0
+        : Math.max(
+            innerRadius + (item.depth - 1) * ringStep,
+            minRadiusForRing * (item.depth * 0.65),
+          )
+    const x = cx + Math.cos(midAngle) * radius - nodeWidth / 2
+    const y = cy + Math.sin(midAngle) * radius - nodeHeight / 2
+
+    const dagNode: TidyDagNode = {
+      id: item.id,
+      label: item.label,
+      parentId: item.parentId,
+      depth: item.depth,
+      status: item.status,
+      x,
+      y,
+      width: nodeWidth,
+      height: nodeHeight,
+    }
+    placed.push({ node: dagNode, angle: midAngle, radius })
+    nodeById.set(dagNode.id, dagNode)
+
+    if (item.children.length === 0) return
+    const span = endAngle - startAngle
+    let cursor = startAngle
+    for (const child of item.children) {
+      const childSpan = span * (child.leafCount / item.leafCount)
+      placeNode(child, cursor, cursor + childSpan, cx, cy)
+      cursor += childSpan
+    }
+  }
+
+  placeNode(tree, -Math.PI / 2, (3 * Math.PI) / 2, 0, 0)
+
+  // Deterministic overlap resolution: push outer/later nodes radially outward if bounding boxes touch.
+  const margin = 12
+  for (let pass = 0; pass < 4; pass++) {
+    let moved = false
+    for (let i = 0; i < placed.length; i++) {
+      for (let j = i + 1; j < placed.length; j++) {
+        const a = placed[i]
+        const b = placed[j]
+        if (!a || !b) continue
+        const overlapX =
+          a.node.x < b.node.x + b.node.width + margin && a.node.x + a.node.width + margin > b.node.x
+        const overlapY =
+          a.node.y < b.node.y + b.node.height + margin &&
+          a.node.y + a.node.height + margin > b.node.y
+        if (overlapX && overlapY) {
+          const target = b.node.depth >= a.node.depth ? b : a
+          target.radius += nodeHeight + margin
+          target.node.x = Math.cos(target.angle) * target.radius - nodeWidth / 2
+          target.node.y = Math.sin(target.angle) * target.radius - nodeHeight / 2
+          moved = true
+        }
+      }
+    }
+    if (!moved) break
+  }
+
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const { node } of placed) {
+    if (node.x < minX) minX = node.x
+    if (node.y < minY) minY = node.y
+    if (node.x + node.width > maxX) maxX = node.x + node.width
+    if (node.y + node.height > maxY) maxY = node.y + node.height
+  }
+
+  const contentW = Math.max(nodeWidth, maxX - minX)
+  const contentH = Math.max(nodeHeight, maxY - minY)
+  const width = Math.max(options?.width ?? 760, Math.ceil(contentW + padX * 2))
+  const height = Math.max(options?.height ?? 520, Math.ceil(contentH + padY * 2))
+  const shiftX = (width - contentW) / 2 - minX
+  const shiftY = (height - contentH) / 2 - minY
+
+  const nodes: TidyDagNode[] = placed.map(({ node }) => {
+    node.x = Math.round(node.x + shiftX)
+    node.y = Math.round(node.y + shiftY)
+    return node
+  })
+
+  const edges: TidyDagEdge[] = []
+  for (const node of nodes) {
+    if (!node.parentId) continue
+    const parent = nodeById.get(node.parentId)
+    if (!parent) continue
+    edges.push({
+      fromId: parent.id,
+      toId: node.id,
+      x1: parent.x + nodeWidth / 2,
+      y1: parent.y + nodeHeight / 2,
+      x2: node.x + nodeWidth / 2,
+      y2: node.y + nodeHeight / 2,
+      status: node.status,
+    })
+  }
+
+  return { nodes, edges, width, height }
 }
