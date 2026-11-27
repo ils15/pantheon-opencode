@@ -12,6 +12,11 @@ name: Auto-Merge Owner PRs
 # does not trigger the `push` run on `main`, so the merged SHA would carry no
 # CI evidence. See docs/RELEASING.md.
 #
+# Display trap: the run-level SHA of a `workflow_run`-triggered run is main's
+# HEAD at the time it starts, NOT the commit the triggering CI run tested. The
+# tested commit is `github.event.workflow_run.head_sha` — read that, never the
+# run-level SHA, when judging what this workflow acted on.
+#
 # Branch protection itself is EXTERNAL repository configuration: it is not
 # stored in this repo and no workflow applies it. The `protection-audit` job
 # only reads it and fails when it drifts from the documented gate.
@@ -79,9 +84,13 @@ jobs:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-          fields="$(gh pr view "$PR_NUMBER" --json author,baseRefName,baseRepository,headRefOid,headRepositoryOwner,isDraft)"
+          fields="$(gh pr view "$PR_NUMBER" --json author,baseRefName,headRefOid,headRepositoryOwner,isDraft)"
           author="$(printf '%s' "$fields" | jq -r '.author.login')"
-          base="$(printf '%s' "$fields" | jq -r '.baseRepository.nameWithOwner')"
+          # `baseRepository` is a real GraphQL node but it is NOT in
+          # `gh pr view --json`'s allowlist in any gh version, so asking for it
+          # aborted this `set -e` step before every assertion ran. Read the base
+          # repository from the REST pull object instead.
+          base="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.base.repo.full_name')"
           base_ref="$(printf '%s' "$fields" | jq -r '.baseRefName')"
           head="$(printf '%s' "$fields" | jq -r '.headRefOid')"
           head_repo_owner="$(printf '%s' "$fields" | jq -r '.headRepositoryOwner.login')"
