@@ -630,3 +630,30 @@ test('computeRadialHubLayout centers zeus and places 3+ levels without node over
     }
   }
 })
+
+test('cockpit marks an unreadable step ledger as corrupt instead of an empty step list', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-cockpit-corrupt-'))
+  try {
+    mkdirSync(join(dir, '.pantheon', 'ledger'), { recursive: true })
+    const ledgerPath = join(dir, '.pantheon', 'ledger', 'step-ledger.json')
+
+    // Absent ledger: genuinely empty, not corrupt.
+    const empty = buildCockpitSnapshot({ workspaceDir: dir, children: [] })
+    assert.equal(empty.flightdeck.stepsCorrupt, false)
+    assert.equal(empty.flightdeck.steps.length, 0)
+
+    // Unreadable ledger: state unknown, must be surfaced (R-e).
+    writeFileSync(ledgerPath, '{ this is not json')
+    const corrupt = buildCockpitSnapshot({ workspaceDir: dir, children: [] })
+    assert.equal(corrupt.flightdeck.stepsCorrupt, true)
+    assert.equal(corrupt.flightdeck.steps.length, 0)
+    const surface = corrupt.overview.surfaces.find((s) => s.label === 'Step-Ledger & Checkpoints')
+    assert.ok(surface)
+    assert.match(surface.status, /unreadable/)
+
+    const replay = formatCockpitReplayArtifact(corrupt)
+    assert.match(replay.markdown, /unreadable \(corrupt\)/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

@@ -359,6 +359,21 @@ function releaseLedgerLock(lockPath: string, token: string): void {
   }
 }
 
+/**
+ * Re-verify ownership immediately before the write-and-rename commit.
+ *
+ * A stale-break can evict a live lock (rename + link-back): the path then
+ * belongs to a third writer while the original writer still holds its token in
+ * memory. Committing anyway would produce two concurrent writers, so a writer
+ * that lost its lock aborts instead of overwriting the successor's state.
+ */
+function assertLockStillOwned(lockPath: string, token: string): void {
+  if (readLockToken(lockPath) === token) return
+  throw new Error(
+    `step-ledger lock ${lockPath} is no longer owned by this writer (token mismatch): another writer took over mid-mutation. Aborting before commit; re-run the action.`,
+  )
+}
+
 /** Write the store via a per-process temp file + `renameSync` (atomic on POSIX). */
 function writeLedgerFileAtomic(filePath: string, store: StepLedgerStore): void {
   const tmpPath = `${filePath}.tmp.${process.pid}`
@@ -395,6 +410,9 @@ export function updateStepLedger<T>(
     const store = readLedgerFileAtPath(filePath)
     const result = mutator(store)
     store.version = 1
+    // The mutation is computed; only now is it safe to commit — and only if we
+    // still own the lock.
+    assertLockStillOwned(lockPath, token)
     writeLedgerFileAtomic(filePath, store)
     return result
   } finally {
@@ -547,6 +565,65 @@ function applyCascade(
     entry.updatedAt = nowIso
   }
   return invalidated
+}
+
+interface RollbackCompensation {
+  readonly restored: boolean
+  readonly restoredTree?: string
+  readonly restoreFailed?: { checkpoint?: string; reason: string }
+}
+
+/**
+ * Compensating restore for a rollback that must be undone (a late refusal, or
+ * a step entry that vanished mid-flight). The result is **verified**, never
+ * assumed: a failed compensation is reported with the checkpoint hash so the
+ * caller can recover the tree manually.
+ */
+async function compensateRollbackTree(
+  cwd: string,
+  preRollback: { ok: boolean; treeHash?: string; reason?: string },
+): Promise<RollbackCompensation> {
+  if (!preRollback.ok || !preRollback.treeHash) {
+    return {
+      restored: false,
+      restoreFailed: { reason: preRollback.reason ?? 'pre-rollback checkpoint unavailable' },
+    }
+  }
+  const restore = await restoreGitCheckpoint(cwd, preRollback.treeHash)
+  if (restore.ok) return { restored: true, restoredTree: preRollback.treeHash }
+  return {
+    restored: false,
+    restoreFailed: {
+      checkpoint: preRollback.treeHash,
+      reason: restore.reason ?? 'restore failed',
+    },
+  }
+}
+
+function compensationPayload(compensation: RollbackCompensation): Record<string, unknown> {
+  return {
+    treeRestored: compensation.restored,
+    ...(compensation.restoredTree ? { restoredTree: compensation.restoredTree } : {}),
+    ...(compensation.restoreFailed ? { restoreFailed: compensation.restoreFailed } : {}),
+  }
+}
+
+/**
+ * Run an async tree restoration while keeping the ledger file's bytes intact.
+ *
+ * `restoreGitCheckpoint` restores every file in the captured tree — including
+ * `.pantheon/ledger/step-ledger.json` when the checkpoint postdates the ledger.
+ * A compensating restore must not roll runtime state back with the work tree:
+ * the ledger is owned by the lock protocol, not by the Git tree.
+ */
+async function preserveLedgerBytes<T>(cwd: string, fn: () => Promise<T>): Promise<T> {
+  const filePath = resolveLedgerPath(cwd)
+  const before = existsSync(filePath) ? readFileSync(filePath, 'utf8') : undefined
+  const result = await fn()
+  if (before === undefined) return result
+  const after = existsSync(filePath) ? readFileSync(filePath, 'utf8') : undefined
+  if (after !== before) writeFileSync(filePath, before, 'utf8')
+  return result
 }
 
 function emitBlocked(stepKey: string, entry: StepLedgerEntry | undefined): void {
@@ -1138,19 +1215,35 @@ export function createStepLedgerTool(
             }
           })
           if (outcome.kind === 'missing') {
-            return jsonResult({ ok: false, error: `Step "${key}" is not initialized` })
+            // The entry vanished between the decision and the commit: the tree
+            // is already restored, so compensate and report the real state —
+            // never leave the caller with a destroyed tree and a bare error.
+            const compensation = await preserveLedgerBytes(cwd, () =>
+              compensateRollbackTree(cwd, preRollback),
+            )
+            return jsonResult({
+              ok: false,
+              error: `Step "${key}" is not initialized`,
+              ...compensationPayload(compensation),
+              hint: compensation.restored
+                ? 'The step entry disappeared during the rollback; the pre-rollback tree was restored.'
+                : 'The step entry disappeared during the rollback and the tree could not be restored — recover it from restoreFailed.checkpoint.',
+            })
           }
           if (outcome.kind === 'late_refusal') {
-            // Undo our restore so the refusal stays a no-op, and hand the caller
-            // the tree we preserved.
-            if (preRollback.ok && preRollback.treeHash) {
-              await restoreGitCheckpoint(cwd, preRollback.treeHash)
-            }
+            // Undo our restore so the refusal stays a no-op. `restoredTree` is
+            // only reported when the compensation actually succeeded.
+            const compensation = await preserveLedgerBytes(cwd, () =>
+              compensateRollbackTree(cwd, preRollback),
+            )
             return jsonResult({
               ok: false,
               error: 'dependents_done',
               dependents: outcome.dependents,
-              ...(preRollback.treeHash ? { restoredTree: preRollback.treeHash } : {}),
+              ...compensationPayload(compensation),
+              hint: compensation.restored
+                ? 'A dependent completed during the rollback; the pre-rollback tree was restored and nothing changed.'
+                : 'A dependent completed during the rollback and the tree could not be restored — recover it from restoreFailed.checkpoint.',
               step,
             })
           }
@@ -1184,7 +1277,9 @@ export function createStepLedgerTool(
             emitBlocked(blockedKey, latest.steps[blockedKey])
           return jsonResult({
             ok: rb.ok,
-            restoredTree: step.baselineTree,
+            // Distinct from `restoredTree` (which only ever reports a verified
+            // compensating restore): this is the tree the rollback moved to.
+            rolledBackToTree: step.baselineTree,
             ...(preRollback.treeHash ? { preRollbackTree: preRollback.treeHash } : {}),
             error: rb.reason,
             step: outcome.step,
@@ -1284,11 +1379,11 @@ export function createStepLedgerTool(
           // invalidation like an explicit rollback so dependents never keep a
           // stale "ready" state.
           const cascadeReason = `Step "${key}" exhausted reflexive retries; dependent invalidated by cascade`
-          let rollbackResult: { restoredTree?: string; ok?: boolean } | undefined
+          let rollbackResult: { rolledBackToTree?: string; ok?: boolean } | undefined
           let blocked: string[] = []
           if (input.autoRollback !== false && outcome.baselineTree) {
             const rb = await restoreGitCheckpoint(cwd, outcome.baselineTree)
-            rollbackResult = { restoredTree: outcome.baselineTree, ok: rb.ok }
+            rollbackResult = { rolledBackToTree: outcome.baselineTree, ok: rb.ok }
             const patched = updateStepLedger(cwd, (ledger) => {
               const entry = ledger.steps[key]
               if (!entry) return { step: undefined, blocked: [] as string[] }

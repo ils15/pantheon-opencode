@@ -98,6 +98,19 @@ A step may declare prerequisites with `dependsOn`:
 - **Verification counters.** `verificationAttempts` counts every
   `record_verification`; `verificationFailures` counts the non-zero exits, so
   `retries = verificationFailures` (a first-try success is `1 / 0`).
+- **Recovery from a dangling or self-referential edge.** A ledger that was
+  restored, hand-edited, or partially written can leave a step whose `dependsOn`
+  points at a deleted key (or at itself). `status.graph.dangling` and
+  `status.graph.unplaced` name it, and `execute_step`, `complete_step`, and
+  `unblock_step` all refuse with `dependencies_unmet`. Re-running `init_step` for
+  that `stepKey` is the working escape hatch, but it **destroys the step's
+  runtime state**: `mutatedFiles`, `lastMutationAt`/`lastVerifiedAt`,
+  `verificationCommand`/`verificationExitCode`,
+  `verificationAttempts`/`verificationFailures`, `receiptId`, `baselineTree`, and
+  the `reproduction*` fields are all reset (and the Git baseline is re-captured
+  from the current tree), so the step must be re-mutated and re-verified. If the
+  entry must be preserved, repair the offending `dependsOn` edge in
+  `.pantheon/ledger/step-ledger.json` instead.
 - **Concurrency.** The ledger is a single JSON file, so every mutation goes through
   `updateStepLedger`: a lock file `.pantheon/ledger/.step-ledger.lock` holding a
   unique `<pid>:<uuid>` owner token, acquired with `open(..., 'wx')`. A stale lock

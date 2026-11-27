@@ -580,6 +580,11 @@ export function CockpitView(props: {
             <text fg={accent()} attributes={1}>
               {t(I18N.cockpit.stepLedgerTitle, lang())}
             </text>
+            <Show when={snapshot().flightdeck.stepsCorrupt}>
+              <text fg={errFg()}>
+                {'  ⚠ step-ledger.json is unreadable (corrupt) — state unknown, not empty'}
+              </text>
+            </Show>
             <Show
               when={snapshot().flightdeck.steps.length > 0}
               fallback={<text fg={muted()}>{'  (no active step-ledger entries)'}</text>}

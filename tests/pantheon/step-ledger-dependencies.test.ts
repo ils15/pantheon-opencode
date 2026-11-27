@@ -21,6 +21,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { pathToFileURL } from 'node:url'
 import { getSharedBus } from '../../src/pantheon/bus.ts'
+import { evaluateReproductionGate } from '../../src/pantheon/reproduction-gate.ts'
 import {
   buildDependencyGraph,
   cascadeBlock,
@@ -813,18 +814,33 @@ test('M2/M4 the lock is owner-checked, breaks stale holders fast, and names itse
   try {
     seed(dir, [stepEntry('lock-a')])
 
-    // (a) Release never deletes a successor's lock: swap the token mid-mutation.
+    // (a) A writer whose lock was evicted mid-mutation aborts before committing,
+    //     and its release never deletes the successor's lock.
     const foreignToken = '999999:someone-else'
-    updateStepLedger(dir, (store) => {
-      const entry = store.steps['lock-a']
-      assert.ok(entry)
-      entry.objective = 'touched'
-      writeFileSync(lockPath, `${foreignToken}\n`)
-    })
+    assert.throws(
+      () =>
+        updateStepLedger(dir, (store) => {
+          const entry = store.steps['lock-a']
+          assert.ok(entry)
+          entry.objective = 'touched'
+          writeFileSync(lockPath, `${foreignToken}\n`)
+        }),
+      (err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err)
+        assert.match(message, /no longer owned/)
+        assert.match(message, /\.step-ledger\.lock/)
+        return true
+      },
+    )
     assert.equal(
       readFileSync(lockPath, 'utf8').trim(),
       foreignToken,
-      'release must not steal the lock',
+      'the evicted writer must not delete the successor lock',
+    )
+    assert.equal(
+      readStepLedger(dir).steps['lock-a']?.objective,
+      'objective lock-a',
+      'an aborted commit must not persist the mutation',
     )
     rmSync(lockPath)
 
@@ -940,6 +956,157 @@ test('minor 4 reserved step keys are rejected and never pollute Object.prototype
     const polluted = ({} as Record<string, unknown>).polluted
     assert.equal(polluted, undefined)
     assert.deepEqual(Object.keys(readStepLedger(dir).steps), [])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// ── R-a — refusal/compensation are verified, atomic and ledger-safe ───────
+
+async function prepareVerifiedStep(
+  tool: PantheonToolDef,
+  ctx: unknown,
+  stepKey: string,
+  dependsOn?: string[],
+): Promise<void> {
+  const init = await call(
+    tool,
+    {
+      action: 'init_step',
+      stepKey,
+      objective: stepKey,
+      agent: 'hermes',
+      ...(dependsOn ? { dependsOn } : {}),
+    },
+    ctx,
+  )
+  assert.equal(init.ok, true, `init_step(${stepKey}): ${String(init.error)}`)
+  await call(tool, { action: 'record_mutation', stepKey, files: ['app.ts'] }, ctx)
+  const verified = await call(
+    tool,
+    { action: 'record_verification', stepKey, command: 'npx tsx probe.ts', exitCode: 0 },
+    ctx,
+  )
+  assert.equal(verified.ok, true)
+}
+
+async function completeVerifiedStep(
+  tool: PantheonToolDef,
+  ctx: unknown,
+  stepKey: string,
+): Promise<void> {
+  const done = await call(tool, { action: 'complete_step', stepKey }, ctx)
+  assert.equal(done.ok, true, `complete_step(${stepKey}): ${String(done.error)}`)
+}
+
+test('R-a late refusal: a dependent completing mid-rollback is compensated, WIP and ledger survive', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-dep-late-'))
+  try {
+    initGitRepo(dir)
+    const tool = makeTool(dir)
+    const ctx = { directory: dir }
+
+    await prepareVerifiedStep(tool, ctx, 'late-a')
+    await completeVerifiedStep(tool, ctx, 'late-a')
+    await prepareVerifiedStep(tool, ctx, 'late-b', ['late-a'])
+
+    const wip = 'export const wip = "uncommitted work"\n'
+    writeFileSync(join(dir, 'wip.ts'), wip)
+
+    // Real interleaving: `call` runs the rollback synchronously up to its first
+    // await (the pre-rollback checkpoint), so this dependent completes *after*
+    // the locked decision and *before* the post-restore lock.
+    const rollbackPromise = call(tool, { action: 'rollback_step', stepKey: 'late-a' }, ctx)
+    const completed = await call(tool, { action: 'complete_step', stepKey: 'late-b' }, ctx)
+    assert.equal(completed.ok, true, `late dependent completion: ${String(completed.error)}`)
+
+    const refused = await rollbackPromise
+    assert.equal(refused.ok, false)
+    assert.equal(refused.error, 'dependents_done')
+    assert.deepEqual(refused.dependents, ['late-b'])
+    assert.equal(refused.treeRestored, true)
+    assert.match(String(refused.restoredTree), /^[0-9a-f]{40}$/)
+    assert.equal(refused.restoreFailed, undefined)
+
+    // The refusal is a no-op: work survives and the ledger matches the tree.
+    assert.equal(readFileSync(join(dir, 'wip.ts'), 'utf8'), wip)
+    const store = readStepLedger(dir)
+    assert.equal(store.steps['late-a']?.state, 'done', 'the rolled-back step is unchanged')
+    assert.equal(store.steps['late-b']?.state, 'done', 'the mid-flight completion survives')
+    assert.equal(store.steps['late-a']?.rolledBackAt, undefined)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('R-a post-restore missing entry: the tree is compensated and reported, not destroyed', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-dep-vanish-'))
+  try {
+    initGitRepo(dir)
+    const tool = makeTool(dir)
+    const ctx = { directory: dir }
+
+    await prepareVerifiedStep(tool, ctx, 'gone-a')
+    const wip = 'export const wip = "keep me"\n'
+    writeFileSync(join(dir, 'wip.ts'), wip)
+
+    const rollbackPromise = call(tool, { action: 'rollback_step', stepKey: 'gone-a' }, ctx)
+    // The entry disappears while the rollback waits on git.
+    updateStepLedger(dir, (store) => {
+      delete store.steps['gone-a']
+    })
+
+    const result = await rollbackPromise
+    assert.equal(result.ok, false)
+    assert.match(String(result.error), /not initialized/)
+    assert.equal(result.treeRestored, true)
+    assert.match(String(result.restoredTree), /^[0-9a-f]{40}$/)
+    assert.equal(
+      readFileSync(join(dir, 'wip.ts'), 'utf8'),
+      wip,
+      'compensation restores the WIP file',
+    )
+    assert.equal(readStepLedger(dir).steps['gone-a'], undefined, 'the ledger is not resurrected')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// ── R-e — a corrupt ledger is visible to consumers, never silent ──────────
+
+test('R-e the reproduction gate reports an unreadable ledger instead of failing silently', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-dep-gate-corrupt-'))
+  try {
+    seed(dir, [stepEntry('bug-1', { state: 'in_progress', taskType: 'bugfix' })])
+    writeFileSync(ledgerFile(dir), '{ definitely not json')
+
+    const warnings: string[] = []
+    const originalWarn = console.warn
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '))
+    }
+    let allowed = false
+    try {
+      const verdict = evaluateReproductionGate({
+        cwd: dir,
+        tool: 'edit',
+        agent: 'hermes',
+        args: { filePath: 'src/app.ts' },
+      })
+      allowed = verdict.allowed
+    } finally {
+      console.warn = originalWarn
+    }
+
+    assert.equal(allowed, true, 'the gate fails open, but loudly')
+    assert.equal(warnings.length, 1)
+    assert.match(warnings[0] ?? '', /reproduction-gate/)
+    assert.match(warnings[0] ?? '', /could not read the step ledger/)
+    // `readStepLedger` quarantines instead of overwriting (A2).
+    const quarantined = readdirSync(join(dir, '.pantheon', 'ledger')).filter((f) =>
+      f.includes('.corrupt.'),
+    )
+    assert.equal(quarantined.length, 1)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

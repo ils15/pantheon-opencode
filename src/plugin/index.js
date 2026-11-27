@@ -16075,6 +16075,12 @@ function releaseLedgerLock(lockPath, token) {
   } catch {
   }
 }
+function assertLockStillOwned(lockPath, token) {
+  if (readLockToken(lockPath) === token) return;
+  throw new Error(
+    `step-ledger lock ${lockPath} is no longer owned by this writer (token mismatch): another writer took over mid-mutation. Aborting before commit; re-run the action.`
+  );
+}
 function writeLedgerFileAtomic(filePath, store2) {
   const tmpPath = `${filePath}.tmp.${process.pid}`;
   try {
@@ -16098,6 +16104,7 @@ function updateStepLedger(workspaceDir, mutator) {
     const store2 = readLedgerFileAtPath(filePath);
     const result = mutator(store2);
     store2.version = 1;
+    assertLockStillOwned(lockPath, token);
     writeLedgerFileAtomic(filePath, store2);
     return result;
   } finally {
@@ -16183,6 +16190,39 @@ function applyCascade(store2, rootStepKey, reason, nowIso) {
     entry.updatedAt = nowIso;
   }
   return invalidated;
+}
+async function compensateRollbackTree(cwd, preRollback) {
+  if (!preRollback.ok || !preRollback.treeHash) {
+    return {
+      restored: false,
+      restoreFailed: { reason: preRollback.reason ?? "pre-rollback checkpoint unavailable" }
+    };
+  }
+  const restore = await restoreGitCheckpoint(cwd, preRollback.treeHash);
+  if (restore.ok) return { restored: true, restoredTree: preRollback.treeHash };
+  return {
+    restored: false,
+    restoreFailed: {
+      checkpoint: preRollback.treeHash,
+      reason: restore.reason ?? "restore failed"
+    }
+  };
+}
+function compensationPayload(compensation) {
+  return {
+    treeRestored: compensation.restored,
+    ...compensation.restoredTree ? { restoredTree: compensation.restoredTree } : {},
+    ...compensation.restoreFailed ? { restoreFailed: compensation.restoreFailed } : {}
+  };
+}
+async function preserveLedgerBytes(cwd, fn) {
+  const filePath = resolveLedgerPath(cwd);
+  const before = existsSync16(filePath) ? readFileSync13(filePath, "utf8") : void 0;
+  const result = await fn();
+  if (before === void 0) return result;
+  const after = existsSync16(filePath) ? readFileSync13(filePath, "utf8") : void 0;
+  if (after !== before) writeFileSync7(filePath, before, "utf8");
+  return result;
 }
 function emitBlocked(stepKey, entry) {
   if (!entry) return;
@@ -16633,17 +16673,28 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             };
           });
           if (outcome.kind === "missing") {
-            return jsonResult3({ ok: false, error: `Step "${key}" is not initialized` });
+            const compensation = await preserveLedgerBytes(
+              cwd,
+              () => compensateRollbackTree(cwd, preRollback)
+            );
+            return jsonResult3({
+              ok: false,
+              error: `Step "${key}" is not initialized`,
+              ...compensationPayload(compensation),
+              hint: compensation.restored ? "The step entry disappeared during the rollback; the pre-rollback tree was restored." : "The step entry disappeared during the rollback and the tree could not be restored \u2014 recover it from restoreFailed.checkpoint."
+            });
           }
           if (outcome.kind === "late_refusal") {
-            if (preRollback.ok && preRollback.treeHash) {
-              await restoreGitCheckpoint(cwd, preRollback.treeHash);
-            }
+            const compensation = await preserveLedgerBytes(
+              cwd,
+              () => compensateRollbackTree(cwd, preRollback)
+            );
             return jsonResult3({
               ok: false,
               error: "dependents_done",
               dependents: outcome.dependents,
-              ...preRollback.treeHash ? { restoredTree: preRollback.treeHash } : {},
+              ...compensationPayload(compensation),
+              hint: compensation.restored ? "A dependent completed during the rollback; the pre-rollback tree was restored and nothing changed." : "A dependent completed during the rollback and the tree could not be restored \u2014 recover it from restoreFailed.checkpoint.",
               step
             });
           }
@@ -16664,7 +16715,9 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             emitBlocked(blockedKey, latest.steps[blockedKey]);
           return jsonResult3({
             ok: rb.ok,
-            restoredTree: step.baselineTree,
+            // Distinct from `restoredTree` (which only ever reports a verified
+            // compensating restore): this is the tree the rollback moved to.
+            rolledBackToTree: step.baselineTree,
             ...preRollback.treeHash ? { preRollbackTree: preRollback.treeHash } : {},
             error: rb.reason,
             step: outcome.step,
@@ -16755,7 +16808,7 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
           let blocked = [];
           if (input.autoRollback !== false && outcome.baselineTree) {
             const rb = await restoreGitCheckpoint(cwd, outcome.baselineTree);
-            rollbackResult = { restoredTree: outcome.baselineTree, ok: rb.ok };
+            rollbackResult = { rolledBackToTree: outcome.baselineTree, ok: rb.ok };
             const patched2 = updateStepLedger(cwd, (ledger) => {
               const entry = ledger.steps[key];
               if (!entry) return { step: void 0, blocked: [] };
@@ -16943,7 +16996,10 @@ function findActiveBugfixStep(cwd, agent, explicitStepKey) {
     if (matches.length === 0) return null;
     matches.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     return matches[0] ?? null;
-  } catch {
+  } catch (err) {
+    console.warn(
+      `[pantheon] reproduction-gate: could not read the step ledger in ${cwd}; the bugfix RED gate is disabled for this call (${err instanceof Error ? err.message : String(err)}). Inspect .pantheon/ledger/step-ledger.json.`
+    );
     return null;
   }
 }

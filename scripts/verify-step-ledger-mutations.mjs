@@ -136,6 +136,42 @@ const MUTANTS = [
       },
     ],
   },
+  {
+    id: 'late-refusal-compensation-skipped',
+    description: 'a late refusal after the restore leaves the tree rolled back (no compensation)',
+    expect: 'R-a late refusal',
+    edits: [
+      {
+        file: LEDGER,
+        from: "            const compensation = await preserveLedgerBytes(cwd, () =>\n              compensateRollbackTree(cwd, preRollback),\n            )\n            return jsonResult({\n              ok: false,\n              error: 'dependents_done',",
+        to: "            const compensation = { restored: false }\n            return jsonResult({\n              ok: false,\n              error: 'dependents_done',",
+      },
+    ],
+  },
+  {
+    id: 'post-restore-missing-compensation-skipped',
+    description: 'a step that vanishes mid-rollback leaves the tree rolled back (no compensation)',
+    expect: 'R-a post-restore missing entry',
+    edits: [
+      {
+        file: LEDGER,
+        from: `            const compensation = await preserveLedgerBytes(cwd, () =>\n              compensateRollbackTree(cwd, preRollback),\n            )\n            return jsonResult({\n              ok: false,\n              error: \`Step "\${key}" is not initialized\`,`,
+        to: `            const compensation = { restored: false }\n            return jsonResult({\n              ok: false,\n              error: \`Step "\${key}" is not initialized\`,`,
+      },
+    ],
+  },
+  {
+    id: 'lock-owner-reverify-removed',
+    description: 'a writer whose lock was evicted still commits its mutation',
+    expect: 'M2/M4 the lock is owner-checked',
+    edits: [
+      {
+        file: LEDGER,
+        from: '    assertLockStillOwned(lockPath, token)\n',
+        to: '',
+      },
+    ],
+  },
 ]
 
 function parseArgs(argv) {
