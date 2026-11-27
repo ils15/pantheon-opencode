@@ -25,6 +25,8 @@
  * `PANTHEON_STRATEGY_MAX_AGE_DAYS` (30) and `PANTHEON_STRATEGY_MAX_ROWS` (10000)
  * bound `strategy_runs` only, pruned every 50th insert and on `action='prune'`.
  * **Aggregates are never pruned** — they are the whole point of the store.
+ * The insert counter is process-local (per open handle): a restart only delays
+ * the next automatic pass, and `action='prune'` is always available.
  *
  * ## Failure policy
  * Recording is best-effort at the call sites: `recordStrategyRunSafe` never
