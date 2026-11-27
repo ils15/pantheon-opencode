@@ -1585,15 +1585,123 @@ function resolveActiveDirectory(ctx: SetupContext<any>, explicit?: () => string)
   return activeDirectory().trim()
 }
 
+function renderMythEmblem(agentId: string, x: number, y: number, color: string) {
+  const id = agentId.toLowerCase()
+  return (
+    <g transform={`translate(${x}, ${y})`} fill="none" stroke={color} stroke-width="1.3">
+      {id === 'zeus' ? (
+        <path d="M7 1L2 7h4l-1 4 5-6H6l1-4z" fill={color} stroke="none" />
+      ) : id === 'athena' ? (
+        <path d="M6 1L2 2.8v3c0 2.6 1.7 4.5 4 5.2 2.3-.7 4-2.6 4-5.2v-3L6 1z" />
+      ) : id === 'hermes' ? (
+        <path d="M1.5 7.5C3.5 4.5 6.5 3 10.5 2c-1 2.8-3 4.6-6 5.5l-3 0zm2.5 2c2-.8 4-1.8 5.5-3-.8 1.8-2.4 2.8-4.5 3.5L4 9.5z" />
+      ) : id === 'apollo' ? (
+        <g>
+          <circle cx="6" cy="6" r="2.2" />
+          <path d="M6 1v1.5M6 9.5V11M1 6h1.5M9.5 6H11M2.5 2.5l1 1M8.5 8.5l1 1M9.5 2.5l-1 1M3.5 8.5l-1 1" />
+        </g>
+      ) : id === 'themis' ? (
+        <path d="M6 1.5v9M2 3.5h8M3 3.5L1.5 7h3L3 3.5zm6 0L7.5 7h3L9 3.5zM4 10.5h4" />
+      ) : id === 'aphrodite' ? (
+        <path d="M6 1l1.4 3.6L11 6 7.4 7.4 6 11 4.6 7.4 1 6l3.6-1.4L6 1z" />
+      ) : id === 'demeter' ? (
+        <path d="M10 2C5 2 2 5 2 10c5 0 8-3 8-8zM2 10l4.5-4.5" />
+      ) : id === 'iris' ? (
+        <path d="M1.5 8.5a4.5 4.5 0 0 1 9 0M3.5 8.5a2.5 2.5 0 0 1 5 0" />
+      ) : (
+        <path d="M6 1.5v9M1.5 6h9M2.8 2.8l6.4 6.4M9.2 2.8L2.8 9.2" />
+      )}
+    </g>
+  )
+}
+
+const OLYMPUS_ROSTER_INFO = [
+  {
+    id: 'zeus',
+    en: 'Coordinator · orchestrates slices, gates & synthesis',
+    pt: 'Coordenador · orquestra fatias, portões e síntese',
+  },
+  {
+    id: 'athena',
+    en: 'Planner · architecture, Deepwork blueprints & risk',
+    pt: 'Planejadora · arquitetura, blueprints Deepwork e risco',
+  },
+  {
+    id: 'hermes',
+    en: 'Backend Specialist · APIs, services, CLI & tests',
+    pt: 'Especialista Backend · APIs, serviços, CLI e testes',
+  },
+  {
+    id: 'apollo',
+    en: 'Researcher · read-only codebase & web discovery',
+    pt: 'Pesquisador · descoberta read-only de código e web',
+  },
+  {
+    id: 'themis',
+    en: 'Verifier · IntentGate, 3-layer review & branch diff',
+    pt: 'Verificadora · IntentGate, revisão 3 camadas e diff',
+  },
+  {
+    id: 'aphrodite',
+    en: 'Frontend Specialist · UI/UX, Solid/React & styles',
+    pt: 'Especialista Frontend · UI/UX, Solid/React e estilos',
+  },
+  {
+    id: 'demeter',
+    en: 'Data Specialist · schemas, migrations & SQLite/SQL',
+    pt: 'Especialista Dados · schemas, migrações e SQLite/SQL',
+  },
+  {
+    id: 'iris',
+    en: 'Custodian · git custody, memory-bank & releases',
+    pt: 'Guardiã · custódia git, memory-bank e releases',
+  },
+  {
+    id: 'ephemeral',
+    en: 'Ephemeral Workers · isolated worktree slice executors',
+    pt: 'Workers Efêmeros · executores isolados em worktrees',
+  },
+] as const
+
 function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => string }) {
   const [subTab, setSubTab] = createSignal<GuiSubTab>('topology')
   const [topoView, setTopoView] = createSignal<'dag' | 'gantt' | 'interactions'>('dag')
   const [dagStyle, setDagStyle] = createSignal<'radial' | 'tree'>('radial')
   const [dagZoom, setDagZoom] = createSignal(1)
+  const [panX, setPanX] = createSignal(0)
+  const [panY, setPanY] = createSignal(0)
+  const [isPanning, setIsPanning] = createSignal(false)
+  const [bottomHeight, setBottomHeight] = createSignal(190)
+  const [bottomTab, setBottomTab] = createSignal<'inspector' | 'members'>('inspector')
   const [selectedAgent, setSelectedAgent] = createSignal('zeus')
   const [scrubberSeq, setScrubberSeq] = createSignal<number | null>(null)
   const [draftMsg, setDraftMsg] = createSignal('')
   const [draftChannel, setDraftChannel] = createSignal('default')
+
+  let panStartX = 0
+  let panStartY = 0
+  let panOriginX = 0
+  let panOriginY = 0
+
+  const startBottomResize = (e: MouseEvent) => {
+    e.preventDefault()
+    const startY = e.clientY
+    const startHeight = bottomHeight()
+    const onMove = (ev: MouseEvent) => {
+      const next = Math.min(420, Math.max(110, startHeight - (ev.clientY - startY)))
+      setBottomHeight(next)
+    }
+    const onUp = () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('mousemove', onMove)
+        window.removeEventListener('mouseup', onUp)
+      }
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('mousemove', onMove)
+      window.addEventListener('mouseup', onUp)
+    }
+  }
 
   const effectiveDirectory = () => resolveActiveDirectory(props.ctx, props.directory)
   let refreshSeq = 0
@@ -2146,12 +2254,36 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
           </Show>
 
           <Show when={topoView() === 'dag'}>
+            {/* biome-ignore lint/a11y/noStaticElementInteractions: interactive pan/wheel-zoom graph canvas */}
             <div
+              onWheel={(e) => {
+                e.preventDefault()
+                const delta = e.deltaY < 0 ? 0.1 : -0.1
+                setDagZoom((z) => Math.min(2.2, Math.max(0.4, Number((z + delta).toFixed(2)))))
+              }}
+              onMouseDown={(e) => {
+                const target = e.target as Element | null
+                if (target?.closest('g[role="button"], button')) return
+                setIsPanning(true)
+                panStartX = e.clientX
+                panStartY = e.clientY
+                panOriginX = panX()
+                panOriginY = panY()
+              }}
+              onMouseMove={(e) => {
+                if (!isPanning()) return
+                setPanX(panOriginX + (e.clientX - panStartX))
+                setPanY(panOriginY + (e.clientY - panStartY))
+              }}
+              onMouseUp={() => setIsPanning(false)}
+              onMouseLeave={() => setIsPanning(false)}
               style={{
                 position: 'relative',
                 flex: 1,
-                'min-height': '360px',
-                overflow: 'auto',
+                'min-height': '180px',
+                overflow: 'hidden',
+                cursor: isPanning() ? 'grabbing' : 'grab',
+                'user-select': 'none',
                 border: '1px solid var(--border-weak-base, #2e2e32)',
                 'border-radius': '8px',
                 'background-color': 'rgba(15, 17, 23, 0.55)',
@@ -2163,9 +2295,9 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
               {/* Floating style + zoom controls */}
               <div
                 style={{
-                  position: 'sticky',
-                  top: '4px',
-                  float: 'right',
+                  position: 'absolute',
+                  top: '8px',
+                  right: '8px',
                   'z-index': 2,
                   display: 'flex',
                   gap: '4px',
@@ -2207,7 +2339,7 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
                 </button>
                 <button
                   type="button"
-                  onClick={() => setDagZoom((z) => Math.max(0.5, Number((z - 0.15).toFixed(2))))}
+                  onClick={() => setDagZoom((z) => Math.max(0.4, Number((z - 0.15).toFixed(2))))}
                   style={{
                     padding: '2px 6px',
                     'border-radius': '4px',
@@ -2222,7 +2354,11 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
                 </button>
                 <button
                   type="button"
-                  onClick={() => setDagZoom(1)}
+                  onClick={() => {
+                    setDagZoom(1)
+                    setPanX(0)
+                    setPanY(0)
+                  }}
                   style={{
                     padding: '2px 6px',
                     'border-radius': '4px',
@@ -2238,7 +2374,7 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
                 </button>
                 <button
                   type="button"
-                  onClick={() => setDagZoom((z) => Math.min(2, Number((z + 0.15).toFixed(2))))}
+                  onClick={() => setDagZoom((z) => Math.min(2.2, Number((z + 0.15).toFixed(2))))}
                   style={{
                     padding: '2px 6px',
                     'border-radius': '4px',
@@ -2253,7 +2389,11 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
                 </button>
                 <button
                   type="button"
-                  onClick={() => setDagZoom(0.85)}
+                  onClick={() => {
+                    setDagZoom(0.85)
+                    setPanX(0)
+                    setPanY(0)
+                  }}
                   style={{
                     padding: '2px 6px',
                     'border-radius': '4px',
@@ -2268,135 +2408,194 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
                 </button>
               </div>
 
-              <svg
-                width={Math.round(activeDagLayout().width * dagZoom())}
-                height={Math.round(activeDagLayout().height * dagZoom())}
-                viewBox={`0 0 ${activeDagLayout().width} ${activeDagLayout().height}`}
-                style={{ display: 'block', 'min-width': '100%' }}
+              <div
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  display: 'flex',
+                  'align-items': 'center',
+                  'justify-content': 'center',
+                  transform: `translate(${panX()}px, ${panY()}px) scale(${dagZoom()})`,
+                  'transform-origin': 'center center',
+                  transition: isPanning() ? 'none' : 'transform 80ms ease-out',
+                }}
               >
-                <title>{tr('Olympus Topology DAG', 'Topologia Olympus (DAG)')}</title>
-                {/* Parent-child tree/radial edges */}
-                <For each={activeDagLayout().edges}>
-                  {(edge) => {
-                    const stroke = dagStatusColor(edge.status)
-                    const pathD =
-                      dagStyle() === 'radial'
-                        ? (() => {
-                            const mx = (edge.x1 + edge.x2) / 2
-                            const my = (edge.y1 + edge.y2) / 2
-                            const dx = edge.x2 - edge.x1
-                            const dy = edge.y2 - edge.y1
-                            const cx = mx - dy * 0.08
-                            const cy = my + dx * 0.08
-                            return `M ${edge.x1} ${edge.y1} Q ${cx} ${cy}, ${edge.x2} ${edge.y2}`
-                          })()
-                        : (() => {
-                            const midY = (edge.y1 + edge.y2) / 2
-                            return `M ${edge.x1} ${edge.y1} C ${edge.x1} ${midY}, ${edge.x2} ${midY}, ${edge.x2} ${edge.y2}`
-                          })()
-                    return (
-                      <path
-                        d={pathD}
-                        fill="none"
-                        stroke={stroke}
-                        stroke-width="1.6"
-                        opacity="0.85"
-                      />
-                    )
-                  }}
-                </For>
-
-                {/* Subtle dashed @mention cross-edges in radial mode */}
-                <Show when={dagStyle() === 'radial'}>
-                  <For each={interactionEdges().slice(-24)}>
+                <svg
+                  width={activeDagLayout().width}
+                  height={activeDagLayout().height}
+                  viewBox={`0 0 ${activeDagLayout().width} ${activeDagLayout().height}`}
+                  style={{ display: 'block', overflow: 'visible' }}
+                >
+                  <title>{tr('Olympus Topology DAG', 'Topologia Olympus (DAG)')}</title>
+                  <style>{`
+                    @keyframes pantheonDashFlow {
+                      to { stroke-dashoffset: -20; }
+                    }
+                    @keyframes pantheonPulse {
+                      0%, 100% { opacity: 0.22; }
+                      50% { opacity: 0.78; }
+                    }
+                  `}</style>
+                  {/* Parent-child tree/radial edges */}
+                  <For each={activeDagLayout().edges}>
                     {(edge) => {
-                      const fromNode = activeDagLayout().nodes.find((n) => n.id === edge.from)
-                      const toNode = activeDagLayout().nodes.find((n) => n.id === edge.target)
-                      if (!fromNode || !toNode || fromNode.id === toNode.id) return null
-                      if (toNode.parentId === fromNode.id || fromNode.parentId === toNode.id) {
-                        return null
-                      }
-                      const x1 = fromNode.x + fromNode.width / 2
-                      const y1 = fromNode.y + fromNode.height / 2
-                      const x2 = toNode.x + toNode.width / 2
-                      const y2 = toNode.y + toNode.height / 2
+                      const stroke = dagStatusColor(edge.status)
+                      const isActive = edge.status === 'running'
+                      const pathD =
+                        dagStyle() === 'radial'
+                          ? (() => {
+                              const mx = (edge.x1 + edge.x2) / 2
+                              const my = (edge.y1 + edge.y2) / 2
+                              const dx = edge.x2 - edge.x1
+                              const dy = edge.y2 - edge.y1
+                              const cx = mx - dy * 0.08
+                              const cy = my + dx * 0.08
+                              return `M ${edge.x1} ${edge.y1} Q ${cx} ${cy}, ${edge.x2} ${edge.y2}`
+                            })()
+                          : (() => {
+                              const midY = (edge.y1 + edge.y2) / 2
+                              return `M ${edge.x1} ${edge.y1} C ${edge.x1} ${midY}, ${edge.x2} ${midY}, ${edge.x2} ${edge.y2}`
+                            })()
                       return (
                         <path
-                          d={`M ${x1} ${y1} Q ${(x1 + x2) / 2} ${(y1 + y2) / 2 - 22}, ${x2} ${y2}`}
+                          d={pathD}
                           fill="none"
-                          stroke="#94a3b8"
-                          stroke-width="1"
-                          stroke-dasharray="4 4"
-                          opacity="0.45"
+                          stroke={stroke}
+                          stroke-width={isActive ? '2' : '1.6'}
+                          stroke-dasharray={isActive ? '6 4' : undefined}
+                          opacity="0.88"
+                          style={
+                            isActive
+                              ? { animation: 'pantheonDashFlow 1s linear infinite' }
+                              : undefined
+                          }
                         />
                       )
                     }}
                   </For>
-                </Show>
 
-                {/* Richer clickable node cards */}
-                <For each={activeDagLayout().nodes}>
-                  {(node) => {
-                    const stroke = dagStatusColor(node.status)
-                    const isSelected = () => selectedAgent() === node.id
-                    const label =
-                      node.id === 'zeus'
-                        ? tr('zeus (root)', 'zeus (raiz)')
-                        : node.label.length > 15
-                          ? `${node.label.slice(0, 14)}…`
-                          : node.label
-                    return (
-                      // biome-ignore lint/a11y/useSemanticElements: SVG <g> represents interactive graph node
-                      <g
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => setSelectedAgent(node.id)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') setSelectedAgent(node.id)
-                        }}
-                        style={{ cursor: 'pointer' }}
-                      >
-                        <rect
-                          x={node.x}
-                          y={node.y}
-                          width={node.width}
-                          height={node.height}
-                          rx="8"
-                          fill="#131722"
-                          stroke={stroke}
-                          stroke-width={isSelected() ? '2.5' : node.id === 'zeus' ? '2' : '1.4'}
-                        />
-                        <circle cx={node.x + 14} cy={node.y + 16} r="4" fill={stroke} />
-                        <text
-                          x={node.x + 24}
-                          y={node.y + 20}
-                          fill="currentColor"
-                          font-size={node.id === 'zeus' ? '12' : '11'}
-                          font-weight={node.id === 'zeus' || isSelected() ? '600' : '500'}
+                  {/* Subtle dashed @mention cross-edges in radial mode */}
+                  <Show when={dagStyle() === 'radial'}>
+                    <For each={interactionEdges().slice(-24)}>
+                      {(edge) => {
+                        const fromNode = activeDagLayout().nodes.find((n) => n.id === edge.from)
+                        const toNode = activeDagLayout().nodes.find((n) => n.id === edge.target)
+                        if (!fromNode || !toNode || fromNode.id === toNode.id) return null
+                        if (toNode.parentId === fromNode.id || fromNode.parentId === toNode.id) {
+                          return null
+                        }
+                        const x1 = fromNode.x + fromNode.width / 2
+                        const y1 = fromNode.y + fromNode.height / 2
+                        const x2 = toNode.x + toNode.width / 2
+                        const y2 = toNode.y + toNode.height / 2
+                        return (
+                          <path
+                            d={`M ${x1} ${y1} Q ${(x1 + x2) / 2} ${(y1 + y2) / 2 - 22}, ${x2} ${y2}`}
+                            fill="none"
+                            stroke="#94a3b8"
+                            stroke-width="1"
+                            stroke-dasharray="4 4"
+                            opacity="0.45"
+                          />
+                        )
+                      }}
+                    </For>
+                  </Show>
+
+                  {/* Richer clickable node cards with mythological emblems */}
+                  <For each={activeDagLayout().nodes}>
+                    {(node) => {
+                      const stroke = dagStatusColor(node.status)
+                      const isSelected = () => selectedAgent() === node.id
+                      const isActive = node.status === 'running'
+                      const label =
+                        node.id === 'zeus'
+                          ? tr('zeus (root)', 'zeus (raiz)')
+                          : node.label.length > 14
+                            ? `${node.label.slice(0, 13)}…`
+                            : node.label
+                      return (
+                        // biome-ignore lint/a11y/useSemanticElements: SVG <g> represents interactive graph node
+                        <g
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => setSelectedAgent(node.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') setSelectedAgent(node.id)
+                          }}
+                          style={{ cursor: 'pointer' }}
                         >
-                          {label}
-                        </text>
-                        <text
-                          x={node.x + 24}
-                          y={node.y + 34}
-                          fill="#94a3b8"
-                          font-size="9.5"
-                          font-family="monospace"
-                        >
-                          {`${node.status} · L${node.depth}`}
-                        </text>
-                      </g>
-                    )
-                  }}
-                </For>
-              </svg>
+                          <Show when={isActive}>
+                            <rect
+                              x={node.x - 4}
+                              y={node.y - 4}
+                              width={node.width + 8}
+                              height={node.height + 8}
+                              rx="11"
+                              fill="none"
+                              stroke={stroke}
+                              stroke-width="1.5"
+                              style={{ animation: 'pantheonPulse 1.8s ease-in-out infinite' }}
+                            />
+                          </Show>
+                          <rect
+                            x={node.x}
+                            y={node.y}
+                            width={node.width}
+                            height={node.height}
+                            rx="8"
+                            fill="#131722"
+                            stroke={stroke}
+                            stroke-width={isSelected() ? '2.5' : node.id === 'zeus' ? '2' : '1.4'}
+                          />
+                          {renderMythEmblem(node.id, node.x + 8, node.y + 9, stroke)}
+                          <text
+                            x={node.x + 25}
+                            y={node.y + 19}
+                            fill="currentColor"
+                            font-size={node.id === 'zeus' ? '12' : '11'}
+                            font-weight={node.id === 'zeus' || isSelected() ? '600' : '500'}
+                          >
+                            {label}
+                          </text>
+                          <circle cx={node.x + 14} cy={node.y + 31} r="3" fill={stroke} />
+                          <text
+                            x={node.x + 22}
+                            y={node.y + 34}
+                            fill="#94a3b8"
+                            font-size="9.5"
+                            font-family="monospace"
+                          >
+                            {`${node.status} · L${node.depth}`}
+                          </text>
+                        </g>
+                      )
+                    }}
+                  </For>
+                </svg>
+              </div>
             </div>
 
-            {/* Bottom Node Inspector */}
+            {/* Resizable 6px split-pane handle */}
+            {/* biome-ignore lint/a11y/noStaticElementInteractions: draggable split-pane divider */}
+            <div
+              onMouseDown={startBottomResize}
+              title={tr('Drag to resize panel', 'Arraste para redimensionar')}
+              style={{
+                height: '6px',
+                cursor: 'row-resize',
+                background: 'rgba(148, 163, 184, 0.16)',
+                'border-radius': '3px',
+                width: '100%',
+                'flex-shrink': 0,
+              }}
+            />
+
+            {/* Bottom Panel: Inspector | Members & Structure */}
             <div
               style={{
-                height: '170px',
-                'min-height': '170px',
+                height: `${bottomHeight()}px`,
+                'min-height': '110px',
                 'border-radius': '8px',
                 border: '1px solid var(--border-weak-base, #2e2e32)',
                 background: 'rgba(19, 23, 34, 0.72)',
@@ -2405,6 +2604,7 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
                 'flex-direction': 'column',
                 gap: '6px',
                 overflow: 'hidden',
+                'flex-shrink': 0,
               }}
             >
               <div
@@ -2414,79 +2614,192 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
                   'align-items': 'center',
                 }}
               >
-                <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
-                  <span style={{ 'font-weight': 600, 'font-family': 'monospace' }}>
-                    {`@${selectedNodeInfo().id}`}
-                  </span>
-                  <span
+                <div style={{ display: 'flex', 'align-items': 'center', gap: '6px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setBottomTab('inspector')}
                     style={{
-                      padding: '1px 7px',
-                      'border-radius': '999px',
-                      border: `1px solid ${dagStatusColor(selectedNodeInfo().status)}`,
-                      color: dagStatusColor(selectedNodeInfo().status),
-                      'font-size': '10px',
-                      'font-family': 'monospace',
+                      padding: '2px 8px',
+                      'border-radius': '4px',
+                      border: '1px solid var(--border-weak-base, #3f3f46)',
+                      background: bottomTab() === 'inspector' ? '#fba970' : 'transparent',
+                      color: bottomTab() === 'inspector' ? '#111' : 'inherit',
+                      'font-size': '11px',
+                      'font-weight': bottomTab() === 'inspector' ? 600 : 400,
+                      cursor: 'pointer',
                     }}
                   >
-                    {selectedNodeInfo().status}
-                  </span>
+                    {tr('Inspector', 'Inspetor')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBottomTab('members')}
+                    style={{
+                      padding: '2px 8px',
+                      'border-radius': '4px',
+                      border: '1px solid var(--border-weak-base, #3f3f46)',
+                      background: bottomTab() === 'members' ? '#fba970' : 'transparent',
+                      color: bottomTab() === 'members' ? '#111' : 'inherit',
+                      'font-size': '11px',
+                      'font-weight': bottomTab() === 'members' ? 600 : 400,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {tr('Members & Structure', 'Membros & Estrutura')}
+                  </button>
+                  <Show when={bottomTab() === 'inspector'}>
+                    <span style={{ 'font-weight': 600, 'font-family': 'monospace' }}>
+                      {`@${selectedNodeInfo().id}`}
+                    </span>
+                    <span
+                      style={{
+                        padding: '1px 7px',
+                        'border-radius': '999px',
+                        border: `1px solid ${dagStatusColor(selectedNodeInfo().status)}`,
+                        color: dagStatusColor(selectedNodeInfo().status),
+                        'font-size': '10px',
+                        'font-family': 'monospace',
+                      }}
+                    >
+                      {selectedNodeInfo().status}
+                    </span>
+                  </Show>
                 </div>
                 <span style={{ opacity: 0.75, 'font-size': '11px', 'font-family': 'monospace' }}>
                   {`${tr('children', 'filhos')}: ${selectedNodeInfo().childCount} · @mentions: ${selectedNodeInfo().mentionCount}`}
                 </span>
               </div>
 
-              <div
-                style={{
-                  flex: 1,
-                  'min-height': 0,
-                  overflow: 'auto',
-                  display: 'flex',
-                  'flex-direction': 'column',
-                  gap: '3px',
-                  'font-size': '11px',
-                }}
-              >
-                <For each={selectedNodeInfo().msgs}>
-                  {(m) => (
-                    <div style={{ display: 'flex', gap: '6px', opacity: 0.9 }}>
-                      <span style={{ 'font-family': 'monospace', color: '#fba970' }}>
-                        {`#${m.seq}`}
-                      </span>
-                      <Show when={m.tag}>
-                        <span style={{ 'font-family': 'monospace', opacity: 0.75 }}>
-                          {`[${m.tag}]`}
-                        </span>
-                      </Show>
-                      <span style={{ opacity: 0.85 }}>
-                        {m.body.trim().replace(/\s+/g, ' ').slice(0, 96)}
-                      </span>
-                    </div>
-                  )}
-                </For>
-                <For each={selectedNodeInfo().events}>
-                  {(ev) => (
-                    <div style={{ display: 'flex', gap: '6px', opacity: 0.75 }}>
-                      <span style={{ 'font-family': 'monospace', color: '#38bdf8' }}>
-                        {ev.kind ?? ev.type ?? 'event'}
-                      </span>
-                      <span>{ev.stepKey ?? ev.role ?? ev.status ?? ''}</span>
-                    </div>
-                  )}
-                </For>
-                <Show
-                  when={
-                    selectedNodeInfo().msgs.length === 0 && selectedNodeInfo().events.length === 0
-                  }
+              <Show when={bottomTab() === 'inspector'}>
+                <div
+                  style={{
+                    flex: 1,
+                    'min-height': 0,
+                    overflow: 'auto',
+                    display: 'flex',
+                    'flex-direction': 'column',
+                    gap: '3px',
+                    'font-size': '11px',
+                  }}
                 >
-                  <span style={{ opacity: 0.6 }}>
-                    {tr(
-                      'No board messages or telemetry events recorded for this node yet.',
-                      'Nenhuma mensagem ou evento de telemetria registrado para este nó ainda.',
+                  <For each={selectedNodeInfo().msgs}>
+                    {(m) => (
+                      <div style={{ display: 'flex', gap: '6px', opacity: 0.9 }}>
+                        <span style={{ 'font-family': 'monospace', color: '#fba970' }}>
+                          {`#${m.seq}`}
+                        </span>
+                        <Show when={m.tag}>
+                          <span style={{ 'font-family': 'monospace', opacity: 0.75 }}>
+                            {`[${m.tag}]`}
+                          </span>
+                        </Show>
+                        <span style={{ opacity: 0.85 }}>
+                          {m.body.trim().replace(/\s+/g, ' ').slice(0, 96)}
+                        </span>
+                      </div>
                     )}
-                  </span>
-                </Show>
-              </div>
+                  </For>
+                  <For each={selectedNodeInfo().events}>
+                    {(ev) => (
+                      <div style={{ display: 'flex', gap: '6px', opacity: 0.75 }}>
+                        <span style={{ 'font-family': 'monospace', color: '#38bdf8' }}>
+                          {ev.kind ?? ev.type ?? 'event'}
+                        </span>
+                        <span>{ev.stepKey ?? ev.role ?? ev.status ?? ''}</span>
+                      </div>
+                    )}
+                  </For>
+                  <Show
+                    when={
+                      selectedNodeInfo().msgs.length === 0 && selectedNodeInfo().events.length === 0
+                    }
+                  >
+                    <span style={{ opacity: 0.6 }}>
+                      {tr(
+                        'No board messages or telemetry events recorded for this node yet.',
+                        'Nenhuma mensagem ou evento de telemetria registrado para este nó ainda.',
+                      )}
+                    </span>
+                  </Show>
+                </div>
+              </Show>
+
+              <Show when={bottomTab() === 'members'}>
+                <div
+                  style={{
+                    flex: 1,
+                    'min-height': 0,
+                    overflow: 'auto',
+                    display: 'flex',
+                    'flex-direction': 'column',
+                    gap: '4px',
+                    'font-size': '11px',
+                  }}
+                >
+                  <div
+                    style={{
+                      opacity: 0.8,
+                      'font-family': 'monospace',
+                      'font-size': '10.5px',
+                      'padding-bottom': '2px',
+                    }}
+                  >
+                    {tr(
+                      'Hierarchy: Zeus (Coordinator) → Athena (Plan) / Specialists → Ephemeral Workers → Themis (Verifier)',
+                      'Hierarquia: Zeus (Coordenador) → Athena (Plano) / Especialistas → Workers Efêmeros → Themis (Verificadora)',
+                    )}
+                  </div>
+                  <For each={OLYMPUS_ROSTER_INFO}>
+                    {(member) => {
+                      const liveNode = () => activeDagLayout().nodes.find((n) => n.id === member.id)
+                      const status = () => liveNode()?.status ?? 'idle'
+                      const color = () => dagStatusColor(status())
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedAgent(member.id)}
+                          style={{
+                            display: 'flex',
+                            'align-items': 'center',
+                            'justify-content': 'space-between',
+                            gap: '8px',
+                            padding: '3px 6px',
+                            'border-radius': '4px',
+                            border:
+                              selectedAgent() === member.id
+                                ? '1px solid #fba970'
+                                : '1px solid transparent',
+                            background: 'rgba(255, 255, 255, 0.03)',
+                            color: 'inherit',
+                            cursor: 'pointer',
+                            'text-align': 'left',
+                          }}
+                        >
+                          <div style={{ display: 'flex', 'align-items': 'center', gap: '6px' }}>
+                            <svg width="14" height="14" viewBox="0 0 12 12">
+                              <title>{member.id}</title>
+                              {renderMythEmblem(member.id, 0, 0, color())}
+                            </svg>
+                            <span style={{ 'font-family': 'monospace', 'font-weight': 600 }}>
+                              {`@${member.id}`}
+                            </span>
+                            <span style={{ opacity: 0.78 }}>{tr(member.en, member.pt)}</span>
+                          </div>
+                          <span
+                            style={{
+                              'font-family': 'monospace',
+                              'font-size': '10px',
+                              color: color(),
+                            }}
+                          >
+                            {status()}
+                          </span>
+                        </button>
+                      )
+                    }}
+                  </For>
+                </div>
+              </Show>
 
               <div
                 style={{

@@ -584,6 +584,13 @@ test('gui.tsx removes TUI & Layout tab while keeping tui.layout.language in over
   assert.match(guiSrc, /computeTidyDagLayout/)
   assert.match(guiSrc, /computeRadialHubLayout/)
   assert.match(guiSrc, /selectedAgent/)
+  assert.match(guiSrc, /onWheel/)
+  assert.match(guiSrc, /panX/)
+  assert.match(guiSrc, /startBottomResize/)
+  assert.match(guiSrc, /pantheonDashFlow/)
+  assert.match(guiSrc, /pantheonPulse/)
+  assert.match(guiSrc, /renderMythEmblem/)
+  assert.match(guiSrc, /Members & Structure/)
 })
 
 test('computeRadialHubLayout centers zeus and places 3+ levels without node overlap', async () => {
