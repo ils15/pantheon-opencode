@@ -16719,13 +16719,15 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
 }
 
 // src/pantheon/strategy-store.ts
-var STRATEGY_SCHEMA_VERSION = "1";
+var STRATEGY_SCHEMA_VERSION = "2";
 var STRATEGY_DECAY_DAYS = 90;
 var STRATEGY_MIN_ATTEMPTS = 3;
 var DEFAULT_PROMOTION_MIN = 0.8;
 var DEFAULT_ANTI_PATTERN_MAX = 0.6;
 var DEFAULT_MAX_AGE_DAYS = 30;
 var DEFAULT_MAX_ROWS = 1e4;
+var DEFAULT_ATTACH_WINDOW_MINUTES = 60;
+var MAX_SUMMARY_BYTES = 4096;
 var STRATEGY_PRUNE_EVERY = 50;
 var DAY_MS = 864e5;
 function readUnitInterval(raw, fallback) {
@@ -16750,12 +16752,19 @@ function readPositiveInt(raw, fallback) {
 }
 function resolveStrategyPolicy(env = process.env) {
   const promotion = readUnitInterval(env.PANTHEON_STRATEGY_PROMOTION_MIN, DEFAULT_PROMOTION_MIN);
+  const attachWindow = readPositiveInt(
+    env.PANTHEON_STRATEGY_ATTACH_WINDOW_MINUTES,
+    DEFAULT_ATTACH_WINDOW_MINUTES
+  );
   return {
     minAttempts: STRATEGY_MIN_ATTEMPTS,
     promotionMin: promotion.value,
     antiPatternMax: DEFAULT_ANTI_PATTERN_MAX,
     promotionMinSource: promotion.source,
-    promotionMinInvalid: promotion.invalid
+    promotionMinInvalid: promotion.invalid,
+    attachWindowMinutes: attachWindow.value,
+    attachWindowSource: attachWindow.source,
+    attachWindowInvalid: attachWindow.invalid
   };
 }
 function resolveRetentionPolicy(env = process.env) {
@@ -16808,6 +16817,7 @@ var STRATEGY_DDL = `
     themis_verdict TEXT,
     retries INTEGER,
     error_class TEXT,
+    blocked_at TEXT,
     created_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_strategy_runs_strategy
@@ -16897,6 +16907,21 @@ var STRATEGY_DDL = `
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
+
+  -- A BLOCK that could not be attributed to a run. Never pruned: a reviewer's
+  -- objection must not vanish without trace.
+  CREATE TABLE IF NOT EXISTS strategy_objections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent TEXT,
+    step_key TEXT,
+    strategy_id TEXT,
+    reason TEXT NOT NULL,
+    verdict TEXT NOT NULL,
+    candidates TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_strategy_objections_created
+    ON strategy_objections(created_at);
 `;
 function readSchemaVersion(db) {
   const table = db.prepare(
@@ -16910,10 +16935,14 @@ function objectNames(db) {
   const rows = db.prepare("SELECT name FROM sqlite_master").all();
   return new Set(rows.map((row) => row.name));
 }
+function tableColumns(db, table) {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all();
+  return rows.map((row) => row.name);
+}
 function ensureStrategySchema(db) {
   const existing = readSchemaVersion(db);
   if (existing === STRATEGY_SCHEMA_VERSION) {
-    return { applied: false, schemaVersion: existing, created: [] };
+    return { applied: false, schemaVersion: existing, created: [], from: existing };
   }
   if (existing !== null && Number(existing) > Number(STRATEGY_SCHEMA_VERSION)) {
     throw new Error(
@@ -16924,6 +16953,9 @@ function ensureStrategySchema(db) {
   db.exec("BEGIN IMMEDIATE");
   try {
     db.exec(STRATEGY_DDL);
+    if (existing !== null && !tableColumns(db, "strategy_runs").includes("blocked_at")) {
+      db.exec("ALTER TABLE strategy_runs ADD COLUMN blocked_at TEXT");
+    }
     db.prepare(
       `INSERT INTO strategy_meta (key, value) VALUES ('schema_version', ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value`
@@ -16940,7 +16972,8 @@ function ensureStrategySchema(db) {
   return {
     applied: true,
     schemaVersion: STRATEGY_SCHEMA_VERSION,
-    created: [...after].filter((name) => !before.has(name)).sort()
+    created: [...after].filter((name) => !before.has(name)).sort(),
+    from: existing
   };
 }
 var ensuredHandles = /* @__PURE__ */ new WeakMap();
@@ -16960,6 +16993,19 @@ function normalizeTimestamp(raw, field) {
   const parsed = Date.parse(raw);
   if (!Number.isFinite(parsed)) throw new Error(`${field} must be an ISO-8601 timestamp`);
   return new Date(parsed).toISOString();
+}
+function truncateUtf8(value, maxBytes) {
+  const encoder = new TextEncoder();
+  if (encoder.encode(value).length <= maxBytes) return { text: value, truncated: false };
+  let used = 0;
+  let text2 = "";
+  for (const char of value) {
+    const size = encoder.encode(char).length;
+    if (used + size > maxBytes) break;
+    used += size;
+    text2 += char;
+  }
+  return { text: text2, truncated: true };
 }
 function readAggregate(db, strategyId, agent) {
   const row = db.prepare(
@@ -17019,17 +17065,21 @@ function recordStrategyRun(workspaceDir, input) {
   const success = requestedSuccess && verdict !== "BLOCK";
   const forcedSuccessZero = requestedSuccess && verdict === "BLOCK";
   const objections = verdict === "BLOCK" ? 1 : 0;
+  const blockedAt = verdict === "BLOCK" ? createdAt : null;
   const filesTouched = Math.max(0, Math.trunc(input.filesTouched ?? 0));
   const durationMs = Math.max(0, Math.trunc(input.durationMs ?? 0));
   const retries = Math.max(0, Math.trunc(input.retries ?? 0));
+  const rawSummary = typeof input.summary === "string" ? input.summary.trim() : "";
+  const summary = rawSummary ? truncateUtf8(rawSummary, MAX_SUMMARY_BYTES) : null;
   let inserted = false;
   db.exec("BEGIN IMMEDIATE");
   try {
     const insert = db.prepare(
       `INSERT INTO strategy_runs (
            run_id, strategy_id, agent, task_type, step_key, wave, slice_count, parallel,
-           duration_ms, files_touched, success, themis_verdict, retries, error_class, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           duration_ms, files_touched, success, themis_verdict, retries, error_class,
+           blocked_at, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(run_id) DO NOTHING`
     ).run(
       runId,
@@ -17046,6 +17096,7 @@ function recordStrategyRun(workspaceDir, input) {
       verdict,
       retries,
       typeof input.errorClass === "string" && input.errorClass.trim() ? input.errorClass.trim() : null,
+      blockedAt,
       createdAt
     );
     inserted = Number(insert.changes ?? 0) > 0;
@@ -17080,15 +17131,14 @@ function recordStrategyRun(workspaceDir, input) {
         createdAt
       );
       recomputeStoredStatus(db, strategyId, agent);
-      const summary = typeof input.summary === "string" ? input.summary.trim() : "";
-      if (summary) {
+      if (summary?.text) {
         db.prepare(
           `INSERT INTO strategy_docs (strategy_id, agent, summary, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?)
            ON CONFLICT(strategy_id, agent) DO UPDATE SET
              summary = excluded.summary,
              updated_at = excluded.updated_at`
-        ).run(strategyId, agent, summary, createdAt, createdAt);
+        ).run(strategyId, agent, summary.text, createdAt, createdAt);
       }
     }
     db.exec("COMMIT");
@@ -17112,6 +17162,7 @@ function recordStrategyRun(workspaceDir, input) {
       success: Number(stored?.success ?? 0) === 1,
       requestedSuccess,
       ...aggregateFields(aggregate, policy),
+      ...summary?.truncated ? { summaryTruncated: true } : {},
       prune: { applied: false, deletedByAge: 0, deletedByRows: 0 }
     };
   }
@@ -17137,6 +17188,7 @@ function recordStrategyRun(workspaceDir, input) {
     requestedSuccess,
     forcedSuccessZero,
     ...aggregateFields(aggregate, policy),
+    ...summary?.truncated ? { summaryTruncated: true } : {},
     prune
   };
 }
@@ -17195,7 +17247,7 @@ function tokenize3(rawQuery) {
 }
 var HIT_COLUMNS = `s.strategy_id AS strategy_id, s.agent AS agent, s.attempts AS attempts,
   s.successes AS successes, s.objections AS objections, s.files_total AS files_total,
-  s.duration_ms_total AS duration_ms_total, s.status AS stored_status,
+  s.duration_ms_total AS duration_ms_total,
   s.first_seen AS first_seen, s.last_seen AS last_seen`;
 function toHit(row, now, policy) {
   if (!row.strategy_id || !row.agent) return null;
@@ -17215,7 +17267,6 @@ function toHit(row, now, policy) {
     failure_rate: attempts > 0 ? (attempts - successes) / attempts : 0,
     decay: computeDecay(lastSeen, now),
     status: computeEffectiveStatus(attempts, successes, policy),
-    stored_status: String(row.stored_status ?? "candidate"),
     first_seen: String(row.first_seen ?? ""),
     last_seen: lastSeen,
     summary: row.summary ?? null,
@@ -17319,6 +17370,7 @@ function strategyStats(workspaceDir, options = {}) {
     const runs = db.prepare("SELECT count(*) AS n FROM strategy_runs").get();
     const bounds = db.prepare("SELECT min(created_at) AS oldest, max(created_at) AS newest FROM strategy_runs").get();
     const meta = db.prepare("SELECT value FROM strategy_meta WHERE key = 'schema_version'").get();
+    const objections = db.prepare("SELECT count(*) AS n, max(created_at) AS latest FROM strategy_objections").get();
     return {
       ok: true,
       schema_version: String(meta?.value ?? "unknown"),
@@ -17328,7 +17380,9 @@ function strategyStats(workspaceDir, options = {}) {
       policy,
       retention,
       oldest_run: bounds?.oldest ?? null,
-      newest_run: bounds?.newest ?? null
+      newest_run: bounds?.newest ?? null,
+      unattributed_objections: Number(objections?.n ?? 0),
+      last_unattributed_objection_at: objections?.latest ?? null
     };
   } catch (err) {
     return {
@@ -17341,9 +17395,62 @@ function strategyStats(workspaceDir, options = {}) {
       retention,
       oldest_run: null,
       newest_run: null,
+      unattributed_objections: 0,
+      last_unattributed_objection_at: null,
       error: err instanceof Error ? err.message : String(err)
     };
   }
+}
+var TARGET_COLUMNS = "id, run_id, strategy_id, agent, success, themis_verdict, blocked_at, created_at";
+function toCandidate(row) {
+  return {
+    runId: row.run_id,
+    strategyId: row.strategy_id,
+    agent: row.agent,
+    createdAt: row.created_at
+  };
+}
+function resolveAttachTarget(db, params) {
+  const select = `SELECT ${TARGET_COLUMNS} FROM strategy_runs`;
+  if (params.stepKey) {
+    const target = db.prepare(`${select} WHERE step_key = ? ORDER BY created_at DESC, id DESC LIMIT 1`).get(params.stepKey);
+    return target ? { target } : { reason: "no_run" };
+  }
+  if (params.strategyId) {
+    const target = db.prepare(
+      `${select} WHERE strategy_id = ? AND (? IS NULL OR agent = ?)
+          ORDER BY created_at DESC, id DESC LIMIT 1`
+    ).get(params.strategyId, params.agent, params.agent);
+    return target ? { target } : { reason: "no_run" };
+  }
+  const windowStart = new Date(
+    params.now.getTime() - params.policy.attachWindowMinutes * 6e4
+  ).toISOString();
+  const rows = db.prepare(
+    `${select} WHERE (? IS NULL OR agent = ?) AND created_at >= ?
+        ORDER BY created_at DESC, id DESC LIMIT 6`
+  ).all(params.agent, params.agent, windowStart);
+  if (rows.length === 0) return { reason: "no_run" };
+  if (rows.length > 1) {
+    return { reason: "ambiguous_target", candidates: rows.slice(0, 5).map(toCandidate) };
+  }
+  const only = rows[0];
+  return only ? { target: only } : { reason: "no_run" };
+}
+function insertUnattributedObjection(db, params) {
+  const info = db.prepare(
+    `INSERT INTO strategy_objections (agent, step_key, strategy_id, reason, verdict, candidates, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    params.agent,
+    params.stepKey,
+    params.strategyId,
+    params.reason,
+    params.verdict,
+    params.candidates && params.candidates.length > 0 ? JSON.stringify(params.candidates) : null,
+    params.createdAt
+  );
+  return Number(info.lastInsertRowid ?? 0);
 }
 function attachThemisVerdict(workspaceDir, input) {
   const verdict = normalizeVerdict(input.verdict);
@@ -17359,49 +17466,51 @@ function attachThemisVerdict(workspaceDir, input) {
   const stepKey = input.stepKey?.trim() || null;
   const strategyId = input.strategyId?.trim() || null;
   const agent = input.agent?.trim() || null;
+  const now = input.now ?? /* @__PURE__ */ new Date();
+  const nowIso = now.toISOString();
   try {
     const db = openStrategyDb(workspaceDir);
-    let target;
-    if (stepKey) {
-      target = db.prepare(
-        `SELECT id, run_id, strategy_id, agent, success, themis_verdict
-             FROM strategy_runs WHERE step_key = ?
-            ORDER BY created_at DESC, id DESC LIMIT 1`
-      ).get(stepKey);
-    } else if (strategyId) {
-      target = db.prepare(
-        `SELECT id, run_id, strategy_id, agent, success, themis_verdict
-             FROM strategy_runs
-            WHERE strategy_id = ? AND (? IS NULL OR agent = ?)
-            ORDER BY created_at DESC, id DESC LIMIT 1`
-      ).get(strategyId, agent, agent);
-    } else {
-      target = db.prepare(
-        `SELECT id, run_id, strategy_id, agent, success, themis_verdict
-             FROM strategy_runs WHERE (? IS NULL OR agent = ?)
-            ORDER BY created_at DESC, id DESC LIMIT 1`
-      ).get(agent, agent);
-    }
-    if (!target) {
-      return { ok: true, attached: false, reason: "no_run" };
-    }
-    const alreadyBlocked = target.themis_verdict === "BLOCK" && verdict === "BLOCK";
-    const forcedSuccessZero = verdict === "BLOCK" && Number(target.success) === 1;
-    const objectionDelta = verdict === "BLOCK" && !alreadyBlocked ? 1 : 0;
     db.exec("BEGIN IMMEDIATE");
+    let resolution;
+    let forcedSuccessZero = false;
+    let objectionDelta = 0;
+    let objectionId;
     try {
-      db.prepare("UPDATE strategy_runs SET themis_verdict = ? WHERE id = ?").run(verdict, target.id);
-      if (forcedSuccessZero) {
-        db.prepare("UPDATE strategy_runs SET success = 0 WHERE id = ?").run(target.id);
-      }
-      if (forcedSuccessZero || objectionDelta > 0) {
-        db.prepare(
-          `UPDATE strategy_stats SET
-             successes = max(0, successes - ?),
-             objections = objections + ?
-           WHERE strategy_id = ? AND agent = ?`
-        ).run(forcedSuccessZero ? 1 : 0, objectionDelta, target.strategy_id, target.agent);
-        recomputeStoredStatus(db, target.strategy_id, target.agent);
+      resolution = resolveAttachTarget(db, { stepKey, strategyId, agent, now, policy });
+      const target2 = resolution.target;
+      if (!target2) {
+        objectionId = insertUnattributedObjection(db, {
+          verdict,
+          stepKey,
+          strategyId,
+          agent,
+          reason: resolution.reason ?? "no_run",
+          candidates: resolution.candidates,
+          createdAt: nowIso
+        });
+      } else {
+        forcedSuccessZero = verdict === "BLOCK" && Number(target2.success) === 1;
+        objectionDelta = verdict === "BLOCK" && target2.blocked_at === null ? 1 : 0;
+        db.prepare("UPDATE strategy_runs SET themis_verdict = ? WHERE id = ?").run(
+          verdict,
+          target2.id
+        );
+        if (verdict === "BLOCK") {
+          db.prepare(
+            `UPDATE strategy_runs
+                SET success = 0, blocked_at = COALESCE(blocked_at, ?)
+              WHERE id = ?`
+          ).run(nowIso, target2.id);
+        }
+        if (forcedSuccessZero || objectionDelta > 0) {
+          db.prepare(
+            `UPDATE strategy_stats SET
+               successes = max(0, successes - ?),
+               objections = objections + ?
+             WHERE strategy_id = ? AND agent = ?`
+          ).run(forcedSuccessZero ? 1 : 0, objectionDelta, target2.strategy_id, target2.agent);
+          recomputeStoredStatus(db, target2.strategy_id, target2.agent);
+        }
       }
       db.exec("COMMIT");
     } catch (err) {
@@ -17410,6 +17519,16 @@ function attachThemisVerdict(workspaceDir, input) {
       } catch {
       }
       throw err;
+    }
+    const target = resolution.target;
+    if (!target) {
+      return {
+        ok: true,
+        attached: false,
+        reason: resolution.reason ?? "no_run",
+        ...resolution.candidates && resolution.candidates.length > 0 ? { candidates: resolution.candidates } : {},
+        ...objectionId !== void 0 ? { unattributedObjectionId: objectionId } : {}
+      };
     }
     const aggregate = readAggregate(db, target.strategy_id, target.agent);
     return {
@@ -21827,7 +21946,7 @@ var COST_AGGREGATE_SQL = {
     HAVING agent IS NOT NULL AND agent != ''`
 };
 var SESSION_TABLES = ["session_v2", "session"];
-function tableColumns(db, table) {
+function tableColumns2(db, table) {
   try {
     const rows = db.prepare(`PRAGMA table_info(${table})`).all();
     return new Set(rows.map((row) => String(row.name)));
@@ -21840,7 +21959,7 @@ function readSessionIndex(db) {
   const children = /* @__PURE__ */ new Map();
   const tables = [];
   for (const table of SESSION_TABLES) {
-    const columns = tableColumns(db, table);
+    const columns = tableColumns2(db, table);
     if (columns.size === 0 || !columns.has("id")) continue;
     tables.push(table);
     const parent = columns.has("parent_id") ? "parent_id" : "NULL";
@@ -21940,7 +22059,7 @@ function queryWithSqlite(dbPath, days, sqlite, options) {
           db.prepare(DATABASE_START_SQL[source]).get()?.databaseStart
         )
       );
-      const hasSessionColumn = tableColumns(db, source).has("session_id");
+      const hasSessionColumn = tableColumns2(db, source).has("session_id");
       const groups = db.prepare(COST_AGGREGATE_SQL[source](hasSessionColumn)).all(since);
       for (const group of groups) {
         const agent = String(group.agent ?? "");
@@ -24726,6 +24845,8 @@ function createReviewVerdictTool(sessionDomain) {
           ...typeof attach.forcedSuccessZero === "boolean" ? { forcedSuccessZero: attach.forcedSuccessZero } : {},
           ...typeof attach.objections === "number" ? { objections: attach.objections } : {},
           ...attach.status ? { status: attach.status } : {},
+          ...typeof attach.unattributedObjectionId === "number" ? { unattributedObjectionId: attach.unattributedObjectionId } : {},
+          ...attach.candidates ? { candidates: attach.candidates } : {},
           ...attach.error ? { error: attach.error } : {}
         };
       }

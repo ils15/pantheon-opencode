@@ -299,16 +299,29 @@ decomposition that keeps failing.
   success rate ≥ `PANTHEON_STRATEGY_PROMOTION_MIN` (0.8); `anti_pattern` needs
   ≥3 attempts and a failure rate > 0.6; everything else is `candidate`. Results
   rank by `success_rate * decay DESC, attempts DESC`, where
-  `decay = max(0, 1 - age_days/90)`. `strategy_effective` is the SQL read model;
-  `pantheon_strategy` reports the thresholds it actually applied
-  (`promotionMinInvalid` is `true` when an unusable env value fell back).
-- **Themis.** `themis_verdict: "BLOCK"` forces `success = 0` and increments
-  `objections`. `pantheon_review_verdict` attaches a `BLOCK` to the latest run
-  for the supplied `stepKey`; re-attaching the same `BLOCK` never double-counts.
+  `decay = max(0, 1 - age_days/90)`. `strategy_effective` is the SQL read model
+  and evaluates the **default** thresholds only; the tool is the authority when
+  an override is set and reports the thresholds it actually applied
+  (`promotionMinInvalid` is `true` when an unusable env value fell back), so no
+  payload carries two promotion answers.
+- **Themis.** `themis_verdict: "BLOCK"` forces `success = 0` and counts one
+  objection per run (`strategy_runs.blocked_at`); `objections <= attempts`
+  always holds, so BLOCK → `APPROVE_WITH_NOTES` → BLOCK never double-counts and
+  re-approving a blocked run never restores its success.
+  `pantheon_review_verdict` attaches a `BLOCK` to the newest run for the supplied
+  `stepKey`, else for the reviewed agent's newest run **inside**
+  `PANTHEON_STRATEGY_ATTACH_WINDOW_MINUTES` (60). Several eligible runs →
+  `attached: false, reason: "ambiguous_target"` with the candidates listed and
+  nothing demoted; an unattributable BLOCK is still persisted in
+  `strategy_objections` and surfaced by `stats` as `unattributed_objections`, and
+  the payload says it was not attributed.
+- **Bounded text.** `summary` is capped at 4 KiB of UTF-8 (cut on a code-point
+  boundary); the record payload then carries `summaryTruncated: true`.
 - **Retention.** `strategy_runs` is pruned every 50th insert and on
   `action: "prune"`, bounded by `PANTHEON_STRATEGY_MAX_AGE_DAYS` (30) and
-  `PANTHEON_STRATEGY_MAX_ROWS` (10000). `strategy_stats` and `strategy_docs` are
-  **never** pruned — the aggregates are the durable knowledge.
+  `PANTHEON_STRATEGY_MAX_ROWS` (10000). `strategy_stats`, `strategy_docs` and
+  the `strategy_objections` trail are **never** pruned — the aggregates are the
+  durable knowledge and an unattributed objection must not disappear.
 - **Isolation.** The tables live beside `memories` in the same `memory.db`, and
   `memory_store`/`memory_search` keep their exact SQL and inputs: they never
   read or return strategy rows, federation never queries them, and the tool is a

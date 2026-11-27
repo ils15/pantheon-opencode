@@ -19,7 +19,18 @@
  * - `candidate`   : everything else
  *
  * `decay = max(0, 1 - age_days/90)`; ranking is `success_rate * decay DESC, attempts DESC`.
- * A `themis_verdict = 'BLOCK'` forces `success = 0` and increments `objections`.
+ * A `themis_verdict = 'BLOCK'` forces `success = 0` and counts **one objection per
+ * run** (`strategy_runs.blocked_at` is the marker), so `objections <= attempts`
+ * always holds and BLOCK → notes → BLOCK cannot count twice.
+ *
+ * ## Attach anchoring (never demote silently)
+ * A verdict attaches to the newest run for the given `stepKey`, else for the
+ * given `strategyId`. An agent-only BLOCK attaches only when exactly one run of
+ * that agent falls inside `PANTHEON_STRATEGY_ATTACH_WINDOW_MINUTES` (60); with
+ * several candidates it returns `attached: false, reason: 'ambiguous_target'`
+ * plus the candidates, and demotes nothing. A BLOCK that cannot be attributed is
+ * still persisted in `strategy_objections` (surfaced by `stats` as
+ * `unattributed_objections`), so a reviewer's objection never vanishes.
  *
  * ## Retention
  * `PANTHEON_STRATEGY_MAX_AGE_DAYS` (30) and `PANTHEON_STRATEGY_MAX_ROWS` (10000)
@@ -40,13 +51,21 @@ import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { openMemoryDb } from './native-memory-tools.ts'
 
-export const STRATEGY_SCHEMA_VERSION = '1'
+export const STRATEGY_SCHEMA_VERSION = '2'
 export const STRATEGY_DECAY_DAYS = 90
 export const STRATEGY_MIN_ATTEMPTS = 3
 export const DEFAULT_PROMOTION_MIN = 0.8
 export const DEFAULT_ANTI_PATTERN_MAX = 0.6
 export const DEFAULT_MAX_AGE_DAYS = 30
 export const DEFAULT_MAX_ROWS = 10_000
+/**
+ * Default recency window for an agent-scoped Themis attach. Outside it (or with
+ * more than one candidate inside it) the target is ambiguous and nothing is
+ * demoted.
+ */
+export const DEFAULT_ATTACH_WINDOW_MINUTES = 60
+/** Hard cap for a stored `strategy_docs.summary` (bytes of UTF-8). */
+export const MAX_SUMMARY_BYTES = 4096
 /** Every Nth successful insert triggers a retention pass. */
 export const STRATEGY_PRUNE_EVERY = 50
 
@@ -61,6 +80,11 @@ export interface StrategyPolicy {
   readonly promotionMinSource: 'default' | 'env'
   /** True when `PANTHEON_STRATEGY_PROMOTION_MIN` was present but unusable. */
   readonly promotionMinInvalid: boolean
+  /** Recency window (minutes) for an agent-scoped Themis attach target. */
+  readonly attachWindowMinutes: number
+  readonly attachWindowSource: 'default' | 'env'
+  /** True when `PANTHEON_STRATEGY_ATTACH_WINDOW_MINUTES` was unusable. */
+  readonly attachWindowInvalid: boolean
 }
 
 export interface RetentionPolicy {
@@ -115,6 +139,8 @@ export interface StrategyRecordResult {
   readonly successes?: number
   readonly objections?: number
   readonly reason?: string
+  /** True when `strategy_docs.summary` exceeded `MAX_SUMMARY_BYTES` and was cut. */
+  readonly summaryTruncated?: boolean
   readonly prune?: StrategyPruneReport
   readonly error?: string
 }
@@ -141,8 +167,6 @@ export interface StrategyQueryHit {
   readonly failure_rate: number
   readonly decay: number
   readonly status: StrategyStatus
-  /** Persisted default-ladder projection stored in `strategy_stats.status`. */
-  readonly stored_status: string
   readonly first_seen: string
   readonly last_seen: string
   readonly summary: string | null
@@ -169,6 +193,9 @@ export interface StrategyStatsResult {
   readonly retention: RetentionPolicy
   readonly oldest_run: string | null
   readonly newest_run: string | null
+  /** BLOCKs that could not be attributed to a run; kept so no signal vanishes. */
+  readonly unattributed_objections: number
+  readonly last_unattributed_objection_at: string | null
   readonly error?: string
 }
 
@@ -190,6 +217,13 @@ export interface ThemisVerdictInput {
   readonly now?: Date
 }
 
+export interface StrategyAttachCandidate {
+  readonly runId: string
+  readonly strategyId: string
+  readonly agent: string
+  readonly createdAt: string
+}
+
 export interface ThemisVerdictResult {
   readonly ok: boolean
   readonly attached: boolean
@@ -199,7 +233,16 @@ export interface ThemisVerdictResult {
   readonly forcedSuccessZero?: boolean
   readonly objections?: number
   readonly status?: StrategyStatus
-  readonly reason?: 'no_run' | 'invalid_verdict'
+  /**
+   * `ambiguous_target`: several runs could be the target (or none is anchored);
+   * nothing was demoted and the callers must supply a `stepKey`/`strategyId`.
+   * `no_run`: there is no candidate at all.
+   */
+  readonly reason?: 'no_run' | 'ambiguous_target' | 'invalid_verdict'
+  /** Up to 5 candidate runs when `reason === 'ambiguous_target'`. */
+  readonly candidates?: StrategyAttachCandidate[]
+  /** Row id in `strategy_objections` when the BLOCK could not be attributed. */
+  readonly unattributedObjectionId?: number
   readonly error?: string
 }
 
@@ -207,6 +250,8 @@ export interface StrategySchemaReport {
   readonly applied: boolean
   readonly schemaVersion: string
   readonly created: string[]
+  /** Previous `schema_version` when this call upgraded an existing store. */
+  readonly from: string | null
 }
 
 // ── Policy resolution ─────────────────────────────────────────────────────
@@ -240,18 +285,25 @@ function readPositiveInt(
 }
 
 /**
- * Resolve D02's ladder. Only the promotion threshold is configurable; an
- * unusable value falls back to the documented default and is reported as
- * invalid instead of silently becoming policy.
+ * Resolve D02's ladder and the attach window. Only the promotion threshold and
+ * the window are configurable; an unusable value falls back to the documented
+ * default and is reported as invalid instead of silently becoming policy.
  */
 export function resolveStrategyPolicy(env: NodeJS.ProcessEnv = process.env): StrategyPolicy {
   const promotion = readUnitInterval(env.PANTHEON_STRATEGY_PROMOTION_MIN, DEFAULT_PROMOTION_MIN)
+  const attachWindow = readPositiveInt(
+    env.PANTHEON_STRATEGY_ATTACH_WINDOW_MINUTES,
+    DEFAULT_ATTACH_WINDOW_MINUTES,
+  )
   return {
     minAttempts: STRATEGY_MIN_ATTEMPTS,
     promotionMin: promotion.value,
     antiPatternMax: DEFAULT_ANTI_PATTERN_MAX,
     promotionMinSource: promotion.source,
     promotionMinInvalid: promotion.invalid,
+    attachWindowMinutes: attachWindow.value,
+    attachWindowSource: attachWindow.source,
+    attachWindowInvalid: attachWindow.invalid,
   }
 }
 
@@ -318,6 +370,7 @@ const STRATEGY_DDL = `
     themis_verdict TEXT,
     retries INTEGER,
     error_class TEXT,
+    blocked_at TEXT,
     created_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_strategy_runs_strategy
@@ -407,6 +460,21 @@ const STRATEGY_DDL = `
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
+
+  -- A BLOCK that could not be attributed to a run. Never pruned: a reviewer's
+  -- objection must not vanish without trace.
+  CREATE TABLE IF NOT EXISTS strategy_objections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent TEXT,
+    step_key TEXT,
+    strategy_id TEXT,
+    reason TEXT NOT NULL,
+    verdict TEXT NOT NULL,
+    candidates TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_strategy_objections_created
+    ON strategy_objections(created_at);
 `
 
 function readSchemaVersion(db: DatabaseSync): string | null {
@@ -427,17 +495,24 @@ function objectNames(db: DatabaseSync): Set<string> {
   return new Set(rows.map((row) => row.name))
 }
 
+function tableColumns(db: DatabaseSync, table: string): string[] {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
+  return rows.map((row) => row.name)
+}
+
 /**
  * Additive, idempotent migration of the strategy surface.
  *
- * Guarded by `strategy_meta.schema_version = '1'`: a re-open (new process or
- * new handle) performs no DDL at all and leaves `PRAGMA schema_version`
- * untouched. DDL + the guard row commit in one transaction.
+ * Guarded by `strategy_meta.schema_version`: a re-open (new process or new
+ * handle) performs no DDL at all and leaves `PRAGMA schema_version` untouched.
+ * An older store is upgraded in place (missing `strategy_runs.blocked_at` is
+ * added, new tables are created) in the same single transaction as the guard
+ * row, so a failure rolls the whole batch back and never leaves a half-store.
  */
 export function ensureStrategySchema(db: DatabaseSync): StrategySchemaReport {
   const existing = readSchemaVersion(db)
   if (existing === STRATEGY_SCHEMA_VERSION) {
-    return { applied: false, schemaVersion: existing, created: [] }
+    return { applied: false, schemaVersion: existing, created: [], from: existing }
   }
   if (existing !== null && Number(existing) > Number(STRATEGY_SCHEMA_VERSION)) {
     throw new Error(
@@ -449,6 +524,10 @@ export function ensureStrategySchema(db: DatabaseSync): StrategySchemaReport {
   db.exec('BEGIN IMMEDIATE')
   try {
     db.exec(STRATEGY_DDL)
+    // v1 → v2: `blocked_at` is the once-per-run objection marker.
+    if (existing !== null && !tableColumns(db, 'strategy_runs').includes('blocked_at')) {
+      db.exec('ALTER TABLE strategy_runs ADD COLUMN blocked_at TEXT')
+    }
     db.prepare(
       `INSERT INTO strategy_meta (key, value) VALUES ('schema_version', ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
@@ -467,6 +546,7 @@ export function ensureStrategySchema(db: DatabaseSync): StrategySchemaReport {
     applied: true,
     schemaVersion: STRATEGY_SCHEMA_VERSION,
     created: [...after].filter((name) => !before.has(name)).sort(),
+    from: existing,
   }
 }
 
@@ -510,6 +590,24 @@ function normalizeTimestamp(raw: string | null | undefined, field: string): stri
   const parsed = Date.parse(raw)
   if (!Number.isFinite(parsed)) throw new Error(`${field} must be an ISO-8601 timestamp`)
   return new Date(parsed).toISOString()
+}
+
+/**
+ * Cut a string to at most `maxBytes` of UTF-8 without splitting a code point,
+ * reporting whether anything was dropped.
+ */
+function truncateUtf8(value: string, maxBytes: number): { text: string; truncated: boolean } {
+  const encoder = new TextEncoder()
+  if (encoder.encode(value).length <= maxBytes) return { text: value, truncated: false }
+  let used = 0
+  let text = ''
+  for (const char of value) {
+    const size = encoder.encode(char).length
+    if (used + size > maxBytes) break
+    used += size
+    text += char
+  }
+  return { text, truncated: true }
 }
 
 function readAggregate(db: DatabaseSync, strategyId: string, agent: string): AggregateRow | null {
@@ -609,9 +707,14 @@ export function recordStrategyRun(
   const success = requestedSuccess && verdict !== 'BLOCK'
   const forcedSuccessZero = requestedSuccess && verdict === 'BLOCK'
   const objections = verdict === 'BLOCK' ? 1 : 0
+  // A run recorded as BLOCK is blocked from birth: `blocked_at` is the
+  // once-per-run objection marker, so a later re-attach never counts again.
+  const blockedAt = verdict === 'BLOCK' ? createdAt : null
   const filesTouched = Math.max(0, Math.trunc(input.filesTouched ?? 0))
   const durationMs = Math.max(0, Math.trunc(input.durationMs ?? 0))
   const retries = Math.max(0, Math.trunc(input.retries ?? 0))
+  const rawSummary = typeof input.summary === 'string' ? input.summary.trim() : ''
+  const summary = rawSummary ? truncateUtf8(rawSummary, MAX_SUMMARY_BYTES) : null
 
   let inserted = false
   db.exec('BEGIN IMMEDIATE')
@@ -620,8 +723,9 @@ export function recordStrategyRun(
       .prepare(
         `INSERT INTO strategy_runs (
            run_id, strategy_id, agent, task_type, step_key, wave, slice_count, parallel,
-           duration_ms, files_touched, success, themis_verdict, retries, error_class, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           duration_ms, files_touched, success, themis_verdict, retries, error_class,
+           blocked_at, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(run_id) DO NOTHING`,
       )
       .run(
@@ -645,6 +749,7 @@ export function recordStrategyRun(
         typeof input.errorClass === 'string' && input.errorClass.trim()
           ? input.errorClass.trim()
           : null,
+        blockedAt,
         createdAt,
       )
     inserted = Number(insert.changes ?? 0) > 0
@@ -681,15 +786,14 @@ export function recordStrategyRun(
       )
       recomputeStoredStatus(db, strategyId, agent)
 
-      const summary = typeof input.summary === 'string' ? input.summary.trim() : ''
-      if (summary) {
+      if (summary?.text) {
         db.prepare(
           `INSERT INTO strategy_docs (strategy_id, agent, summary, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?)
            ON CONFLICT(strategy_id, agent) DO UPDATE SET
              summary = excluded.summary,
              updated_at = excluded.updated_at`,
-        ).run(strategyId, agent, summary, createdAt, createdAt)
+        ).run(strategyId, agent, summary.text, createdAt, createdAt)
       }
     }
     db.exec('COMMIT')
@@ -718,6 +822,7 @@ export function recordStrategyRun(
       success: Number(stored?.success ?? 0) === 1,
       requestedSuccess,
       ...aggregateFields(aggregate, policy),
+      ...(summary?.truncated ? { summaryTruncated: true } : {}),
       prune: { applied: false, deletedByAge: 0, deletedByRows: 0 },
     }
   }
@@ -747,6 +852,7 @@ export function recordStrategyRun(
     requestedSuccess,
     forcedSuccessZero,
     ...aggregateFields(aggregate, policy),
+    ...(summary?.truncated ? { summaryTruncated: true } : {}),
     prune,
   }
 }
@@ -840,7 +946,6 @@ interface RawHitRow {
   objections?: number | null
   files_total?: number | null
   duration_ms_total?: number | null
-  stored_status?: string | null
   first_seen?: string | null
   last_seen?: string | null
   summary?: string | null
@@ -849,7 +954,7 @@ interface RawHitRow {
 
 const HIT_COLUMNS = `s.strategy_id AS strategy_id, s.agent AS agent, s.attempts AS attempts,
   s.successes AS successes, s.objections AS objections, s.files_total AS files_total,
-  s.duration_ms_total AS duration_ms_total, s.status AS stored_status,
+  s.duration_ms_total AS duration_ms_total,
   s.first_seen AS first_seen, s.last_seen AS last_seen`
 
 function toHit(row: RawHitRow, now: Date, policy: StrategyPolicy): StrategyQueryHit | null {
@@ -870,7 +975,6 @@ function toHit(row: RawHitRow, now: Date, policy: StrategyPolicy): StrategyQuery
     failure_rate: attempts > 0 ? (attempts - successes) / attempts : 0,
     decay: computeDecay(lastSeen, now),
     status: computeEffectiveStatus(attempts, successes, policy),
-    stored_status: String(row.stored_status ?? 'candidate'),
     first_seen: String(row.first_seen ?? ''),
     last_seen: lastSeen,
     summary: row.summary ?? null,
@@ -1013,6 +1117,9 @@ export function strategyStats(
     const meta = db.prepare("SELECT value FROM strategy_meta WHERE key = 'schema_version'").get() as
       | { value?: string }
       | undefined
+    const objections = db
+      .prepare('SELECT count(*) AS n, max(created_at) AS latest FROM strategy_objections')
+      .get() as { n?: number; latest?: string | null } | undefined
 
     return {
       ok: true,
@@ -1024,6 +1131,8 @@ export function strategyStats(
       retention,
       oldest_run: bounds?.oldest ?? null,
       newest_run: bounds?.newest ?? null,
+      unattributed_objections: Number(objections?.n ?? 0),
+      last_unattributed_objection_at: objections?.latest ?? null,
     }
   } catch (err) {
     return {
@@ -1036,6 +1145,8 @@ export function strategyStats(
       retention,
       oldest_run: null,
       newest_run: null,
+      unattributed_objections: 0,
+      last_unattributed_objection_at: null,
       error: err instanceof Error ? err.message : String(err),
     }
   }
@@ -1050,12 +1161,132 @@ interface TargetRunRow {
   agent: string
   success: number
   themis_verdict: string | null
+  blocked_at: string | null
+  created_at: string
+}
+
+interface TargetResolution {
+  readonly target?: TargetRunRow
+  readonly reason?: 'no_run' | 'ambiguous_target'
+  readonly candidates?: StrategyAttachCandidate[]
+}
+
+const TARGET_COLUMNS =
+  'id, run_id, strategy_id, agent, success, themis_verdict, blocked_at, created_at'
+
+function toCandidate(row: TargetRunRow): StrategyAttachCandidate {
+  return {
+    runId: row.run_id,
+    strategyId: row.strategy_id,
+    agent: row.agent,
+    createdAt: row.created_at,
+  }
 }
 
 /**
- * Attach a Themis verdict to the **latest** run (by step key, else strategy,
- * else the newest run overall). A `BLOCK` forces `success = 0` and increments
- * `objections`; re-attaching the same `BLOCK` never double-counts.
+ * Resolve the attach target. Callers MUST run this inside the same
+ * `BEGIN IMMEDIATE` transaction as the UPDATE: the `blocked_at`/`success` state
+ * read here is exactly what the update depends on, so reading it outside the
+ * write lock lets two concurrent BLOCKs over-subtract the same run.
+ *
+ * Anchoring rules (never guess, never demote silently):
+ * - `stepKey`    → newest run for that step (any age: the step is the anchor).
+ * - `strategyId` → newest run for that strategy (optionally scoped by agent).
+ * - `agent` only → exactly one run inside the recency window, else
+ *                  `ambiguous_target` with the candidates listed.
+ */
+function resolveAttachTarget(
+  db: DatabaseSync,
+  params: {
+    stepKey: string | null
+    strategyId: string | null
+    agent: string | null
+    now: Date
+    policy: StrategyPolicy
+  },
+): TargetResolution {
+  const select = `SELECT ${TARGET_COLUMNS} FROM strategy_runs`
+
+  if (params.stepKey) {
+    const target = db
+      .prepare(`${select} WHERE step_key = ? ORDER BY created_at DESC, id DESC LIMIT 1`)
+      .get(params.stepKey) as TargetRunRow | undefined
+    return target ? { target } : { reason: 'no_run' }
+  }
+
+  if (params.strategyId) {
+    const target = db
+      .prepare(
+        `${select} WHERE strategy_id = ? AND (? IS NULL OR agent = ?)
+          ORDER BY created_at DESC, id DESC LIMIT 1`,
+      )
+      .get(params.strategyId, params.agent, params.agent) as TargetRunRow | undefined
+    return target ? { target } : { reason: 'no_run' }
+  }
+
+  const windowStart = new Date(
+    params.now.getTime() - params.policy.attachWindowMinutes * 60_000,
+  ).toISOString()
+  const rows = db
+    .prepare(
+      `${select} WHERE (? IS NULL OR agent = ?) AND created_at >= ?
+        ORDER BY created_at DESC, id DESC LIMIT 6`,
+    )
+    .all(params.agent, params.agent, windowStart) as unknown as TargetRunRow[]
+
+  if (rows.length === 0) return { reason: 'no_run' }
+  if (rows.length > 1) {
+    return { reason: 'ambiguous_target', candidates: rows.slice(0, 5).map(toCandidate) }
+  }
+  const only = rows[0]
+  return only ? { target: only } : { reason: 'no_run' }
+}
+
+/** Durable trace for a BLOCK that could not be attributed to any run. */
+function insertUnattributedObjection(
+  db: DatabaseSync,
+  params: {
+    verdict: string
+    stepKey: string | null
+    strategyId: string | null
+    agent: string | null
+    reason: string
+    candidates: readonly StrategyAttachCandidate[] | undefined
+    createdAt: string
+  },
+): number {
+  const info = db
+    .prepare(
+      `INSERT INTO strategy_objections (agent, step_key, strategy_id, reason, verdict, candidates, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      params.agent,
+      params.stepKey,
+      params.strategyId,
+      params.reason,
+      params.verdict,
+      params.candidates && params.candidates.length > 0 ? JSON.stringify(params.candidates) : null,
+      params.createdAt,
+    )
+  return Number(info.lastInsertRowid ?? 0)
+}
+
+/**
+ * Attach a Themis verdict to the run under review.
+ *
+ * Target resolution and the aggregate update run inside one `BEGIN IMMEDIATE`
+ * transaction, so a concurrent writer cannot invalidate the read.
+ *
+ * A `BLOCK` forces `success = 0` and counts **one objection per run** (`blocked_at`
+ * is the marker): BLOCK → APPROVE_WITH_NOTES → BLOCK on the same run never
+ * counts twice, and `objections <= attempts` always holds. Re-approving a
+ * blocked run does not restore its success — the objection stays.
+ *
+ * When the target is not anchored (no `stepKey`/`strategyId`) and the recency
+ * window holds more than one run, nothing is demoted: the result is
+ * `attached: false, reason: 'ambiguous_target'` with the candidates listed, and
+ * the BLOCK is persisted in `strategy_objections` so the signal is never lost.
  */
 export function attachThemisVerdict(
   workspaceDir: string,
@@ -1074,59 +1305,53 @@ export function attachThemisVerdict(
   const stepKey = input.stepKey?.trim() || null
   const strategyId = input.strategyId?.trim() || null
   const agent = input.agent?.trim() || null
+  const now = input.now ?? new Date()
+  const nowIso = now.toISOString()
 
   try {
     const db = openStrategyDb(workspaceDir)
-    let target: TargetRunRow | undefined
-    if (stepKey) {
-      target = db
-        .prepare(
-          `SELECT id, run_id, strategy_id, agent, success, themis_verdict
-             FROM strategy_runs WHERE step_key = ?
-            ORDER BY created_at DESC, id DESC LIMIT 1`,
-        )
-        .get(stepKey) as TargetRunRow | undefined
-    } else if (strategyId) {
-      target = db
-        .prepare(
-          `SELECT id, run_id, strategy_id, agent, success, themis_verdict
-             FROM strategy_runs
-            WHERE strategy_id = ? AND (? IS NULL OR agent = ?)
-            ORDER BY created_at DESC, id DESC LIMIT 1`,
-        )
-        .get(strategyId, agent, agent) as TargetRunRow | undefined
-    } else {
-      target = db
-        .prepare(
-          `SELECT id, run_id, strategy_id, agent, success, themis_verdict
-             FROM strategy_runs WHERE (? IS NULL OR agent = ?)
-            ORDER BY created_at DESC, id DESC LIMIT 1`,
-        )
-        .get(agent, agent) as TargetRunRow | undefined
-    }
-
-    if (!target) {
-      return { ok: true, attached: false, reason: 'no_run' }
-    }
-
-    const alreadyBlocked = target.themis_verdict === 'BLOCK' && verdict === 'BLOCK'
-    const forcedSuccessZero = verdict === 'BLOCK' && Number(target.success) === 1
-    const objectionDelta = verdict === 'BLOCK' && !alreadyBlocked ? 1 : 0
-
     db.exec('BEGIN IMMEDIATE')
+    let resolution: TargetResolution
+    let forcedSuccessZero = false
+    let objectionDelta = 0
+    let objectionId: number | undefined
     try {
-      db.prepare('UPDATE strategy_runs SET themis_verdict = ? WHERE id = ?').run(verdict, target.id)
-      if (forcedSuccessZero) {
-        db.prepare('UPDATE strategy_runs SET success = 0 WHERE id = ?').run(target.id)
-      }
-      if (forcedSuccessZero || objectionDelta > 0) {
-        db.prepare(
-          `UPDATE strategy_stats SET
-             successes = max(0, successes - ?),
-             objections = objections + ?
-           WHERE strategy_id = ? AND agent = ?`,
-        ).run(forcedSuccessZero ? 1 : 0, objectionDelta, target.strategy_id, target.agent)
-        recomputeStoredStatus(db, target.strategy_id, target.agent)
+      resolution = resolveAttachTarget(db, { stepKey, strategyId, agent, now, policy })
+      const target = resolution.target
+
+      if (!target) {
+        objectionId = insertUnattributedObjection(db, {
+          verdict,
+          stepKey,
+          strategyId,
+          agent,
+          reason: resolution.reason ?? 'no_run',
+          candidates: resolution.candidates,
+          createdAt: nowIso,
+        })
+      } else {
+        forcedSuccessZero = verdict === 'BLOCK' && Number(target.success) === 1
+        objectionDelta = verdict === 'BLOCK' && target.blocked_at === null ? 1 : 0
+        db.prepare('UPDATE strategy_runs SET themis_verdict = ? WHERE id = ?').run(
+          verdict,
+          target.id,
+        )
+        if (verdict === 'BLOCK') {
+          db.prepare(
+            `UPDATE strategy_runs
+                SET success = 0, blocked_at = COALESCE(blocked_at, ?)
+              WHERE id = ?`,
+          ).run(nowIso, target.id)
+        }
+        if (forcedSuccessZero || objectionDelta > 0) {
+          db.prepare(
+            `UPDATE strategy_stats SET
+               successes = max(0, successes - ?),
+               objections = objections + ?
+             WHERE strategy_id = ? AND agent = ?`,
+          ).run(forcedSuccessZero ? 1 : 0, objectionDelta, target.strategy_id, target.agent)
+          recomputeStoredStatus(db, target.strategy_id, target.agent)
+        }
       }
       db.exec('COMMIT')
     } catch (err) {
@@ -1136,6 +1361,19 @@ export function attachThemisVerdict(
         /* the transaction may already be gone */
       }
       throw err
+    }
+
+    const target = resolution.target
+    if (!target) {
+      return {
+        ok: true,
+        attached: false,
+        reason: resolution.reason ?? 'no_run',
+        ...(resolution.candidates && resolution.candidates.length > 0
+          ? { candidates: resolution.candidates }
+          : {}),
+        ...(objectionId !== undefined ? { unattributedObjectionId: objectionId } : {}),
+      }
     }
 
     const aggregate = readAggregate(db, target.strategy_id, target.agent)

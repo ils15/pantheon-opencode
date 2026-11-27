@@ -225,6 +225,10 @@ export function createReviewVerdictTool(
             : {}),
           ...(typeof attach.objections === 'number' ? { objections: attach.objections } : {}),
           ...(attach.status ? { status: attach.status } : {}),
+          ...(typeof attach.unattributedObjectionId === 'number'
+            ? { unattributedObjectionId: attach.unattributedObjectionId }
+            : {}),
+          ...(attach.candidates ? { candidates: attach.candidates } : {}),
           ...(attach.error ? { error: attach.error } : {}),
         }
       }

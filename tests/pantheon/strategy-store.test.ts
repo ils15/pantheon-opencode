@@ -9,12 +9,13 @@
  * seeds explicit `created_at`/`last_seen` fixtures.
  */
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync, spawn } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 import { createNativeMemoryAndPersistenceTools } from '../../src/pantheon/native-memory-tools.ts'
 import { createReviewVerdictTool } from '../../src/pantheon/review-verdict.ts'
 import { createStepLedgerTool, readStepLedger } from '../../src/pantheon/step-ledger.ts'
@@ -128,19 +129,33 @@ test('S4-1 strategy tables, view and indexes exist; re-open applies no DDL', () 
       .filter((name) => name.startsWith('strategy_'))
       // FTS5 allocates its own shadow tables (…_fts_data/_idx/_docsize/_config).
       .filter((name) => !/^strategy_docs_fts_/.test(name)),
-    ['strategy_docs', 'strategy_docs_fts', 'strategy_meta', 'strategy_runs', 'strategy_stats'],
+    [
+      'strategy_docs',
+      'strategy_docs_fts',
+      'strategy_meta',
+      'strategy_objections',
+      'strategy_runs',
+      'strategy_stats',
+    ],
   )
   assert.ok(objectNames(db, 'view').includes('strategy_effective'))
   assert.deepEqual(
     objectNames(db, 'index').filter((name) => name.startsWith('idx_strategy_runs_')),
     ['idx_strategy_runs_created', 'idx_strategy_runs_step', 'idx_strategy_runs_strategy'],
   )
+  assert.ok(objectNames(db, 'index').includes('idx_strategy_objections_created'))
+  // `blocked_at` is the once-per-run objection marker (N4).
+  assert.ok(
+    (db.prepare('PRAGMA table_info(strategy_runs)').all() as Array<{ name: string }>).some(
+      (column) => column.name === 'blocked_at',
+    ),
+  )
 
   const meta = db.prepare("SELECT value FROM strategy_meta WHERE key = 'schema_version'").get() as
     | { value?: string }
     | undefined
   assert.equal(meta?.value, STRATEGY_SCHEMA_VERSION)
-  assert.equal(STRATEGY_SCHEMA_VERSION, '1')
+  assert.equal(STRATEGY_SCHEMA_VERSION, '2')
 
   // The FTS mirror is wired exactly like memories_fts: external content + 3 triggers.
   const triggers = objectNames(db, 'trigger').filter((name) => name.startsWith('strategy_docs_'))
@@ -155,8 +170,9 @@ test('S4-1 strategy tables, view and indexes exist; re-open applies no DDL', () 
   const raw = new DatabaseSync(join(dir, '.pantheon', 'memory', 'memory.db'))
   try {
     const report = ensureStrategySchema(raw)
-    assert.equal(report.applied, false, 'schema_version=1 must short-circuit the migration')
+    assert.equal(report.applied, false, 'schema_version=2 must short-circuit the migration')
     assert.equal(report.schemaVersion, STRATEGY_SCHEMA_VERSION)
+    assert.equal(report.from, STRATEGY_SCHEMA_VERSION)
     assert.equal(schemaVersion(raw), before, 'no DDL means no schema_version bump')
     assert.equal(
       db.prepare('SELECT count(*) AS n FROM strategy_meta').get()?.n,
@@ -166,6 +182,34 @@ test('S4-1 strategy tables, view and indexes exist; re-open applies no DDL', () 
   } finally {
     raw.close()
   }
+})
+
+test('S4-1b a v1 store upgrades in place to v2, then re-open is a no-op', () => {
+  const dir = workspace()
+  const db = openStrategyDb(dir)
+  // Rewind to a v1-shaped store: no objection table, no blocked_at marker.
+  db.exec('DROP TABLE strategy_objections')
+  db.exec('ALTER TABLE strategy_runs DROP COLUMN blocked_at')
+  db.prepare("UPDATE strategy_meta SET value = '1' WHERE key = 'schema_version'").run()
+
+  const upgraded = ensureStrategySchema(db)
+  assert.equal(upgraded.applied, true)
+  assert.equal(upgraded.from, '1')
+  assert.equal(upgraded.schemaVersion, STRATEGY_SCHEMA_VERSION)
+  assert.ok(objectNames(db, 'table').includes('strategy_objections'))
+  assert.ok(
+    (db.prepare('PRAGMA table_info(strategy_runs)').all() as Array<{ name: string }>).some(
+      (column) => column.name === 'blocked_at',
+    ),
+  )
+  assert.equal(
+    db.prepare("SELECT value FROM strategy_meta WHERE key = 'schema_version'").get()?.value,
+    STRATEGY_SCHEMA_VERSION,
+  )
+
+  const again = ensureStrategySchema(db)
+  assert.equal(again.applied, false)
+  assert.equal(again.from, STRATEGY_SCHEMA_VERSION)
 })
 
 // ── S4-2: ladder ──────────────────────────────────────────────────────────
@@ -587,6 +631,359 @@ test('S4-7 a Themis BLOCK forces success=0 and increments objections exactly onc
   })
   assert.equal(badVerdict.ok, false, 'an unparseable verdict is reported, never silently dropped')
   assert.match(String(badVerdict.error), /themisVerdict/)
+})
+
+// ── N2: a step-less BLOCK never demotes an unrelated strategy ─────────────
+
+test('N2 a step-less BLOCK refuses to guess instead of demoting an unrelated strategy', () => {
+  const dir = workspace()
+  const now = new Date('2026-06-01T12:00:00.000Z')
+  const minutesAgo = (minutes: number) => iso(new Date(now.getTime() - minutes * 60_000))
+
+  // A proven strategy and a more recent, different strategy for the same agent.
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    recordStrategyRun(dir, {
+      strategyId: 'prod-merge',
+      agent: 'hermes',
+      success: true,
+      stepKey: `pm-${attempt}`,
+      attempt: 1,
+      createdAt: minutesAgo(30),
+    })
+  }
+  recordStrategyRun(dir, {
+    strategyId: 'spike-docs',
+    agent: 'hermes',
+    success: true,
+    stepKey: 'sd-1',
+    attempt: 1,
+    createdAt: minutesAgo(5),
+  })
+
+  const beforeHit = queryStrategies(dir, { strategyId: 'prod-merge', now }).results[0]
+  assert.equal(beforeHit?.status, 'proven')
+
+  const ambiguous = attachThemisVerdict(dir, { verdict: 'BLOCK', agent: 'hermes', now })
+  assert.equal(ambiguous.ok, true)
+  assert.equal(ambiguous.attached, false)
+  assert.equal(ambiguous.reason, 'ambiguous_target')
+  assert.ok((ambiguous.unattributedObjectionId ?? 0) > 0)
+  const candidateStrategies = new Set((ambiguous.candidates ?? []).map((c) => c.strategyId))
+  assert.deepEqual([...candidateStrategies].sort(), ['prod-merge', 'spike-docs'])
+  assert.ok((ambiguous.candidates ?? []).length <= 5)
+
+  // Nothing was demoted: the unrelated `proven` strategy keeps its sample.
+  const afterHit = queryStrategies(dir, { strategyId: 'prod-merge', now }).results[0]
+  assert.equal(afterHit?.status, 'proven')
+  assert.equal(afterHit?.successes, 3)
+  assert.equal(afterHit?.objections, 0)
+
+  // An anchor attaches to exactly that run — no guessing involved.
+  const anchored = attachThemisVerdict(dir, { verdict: 'BLOCK', stepKey: 'sd-1', now })
+  assert.equal(anchored.attached, true)
+  assert.equal(anchored.runId, 'sd-1:1')
+
+  // One run inside the recency window is unambiguous and does attach.
+  recordStrategyRun(dir, {
+    strategyId: 'fresh-only',
+    agent: 'themis',
+    success: true,
+    stepKey: 'fo-1',
+    attempt: 1,
+    createdAt: minutesAgo(2),
+  })
+  const single = attachThemisVerdict(dir, { verdict: 'BLOCK', agent: 'themis', now })
+  assert.equal(single.attached, true)
+  assert.equal(single.runId, 'fo-1:1')
+
+  // A run outside the window is not a candidate: nothing is demoted, and the
+  // BLOCK is still recorded as unattributed.
+  recordStrategyRun(dir, {
+    strategyId: 'stale-only',
+    agent: 'iris',
+    success: true,
+    stepKey: 'st-1',
+    attempt: 1,
+    createdAt: minutesAgo(180),
+  })
+  const stale = attachThemisVerdict(dir, { verdict: 'BLOCK', agent: 'iris', now })
+  assert.equal(stale.attached, false)
+  assert.equal(stale.reason, 'no_run')
+  assert.ok((stale.unattributedObjectionId ?? 0) > 0)
+  assert.equal(queryStrategies(dir, { strategyId: 'stale-only', now }).results[0]?.objections, 0)
+
+  // The window itself is policy, and it is reported.
+  withEnv({ PANTHEON_STRATEGY_ATTACH_WINDOW_MINUTES: '240' }, () => {
+    const policy = resolveStrategyPolicy()
+    assert.equal(policy.attachWindowMinutes, 240)
+    assert.equal(policy.attachWindowSource, 'env')
+    const widened = attachThemisVerdict(dir, { verdict: 'BLOCK', agent: 'iris', now })
+    assert.equal(widened.attached, true)
+  })
+  withEnv({ PANTHEON_STRATEGY_ATTACH_WINDOW_MINUTES: 'nope' }, () => {
+    const policy = resolveStrategyPolicy()
+    assert.equal(policy.attachWindowMinutes, 60)
+    assert.equal(policy.attachWindowInvalid, true)
+  })
+})
+
+// ── N1: the attach target is resolved inside the write transaction ─────────
+
+async function waitForFile(path: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!existsSync(path)) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${path}`)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+
+test('N1 a concurrent BLOCK cannot be double-counted (target read inside the write lock)', async () => {
+  const dir = workspace()
+  recordStrategyRun(dir, {
+    strategyId: 'race-strategy',
+    agent: 'hermes',
+    success: true,
+    stepKey: 'race',
+    attempt: 1,
+    createdAt: iso(new Date()),
+  })
+
+  const dbPath = join(dir, '.pantheon', 'memory', 'memory.db')
+  const signal = join(dir, '.child-locked')
+  const fixture = fileURLToPath(new URL('./fixtures/strategy-attach-race.mts', import.meta.url))
+
+  const child = spawn(
+    process.execPath,
+    ['--import', 'tsx', fixture, dbPath, signal, 'race:1', 'race-strategy', 'hermes', '1200'],
+    { stdio: 'pipe' },
+  )
+  let stderr = ''
+  child.stderr?.on('data', (chunk) => {
+    stderr += String(chunk)
+  })
+  const exited = new Promise<void>((resolve, reject) => {
+    child.on('error', reject)
+    child.on('close', (code) => {
+      if (code === 0) resolve()
+      else reject(new Error(`race fixture exited ${String(code)}: ${stderr}`))
+    })
+  })
+
+  try {
+    // The fixture holds the write lock and has applied its BLOCK (uncommitted).
+    await waitForFile(signal, 20_000)
+    const res = attachThemisVerdict(dir, { verdict: 'BLOCK', stepKey: 'race', now: new Date() })
+    assert.equal(res.ok, true)
+    assert.equal(res.attached, true)
+    assert.equal(
+      res.forcedSuccessZero,
+      false,
+      'a stale target read would subtract a success the other writer already removed',
+    )
+    assert.equal(res.objections, 1, 'a stale target read would count a second objection')
+  } finally {
+    await exited.catch(() => {})
+  }
+
+  const hit = queryStrategies(dir, { strategyId: 'race-strategy' }).results[0]
+  assert.equal(hit?.successes, 0)
+  assert.equal(hit?.objections, 1)
+  assert.equal(hit?.attempts, 1)
+  assert.ok(Number(hit?.objections) <= Number(hit?.attempts), 'objections <= attempts always')
+})
+
+// ── N3: an unattributable BLOCK is durable, never a vanishing signal ───────
+
+test('N3 an unattributable BLOCK is persisted and surfaced in stats', () => {
+  const dir = workspace()
+  const now = new Date('2026-06-01T12:00:00.000Z')
+
+  const res = attachThemisVerdict(dir, { verdict: 'BLOCK', stepKey: 'ghost', now })
+  assert.equal(res.attached, false)
+  assert.equal(res.reason, 'no_run')
+  assert.ok((res.unattributedObjectionId ?? 0) > 0)
+
+  const db = openStrategyDb(dir)
+  const row = db
+    .prepare(
+      'SELECT agent, step_key, strategy_id, reason, verdict FROM strategy_objections WHERE id = ?',
+    )
+    .get(res.unattributedObjectionId) as Json
+  assert.deepEqual(
+    { ...row },
+    { agent: null, step_key: 'ghost', strategy_id: null, reason: 'no_run', verdict: 'BLOCK' },
+  )
+
+  const stats = strategyStats(dir, { now })
+  assert.equal(stats.unattributed_objections, 1)
+  assert.equal(typeof stats.last_unattributed_objection_at, 'string')
+
+  // Retention never removes the objection trail.
+  const pruned = pruneStrategyRuns(dir, { now: new Date(now.getTime() + 400 * DAY_MS) })
+  assert.equal(pruned.ok, true)
+  assert.equal(strategyStats(dir).unattributed_objections, 1)
+})
+
+// ── N4: objections count a blocked run once ────────────────────────────────
+
+test('N4 objections count a blocked run once across verdict transitions', () => {
+  const dir = workspace()
+  const now = new Date('2026-06-01T12:00:00.000Z')
+
+  recordStrategyRun(dir, {
+    strategyId: 'transition',
+    agent: 'hermes',
+    success: true,
+    stepKey: 'n4',
+    attempt: 1,
+    createdAt: iso(now),
+  })
+
+  const first = attachThemisVerdict(dir, { verdict: 'BLOCK', stepKey: 'n4', now })
+  assert.equal(first.attached, true)
+  assert.equal(first.forcedSuccessZero, true)
+  assert.equal(first.objections, 1)
+
+  const note = attachThemisVerdict(dir, { verdict: 'APPROVE_WITH_NOTES', stepKey: 'n4', now })
+  assert.equal(note.attached, true)
+  assert.equal(note.objections, 1, 'a later non-blocking verdict does not erase the objection')
+
+  const second = attachThemisVerdict(dir, { verdict: 'BLOCK', stepKey: 'n4', now })
+  assert.equal(second.objections, 1, 'BLOCK -> notes -> BLOCK must not count twice on one run')
+  assert.equal(second.forcedSuccessZero, false)
+
+  const hit = queryStrategies(dir, { strategyId: 'transition', now }).results[0]
+  assert.equal(hit?.successes, 0, 're-approving a blocked run never restores its success')
+  assert.equal(hit?.objections, 1)
+  assert.ok(Number(hit?.objections) <= Number(hit?.attempts))
+
+  // Another blocked run is a new objection.
+  recordStrategyRun(dir, {
+    strategyId: 'transition',
+    agent: 'hermes',
+    success: true,
+    stepKey: 'n4b',
+    attempt: 1,
+    createdAt: iso(now),
+  })
+  const third = attachThemisVerdict(dir, { verdict: 'BLOCK', stepKey: 'n4b', now })
+  assert.equal(third.objections, 2)
+})
+
+// ── N5: one promotion answer per hit ───────────────────────────────────────
+
+test('N5 a hit reports exactly one promotion answer — the policy it applied', () => {
+  const dir = workspace()
+  const now = new Date('2026-06-01T12:00:00.000Z')
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    recordStrategyRun(dir, {
+      strategyId: 'edge',
+      agent: 'athena',
+      success: attempt <= 4,
+      createdAt: iso(now),
+    })
+  }
+
+  withEnv({ PANTHEON_STRATEGY_PROMOTION_MIN: '0.9' }, () => {
+    const query = queryStrategies(dir, { strategyId: 'edge', now })
+    const hit = query.results[0]
+    assert.equal(hit?.status, 'candidate')
+    assert.equal(query.policy.promotionMin, 0.9)
+    assert.equal(
+      Object.keys(hit as object).includes('stored_status'),
+      false,
+      'a persisted default projection must never travel with the resolved status',
+    )
+  })
+})
+
+// ── N6: summary is bounded ─────────────────────────────────────────────────
+
+test('N6 a summary is capped at 4 KiB and reports that it was truncated', () => {
+  const dir = workspace()
+  const now = new Date('2026-06-01T12:00:00.000Z')
+  const db = openStrategyDb(dir)
+  const readSummary = (strategyId: string): string =>
+    (
+      db.prepare('SELECT summary FROM strategy_docs WHERE strategy_id = ?').get(strategyId) as {
+        summary: string
+      }
+    ).summary
+
+  const long = recordStrategyRun(dir, {
+    strategyId: 'long-summary',
+    agent: 'hermes',
+    success: true,
+    summary: 'x'.repeat(10_000),
+    createdAt: iso(now),
+  })
+  assert.equal(long.summaryTruncated, true)
+  assert.ok(Buffer.byteLength(readSummary('long-summary'), 'utf8') <= 4096)
+
+  // Multibyte input is cut on a code-point boundary, never mid-character.
+  const multibyte = recordStrategyRun(dir, {
+    strategyId: 'multibyte-summary',
+    agent: 'hermes',
+    success: true,
+    summary: 'é'.repeat(4000),
+    createdAt: iso(now),
+  })
+  assert.equal(multibyte.summaryTruncated, true)
+  const stored = readSummary('multibyte-summary')
+  assert.equal(stored.includes('\uFFFD'), false)
+  assert.ok(Buffer.byteLength(stored, 'utf8') <= 4096)
+
+  const short = recordStrategyRun(dir, {
+    strategyId: 'short-summary',
+    agent: 'hermes',
+    success: true,
+    summary: 'small',
+    createdAt: iso(now),
+  })
+  assert.equal(short.summaryTruncated, undefined)
+  assert.equal(readSummary('short-summary'), 'small')
+})
+
+// ── N7: a failed migration rolls back and is reported loudly ───────────────
+
+test('N7 a failed migration rolls back the whole batch and the recorder reports it', () => {
+  const dir = workspace()
+  const memoryDir = join(dir, '.pantheon', 'memory')
+  mkdirSync(memoryDir, { recursive: true })
+  const dbPath = join(memoryDir, 'memory.db')
+
+  const raw = new DatabaseSync(dbPath)
+  try {
+    // Inject a guard table that rejects the new version: the INSERT inside the
+    // migration fails after the DDL already ran.
+    raw.exec(
+      `CREATE TABLE strategy_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL,
+        CHECK (value <> '${STRATEGY_SCHEMA_VERSION}'))`,
+    )
+    assert.throws(() => ensureStrategySchema(raw), /CHECK|constraint/i)
+    const surviving = (
+      raw.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'strategy_%'").all() as Array<{
+        name: string
+      }>
+    ).map((row) => row.name)
+    assert.deepEqual(surviving, ['strategy_meta'], 'the whole batch must roll back')
+    assert.equal(
+      (raw.prepare('SELECT count(*) AS n FROM strategy_meta').get() as { n: number }).n,
+      0,
+      'no guard row survives a failed migration',
+    )
+  } finally {
+    raw.close()
+  }
+
+  const recorded = recordStrategyRunSafe(dir, {
+    strategyId: 'after-failed-migration',
+    agent: 'hermes',
+    success: true,
+  })
+  assert.equal(recorded.ok, false)
+  assert.equal(recorded.recorded, false)
+  assert.match(String(recorded.error), /CHECK|constraint/i)
 })
 
 // ── Recorder safety: a broken recorder never fails a step ─────────────────
