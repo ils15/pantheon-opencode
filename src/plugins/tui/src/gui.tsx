@@ -801,8 +801,32 @@ export default Plugin.define({
     const cockpitTab: PanelTab = {
       id: 'pantheon-cockpit',
       title: 'Pantheon',
-      icon: 'pantheon',
       pinned: true,
+    }
+
+    const openCockpit = () => {
+      const session = ctx.sessions.current()
+      if (session) {
+        ctx.layout.open(`${ctx.id}:pantheon-cockpit`, session, { focus: true })
+      } else {
+        ctx.dialogs.open((dialog) => (
+          <div style={{ padding: '12px' }}>
+            <div
+              style={{
+                display: 'flex',
+                'justify-content': 'space-between',
+                'margin-bottom': '8px',
+              }}
+            >
+              <strong>Pantheon Cockpit</strong>
+              <button type="button" onClick={() => dialog.close()}>
+                Close
+              </button>
+            </div>
+            <PantheonCockpitView ctx={ctx} directory={() => ''} />
+          </div>
+        ))
+      }
     }
 
     ctx.add(Panel, () => ({
@@ -830,10 +854,7 @@ export default Plugin.define({
               id: 'open-cockpit',
               label: 'Open Pantheon Cockpit',
               detail: `${sharedSnapshot().messages.length} msgs`,
-              run: () => {
-                const screen = ctx.screen.current()
-                if (screen) screen.panel.open({ tab: 'pantheon-cockpit' })
-              },
+              run: openCockpit,
             },
             {
               id: 'open-settings',
@@ -876,10 +897,7 @@ export default Plugin.define({
       title: 'Open Pantheon Cockpit',
       description: 'Open Olympus Topology, Agora Board, and Ephemeral Workers',
       slash: { name: 'pantheon-cockpit' },
-      run: () => {
-        const screen = ctx.screen.current()
-        if (screen) screen.panel.open({ tab: 'pantheon-cockpit' })
-      },
+      run: openCockpit,
     }))
 
     ctx.add(Command, () => ({

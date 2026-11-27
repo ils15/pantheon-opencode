@@ -13,6 +13,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+## [v2.3.4] - 2026-11-26
+
+### Fixed
+
+- **gui** — fixed `/pantheon-cockpit` and `ComposerPill` opening via `ctx.layout.open("${ctx.id}:pantheon-cockpit", session)` (with `ctx.dialogs.open` fallback) and removed invalid `PanelTab.icon`.
+
 ## [v2.3.3] - 2026-11-26
 
 ### 🆕 What's New

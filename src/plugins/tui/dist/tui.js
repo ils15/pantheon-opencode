@@ -6357,7 +6357,7 @@ async function readChangelogForBundle(bundleUrl) {
 }
 /** The ambient build-time version, or null outside a tsdown build. */
 function embeddedVersion() {
-	return "2.3.3";
+	return "2.3.4";
 }
 /**
 * Resolve the running Pantheon version for the what's-new window: the plugin
@@ -6599,7 +6599,7 @@ function persistUpdateCheckState(previous, latest) {
 	} catch {}
 }
 function resolveRunningVersion() {
-	return "2.3.3";
+	return "2.3.4";
 }
 const VALUE_WIDTH = 32;
 function SettingsWindow(props) {
@@ -11719,7 +11719,7 @@ function updateCheckStateFile() {
 *  version via toast, and keeps the persistent Home/Sidebar badge updated. */
 async function checkForPantheonUpdate(context) {
 	const { statePath, readState } = updateCheckStateFile();
-	const currentVersion = "2.3.3";
+	const currentVersion = "2.3.4";
 	const initialState = readState();
 	setAvailableUpdateVersion(resolveCachedAvailableUpdate(currentVersion, initialState));
 	const nowMs = Date.now();
@@ -12577,7 +12577,7 @@ function Sidebar(props) {
 			setProp(_el$13, "paddingLeft", 1);
 			setProp(_el$13, "paddingRight", 1);
 			setProp(_el$14, "attributes", 1);
-			insert(_el$14, `Pantheon v2.3.3`);
+			insert(_el$14, `Pantheon v2.3.4`);
 			insert(_el$15, () => `Erro no painel: ${err?.message ?? "desconhecido"}`);
 			effect((_p$) => {
 				var _v$3 = text(), _v$4 = muted();
@@ -12631,9 +12631,9 @@ function SidebarInner(props) {
 	};
 	const failedSuffix = () => failedSuffixText(dispatchView()?.failures);
 	const header = () => tuiPrefs().sidebar.header;
-	const availableUpdate = useAvailableUpdate("2.3.3");
+	const availableUpdate = useAvailableUpdate("2.3.4");
 	const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
-	const updateBadge = () => formatUpdateBadge("2.3.3", availableUpdate(), { isPt: isPt() });
+	const updateBadge = () => formatUpdateBadge("2.3.4", availableUpdate(), { isPt: isPt() });
 	const artifacts = useWorkspaceArtifacts(context);
 	const activePlan = () => artifacts().find((entry) => entry.kind === "plan");
 	return (() => {
@@ -12653,7 +12653,7 @@ function SidebarInner(props) {
 			get children() {
 				var _el$18 = createElement("text");
 				setProp(_el$18, "attributes", 1);
-				insert(_el$18, `Pantheon v2.3.3`);
+				insert(_el$18, `Pantheon v2.3.4`);
 				effect((_$p) => setProp(_el$18, "fg", text(), _$p));
 				return _el$18;
 			}
@@ -13842,13 +13842,13 @@ function useWorkspaceArtifacts(context) {
 *  this keeps a compact Pantheon line visible on the home footer meanwhile. */
 function HomeStatus(props) {
 	const preset = useActivePreset(props.context).preset;
-	const availableUpdate = useAvailableUpdate("2.3.3");
+	const availableUpdate = useAvailableUpdate("2.3.4");
 	const artifacts = useWorkspaceArtifacts(props.context);
 	const activePlan = () => artifacts().find((entry) => entry.kind === "plan");
 	const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
 	const accent = () => resolveAccentColor(tuiDraftPreview()?.theme?.accent ?? tuiPrefs().theme?.accent, props.context.theme);
 	const muted = () => props.context.theme?.text?.muted ?? props.context.theme?.text?.base;
-	const updateBadge = () => formatUpdateBadge("2.3.3", availableUpdate(), {
+	const updateBadge = () => formatUpdateBadge("2.3.4", availableUpdate(), {
 		isPt: isPt(),
 		compact: true
 	});
@@ -13861,7 +13861,7 @@ function HomeStatus(props) {
 			insertNode(_el$135, _el$136);
 			insertNode(_el$135, _el$139);
 			setProp(_el$135, "flexDirection", "row");
-			insert(_el$136, () => `Pantheon v2.3.3${preset().name ? ` ▸ ${preset().name}` : ""}`);
+			insert(_el$136, () => `Pantheon v2.3.4${preset().name ? ` ▸ ${preset().name}` : ""}`);
 			insert(_el$135, createComponent(Show, {
 				get when() {
 					return updateBadge();
@@ -13994,7 +13994,7 @@ function PromptFooter(props) {
 const plugin = Plugin.define({
 	id: "pantheon.tui",
 	setup(context) {
-		const currentVer = "2.3.3";
+		const currentVer = "2.3.4";
 		const globalState = globalThis;
 		const existing = globalState[SINGLETON];
 		if (existing) {

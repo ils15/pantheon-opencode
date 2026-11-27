@@ -35,7 +35,8 @@ var _tmpl$10 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style="padding:8px
 var _tmpl$11 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=opacity:0.6>No active background jobs.`);
 var _tmpl$12 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style="display:flex;justify-content:space-between;padding:8px;border-radius:6px;border:1px solid var(--border-weak-base, #2e2e32)"><span></span><span>`);
 var _tmpl$13 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=opacity:0.8>`);
-var _tmpl$14 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=padding:16px;display:flex;flex-direction:column;gap:12px><h2 style=font-size:16px;font-weight:600>Pantheon v2.3.3</h2><p style=font-size:13px;opacity:0.8></p><p style=font-size:13px;opacity:0.8>Olympus Topology, interactive Agora Board, and Ephemeral Worker telemetry are active in the Pantheon side panel.`);
+var _tmpl$14 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=padding:12px><div style=display:flex;justify-content:space-between;margin-bottom:8px><strong>Pantheon Cockpit</strong><button type=button>Close`);
+var _tmpl$15 = /*#__PURE__*/ (0, solid_js_web.template)(`<div style=padding:16px;display:flex;flex-direction:column;gap:12px><h2 style=font-size:16px;font-weight:600>Pantheon v2.3.3</h2><p style=font-size:13px;opacity:0.8></p><p style=font-size:13px;opacity:0.8>Olympus Topology, interactive Agora Board, and Ephemeral Worker telemetry are active in the Pantheon side panel.`);
 const PantheonBridge = _opencode_plugin_gui.Ipc.define({
 	id: "pantheon-opencode.bridge",
 	methods: {
@@ -481,8 +482,20 @@ var gui_default = _opencode_plugin_gui.Plugin.define({
 		const cockpitTab = {
 			id: "pantheon-cockpit",
 			title: "Pantheon",
-			icon: "pantheon",
 			pinned: true
+		};
+		const openCockpit = () => {
+			const session = ctx.sessions.current();
+			if (session) ctx.layout.open(`${ctx.id}:pantheon-cockpit`, session, { focus: true });
+			else ctx.dialogs.open((dialog) => (() => {
+				var _el$55 = _tmpl$14(), _el$58 = _el$55.firstChild.firstChild.nextSibling;
+				_el$58.$$click = () => dialog.close();
+				(0, solid_js_web.insert)(_el$55, (0, solid_js_web.createComponent)(PantheonCockpitView, {
+					ctx,
+					directory: () => ""
+				}), null);
+				return _el$55;
+			})());
 		};
 		ctx.add(_opencode_plugin_gui.Panel, () => ({
 			id: "cockpit",
@@ -505,10 +518,7 @@ var gui_default = _opencode_plugin_gui.Plugin.define({
 						id: "open-cockpit",
 						label: "Open Pantheon Cockpit",
 						detail: `${sharedSnapshot().messages.length} msgs`,
-						run: () => {
-							const screen = ctx.screen.current();
-							if (screen) screen.panel.open({ tab: "pantheon-cockpit" });
-						}
+						run: openCockpit
 					}, {
 						id: "open-settings",
 						label: "Open Pantheon Settings",
@@ -528,10 +538,10 @@ var gui_default = _opencode_plugin_gui.Plugin.define({
 				keywords: "pantheon cockpit swarm ephemeral todo"
 			}],
 			render: () => (() => {
-				var _el$55 = _tmpl$14(), _el$57 = _el$55.firstChild.nextSibling;
-				_el$57.nextSibling;
-				(0, solid_js_web.insert)(_el$57, () => `Spend today: $${sharedSnapshot().todayCostUSD.toFixed(2)} · 30d: $${sharedSnapshot().monthCostUSD.toFixed(2)} · Gate: ${sharedSnapshot().gateMode}`);
-				return _el$55;
+				var _el$59 = _tmpl$15(), _el$61 = _el$59.firstChild.nextSibling;
+				_el$61.nextSibling;
+				(0, solid_js_web.insert)(_el$61, () => `Spend today: $${sharedSnapshot().todayCostUSD.toFixed(2)} · 30d: $${sharedSnapshot().monthCostUSD.toFixed(2)} · Gate: ${sharedSnapshot().gateMode}`);
+				return _el$59;
 			})()
 		}));
 		ctx.add(_opencode_plugin_gui.Command, () => ({
@@ -539,10 +549,7 @@ var gui_default = _opencode_plugin_gui.Plugin.define({
 			title: "Open Pantheon Cockpit",
 			description: "Open Olympus Topology, Agora Board, and Ephemeral Workers",
 			slash: { name: "pantheon-cockpit" },
-			run: () => {
-				const screen = ctx.screen.current();
-				if (screen) screen.panel.open({ tab: "pantheon-cockpit" });
-			}
+			run: openCockpit
 		}));
 		ctx.add(_opencode_plugin_gui.Command, () => ({
 			id: "settings",
