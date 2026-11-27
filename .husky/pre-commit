@@ -1,8 +1,47 @@
 #!/usr/bin/env sh
-# Delegate to the pre-commit framework (Python) so it keeps running through
-# husky's hooks dir. Husky v9 sets core.hooksPath = .husky/_ — git no longer
-# consults .git/hooks/pre-commit, so the framework must be invoked from here.
-# Mirrors the generated .git/hooks/pre-commit shim from `pre-commit install`.
+# Pantheon git hook — pre-commit (TRACKED; core.hooksPath = .husky).
+#
+# This file is the hook git runs directly. It used to be reached only through
+# husky's generated `.husky/_/pre-commit` -> `_/h` shim; `.husky/_` is
+# generated/untracked, so a fresh `git worktree add` had no hooks at all and git
+# skipped them SILENTLY (v1.0 -> 2.3.4). The preamble below reproduces husky's
+# `_/h` behaviour, so no generated directory and no shim is needed:
+#   * HUSKY=2 traces, HUSKY=0 opts out (husky parity);
+#   * husky's init.sh is still sourced when present;
+#   * the checkout's node_modules/.bin goes first on PATH;
+#   * the framework is exec'd and its exit code decides the commit.
+
+[ "${HUSKY-}" = "2" ] && set -x
+
+if [ -f "$HOME/.huskyrc" ]; then
+	echo "husky - '~/.huskyrc' is DEPRECATED, please move your code to ~/.config/husky/init.sh"
+fi
+husky_init="${XDG_CONFIG_HOME:-$HOME/.config}/husky/init.sh"
+[ -f "$husky_init" ] && . "$husky_init"
+
+[ "${HUSKY-}" = "0" ] && exit 0
+
+PATH="node_modules/.bin:$PATH"
+export PATH
+
+# A fresh `git worktree add` has no node_modules: it is untracked by design, so
+# the framework's local hooks (secret-scan, generated-artifacts via esbuild, the
+# TUI rebuild) cannot run. `pre_commit run` would either skip them ("no files to
+# check") or die on an opaque import error. Refuse with the exact fix instead —
+# a hook that cannot run must say so, never pass silently.
+if [ ! -d node_modules/.bin ]; then
+	echo "husky - pre-commit: dependencies are not installed in $(pwd) (node_modules/.bin is missing)." >&2
+	echo "husky - Fix: npm ci    (run in $(pwd); a fresh git worktree has no node_modules)" >&2
+	echo "husky - Refusing to commit unverified: generated artifacts and secrets cannot be checked." >&2
+	exit 1
+fi
+
+# Delegate to the pre-commit framework (Python) so it keeps running through the
+# configured hooks dir. This tracked hook IS the integration: `pre-commit
+# install` is not used, and pre-commit 4.x refuses to run it anyway while
+# core.hooksPath is set ("Cowardly refusing to install hooks with
+# `core.hooksPath` set"). Mirrors the generated .git/hooks/pre-commit shim from
+# `pre-commit install`, so behaviour is unchanged for a clone that had it.
 
 # Probe imports first: an installed interpreter may not have pre_commit.
 INSTALL_PYTHON=/usr/bin/python3
