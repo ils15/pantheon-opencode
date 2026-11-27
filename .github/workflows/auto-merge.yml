@@ -1,32 +1,203 @@
 name: Auto-Merge Owner PRs
 
+# Merge AFTER CI, never while it is still running.
+#
+# Incident (PR #494): this workflow used to run on `pull_request` and call
+# `gh pr merge --auto --squash`. With no required status checks configured,
+# GitHub had nothing to wait for and merged immediately — two seconds after
+# `test-suite` went red. The gate is now the CI workflow's conclusion for the
+# PR head, and the merge is a direct squash (no `--auto`).
+#
+# `PR_MERGE_TOKEN` is a PAT on purpose: a merge performed with `GITHUB_TOKEN`
+# does not trigger the `push` run on `main`, so the merged SHA would carry no
+# CI evidence. See docs/RELEASING.md.
+#
+# Branch protection itself is EXTERNAL repository configuration: it is not
+# stored in this repo and no workflow applies it. The `protection-audit` job
+# only reads it and fails when it drifts from the documented gate.
 on:
-  pull_request:
-    types:
-      - opened
-      - reopened
-      - ready_for_review
-      - synchronize
+  workflow_run:
+    workflows: ['CI']
+    types: [completed]
+    # No `branches` filter here. `workflow_run.branches` matches the triggering
+    # run's HEAD branch, and a pull_request run reports the PR head branch
+    # (`gh run list --json event,headBranch` on this repo shows
+    # `pull_request / fix/…`). Filtering on `main` would therefore skip every
+    # PR run and silently disable auto-merge. The base branch is asserted
+    # explicitly inside the job instead.
+  # Read-only audit of the external protection config. It never runs on a PR
+  # or on a workflow_run, so it can never block a merge.
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
 
 permissions:
   contents: write
   pull-requests: write
+  checks: read
+  statuses: read
+
+concurrency:
+  group: auto-merge-${{ github.event.workflow_run.head_sha || github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   auto-merge:
+    # Every clause is a refusal: wrong event, push run instead of PR run, or
+    # any conclusion other than success (failure, cancelled, skipped, timed_out).
     if: >-
-      github.event.pull_request.user.login == github.repository_owner &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      !github.event.pull_request.draft
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
-      - name: Enable squash auto-merge
+      - name: Resolve the pull request that produced this CI run
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.PR_MERGE_TOKEN || secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          pr_number='${{ github.event.workflow_run.pull_requests[0].number }}'
+          if [ -z "$pr_number" ]; then
+            # workflow_run omits pull_requests for fork PRs and for some
+            # retried runs; resolve it from the tested SHA instead of guessing.
+            pr_number="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/pulls" \
+              --jq 'map(select(.state == "open"))[0].number // empty')"
+          fi
+          if [ -z "$pr_number" ]; then
+            echo "::error::no open pull request found for $HEAD_SHA"
+            exit 1
+          fi
+          echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
+
+      - name: Require an owner-authored, non-draft PR at the tested SHA
+        env:
+          GH_TOKEN: ${{ secrets.PR_MERGE_TOKEN || secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          fields="$(gh pr view "$PR_NUMBER" --json author,baseRefName,baseRepository,headRefOid,headRepositoryOwner,isDraft)"
+          author="$(printf '%s' "$fields" | jq -r '.author.login')"
+          base="$(printf '%s' "$fields" | jq -r '.baseRepository.nameWithOwner')"
+          base_ref="$(printf '%s' "$fields" | jq -r '.baseRefName')"
+          head="$(printf '%s' "$fields" | jq -r '.headRefOid')"
+          head_repo_owner="$(printf '%s' "$fields" | jq -r '.headRepositoryOwner.login')"
+          draft="$(printf '%s' "$fields" | jq -r '.isDraft')"
+          if [ "$author" != "$GITHUB_REPOSITORY_OWNER" ]; then
+            echo "::error::PR author $author is not the repository owner"
+            exit 1
+          fi
+          if [ "$head_repo_owner" != "$GITHUB_REPOSITORY_OWNER" ]; then
+            echo "::error::PR head lives in $head_repo_owner; fork PRs are never auto-merged"
+            exit 1
+          fi
+          if [ "$base" != "$GITHUB_REPOSITORY" ]; then
+            echo "::error::PR targets $base, not $GITHUB_REPOSITORY"
+            exit 1
+          fi
+          if [ "$base_ref" != "main" ]; then
+            echo "::error::PR targets $base_ref, not main"
+            exit 1
+          fi
+          if [ "$draft" != "false" ]; then
+            echo "::error::draft pull requests are never auto-merged"
+            exit 1
+          fi
+          if [ "$head" != "$HEAD_SHA" ]; then
+            echo "::error::PR head $head moved past the CI run for $HEAD_SHA"
+            exit 1
+          fi
+
+      - name: Require MERGEABLE/CLEAN
+        env:
+          GH_TOKEN: ${{ secrets.PR_MERGE_TOKEN || secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          state="$(gh pr view "$PR_NUMBER" --json mergeable,mergeStateStatus \
+            --jq '[.mergeable, .mergeStateStatus] | join("/")')"
+          if [ "$state" != "MERGEABLE/CLEAN" ]; then
+            echo "::error::refusing to merge: mergeable/mergeStateStatus is $state"
+            exit 1
+          fi
+
+      - name: Require required checks to be SUCCESS, not skipped
+        env:
+          GH_TOKEN: ${{ secrets.PR_MERGE_TOKEN || secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
+          REQUIRED_CHECKS: validate test-suite plugin-ts-coverage commitlint security-scan
+        run: |
+          set -euo pipefail
+          # GitHub counts a skipped required job as satisfied. Read the states by
+          # name and demand SUCCESS, so `test-suite` and `plugin-ts-coverage` can
+          # never be a labelled skip. CodeQL is omitted here because its check
+          # name is per-language (`Analyze (<language>)`) and protection is the
+          # authority for it; the protection-audit job asserts that family.
+          checks="$(gh pr checks "$PR_NUMBER" --json name,state --jq '.' || true)"
+          missing="$(printf '%s' "$checks" | jq -r --arg required "$REQUIRED_CHECKS" '
+            ($required | split(" ")) as $required
+            | [ .[] | select(.state == "SUCCESS") | .name ] as $passing
+            | [ $required[] as $name | select(($passing | index($name)) == null) | $name ]
+            | join(" ")
+          ')"
+          if [ -n "$missing" ]; then
+            echo "::error::refusing to merge: required checks not SUCCESS: $missing"
+            exit 1
+          fi
+
+      - name: Merge (squash, delete branch)
         env:
           PR_MERGE_TOKEN: ${{ secrets.PR_MERGE_TOKEN }}
           GH_TOKEN: ${{ secrets.PR_MERGE_TOKEN || secrets.GITHUB_TOKEN }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
         run: |
-          if [ -z "${PR_MERGE_TOKEN}" ]; then
+          set -euo pipefail
+          if [ -z "${PR_MERGE_TOKEN:-}" ]; then
             echo "::warning::PR_MERGE_TOKEN is not set. Merging with GITHUB_TOKEN does not trigger push workflows, so main will have no CI evidence for the merge SHA. See docs/RELEASING.md."
           fi
-          gh pr merge --auto --squash "$PR_URL"
+          gh pr merge "$PR_NUMBER" --squash --delete-branch
+
+  protection-audit:
+    # Non-blocking by construction: only the scheduled/manual audit runs here.
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert main branch protection matches the documented gate
+        env:
+          GH_TOKEN: ${{ secrets.PR_MERGE_TOKEN }}
+          # Keep in sync with docs/BRANCH-PROTECTION.md. A required context that
+          # does not exist can never report, which silently weakens the gate.
+          REQUIRED_CONTEXTS: 'validate test-suite plugin-ts-coverage commitlint security-scan'
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::PR_MERGE_TOKEN is required to read branch protection"
+            exit 1
+          fi
+          protection="$(gh api "repos/${GITHUB_REPOSITORY}/branches/main/protection")"
+          if ! printf '%s' "$protection" | jq -e '.required_status_checks.strict == true' >/dev/null; then
+            echo "::error::main protection must require up-to-date status checks (strict: true)"
+            exit 1
+          fi
+          missing="$(printf '%s' "$protection" | jq -r --arg required "$REQUIRED_CONTEXTS" '
+            ($required | split(" ")) as $required
+            | [ .required_status_checks.checks[].context ] as $actual
+            | [ $required[] as $name | select(($actual | index($name)) == null) | $name ]
+            | join(" ")
+          ')"
+          if [ -n "$missing" ]; then
+            echo "::error::main protection is missing required checks: $missing"
+            exit 1
+          fi
+          # CodeQL reports one check per language ("Analyze (python)"); accept the
+          # legacy "CodeQL" context for default-setup repositories.
+          if ! printf '%s' "$protection" | jq -e \
+            '[.required_status_checks.checks[].context] | any(. == "CodeQL" or startswith("Analyze ("))' >/dev/null; then
+            echo "::error::main protection must require a CodeQL check (CodeQL or Analyze (<language>))"
+            exit 1
+          fi
+          printf '%s\n' "$protection" | jq -r '.required_status_checks.checks[].context'

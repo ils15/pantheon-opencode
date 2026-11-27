@@ -38,12 +38,22 @@ job id when a job has no `name:` override):
 - `security-scan`
 - `CodeQL`
 
+> **CodeQL's check name depends on the setup.** The advanced workflow in
+> `codeql.yml` reports one check per language — `Analyze (actions)`,
+> `Analyze (javascript-typescript)`, `Analyze (python)` — while GitHub's
+> default setup reports a single `CodeQL` check. Require whichever your
+> repository reports; the scheduled `protection-audit` job accepts either.
+
 > **`version-check` is not a check.** That job was folded into `validate`.
 > There is no `PR Checks` workflow in this repository; do not add
 > `PR Checks / label-by-title` or `PR Checks / recommend-version`.
 >
-> **Applying protection is a manual maintainer action.** No workflow changes
-> branch protection and an agent must not do it.
+> **Branch protection is external repository configuration.** It is not
+> stored in this repository, and no workflow applies it — a workflow cannot
+> grant itself protection. The `protection-audit` job in
+> `.github/workflows/auto-merge.yml` only reads it and fails when it drifts
+> from the documented set above. Applying or changing protection is a
+> **manual maintainer action**; an agent must never do it.
 
 > **Tip:** Type each name in the search box and select it. GitHub will auto-suggest
 > matching check names once the workflow has run at least once on `main`.
@@ -75,7 +85,7 @@ gh api repos/:owner/:repo/branches/main/protection \
     "checks": [
       {"context": "validate"},
       {"context": "test-suite"},
-      {"context": "plugin-v2-ts-coverage"},
+      {"context": "plugin-ts-coverage"},
       {"context": "commitlint"},
       {"context": "security-scan"},
       {"context": "CodeQL"}
@@ -102,7 +112,7 @@ If a required check never passes, every push to `main` is locked out, including
 the release pipeline. Confirm all of the following before the `PUT`:
 
 - [ ] **(a)** All six checks exist as workflow jobs: `validate`, `test-suite`,
-      and `plugin-v2-ts-coverage` in `ci.yml`; `commitlint` in
+      and `plugin-ts-coverage` in `ci.yml`; `commitlint` in
       `commit-lint.yml`; `security-scan` in `security-scan.yml`; and CodeQL
       analysis in `codeql.yml`.
 - [ ] **(b)** They all pass on current `main` (or a PR), including the push run
@@ -145,7 +155,7 @@ Expected output:
 [
   "validate",
   "test-suite",
-  "plugin-v2-ts-coverage",
+  "plugin-ts-coverage",
   "commitlint",
   "security-scan",
   "CodeQL"
@@ -169,7 +179,7 @@ a green "Protection enabled" badge.
                               ┌─────────────────────────────┐
                               │  Iris opens Draft PR        │
                               │  → validate, test-suite,    │
-                              │    plugin-v2-ts-coverage,   │
+                              │    plugin-ts-coverage,      │
                               │    commitlint, security-scan│
                               │  → CodeQL analysis          │
                               └──────────┬──────────────────┘

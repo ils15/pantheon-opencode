@@ -53,12 +53,30 @@ function pack(destination) {
   // up with ENOBUFS, so raise it explicitly. Keep the archive out of the
   // source tree so it cannot race with install-plan source fingerprints.
   // HUSKY=0 prevents prepare from rewriting shared hook files in parallel.
-  const result = execFileSync('npm', ['pack', '--json', '--pack-destination', destination], {
-    cwd: ROOT,
-    encoding: 'utf8',
-    maxBuffer: 16 * 1024 * 1024,
-    env: { ...process.env, ...writableNpmCacheEnv(destination), HUSKY: '0' },
-  })
+  let result
+  try {
+    result = execFileSync('npm', ['pack', '--json', '--pack-destination', destination], {
+      cwd: ROOT,
+      encoding: 'utf8',
+      maxBuffer: 16 * 1024 * 1024,
+      env: { ...process.env, ...writableNpmCacheEnv(destination), HUSKY: '0' },
+    })
+  } catch (error) {
+    // prepack aborts with `[DRIFT] …` on stderr. execFileSync keeps only
+    // "Command failed: npm pack" in the message, which hides the actionable
+    // line; surface both streams so the next drift is diagnosable from the log.
+    const stderr = String(error?.stderr ?? '').trim()
+    const stdout = String(error?.stdout ?? '').trim()
+    error.message = [
+      'npm pack failed (see prepack output below)',
+      stderr && `--- stderr ---\n${stderr}`,
+      stdout && `--- stdout ---\n${stdout}`,
+      error.message,
+    ]
+      .filter(Boolean)
+      .join('\n')
+    throw error
+  }
   return join(destination, firstPackEntry(result).filename)
 }
 

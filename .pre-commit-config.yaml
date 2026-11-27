@@ -38,6 +38,19 @@ repos:
         args: [--maxkb=5120]  # hard cap at 5 MB
       - id: forbid-new-submodules
 
+  # --- Local: generated artifacts must match their sources before commit ---
+  # src/agents/*.md are generated from roster.json. `prepack` catches drift at
+  # release time; this hook catches it at the commit that introduced it. CI
+  # additionally rebuilds and `git diff`s the result (a plain --check trims
+  # whitespace and misses formatter rewrites).
+  - repo: local
+    hooks:
+      - id: generated-artifacts
+        name: generated-artifacts — agent roster matches roster.json
+        entry: node scripts/build-roster.mjs --check
+        language: system
+        pass_filenames: false
+
   # --- Local: custom Bifrost/API credential scan (header + value patterns) ---
   # scripts/secret-scan.mjs scans the full versionable set (index + untracked)
   # and never prints secret values, only file + label.

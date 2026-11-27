@@ -174,7 +174,7 @@ workflow-owned (see below).
    ```
 
 5. Wait for CI. The PR must pass `validate` (version manifests, engine,
-   packaging, sandbox), `test-suite`, `plugin-v2-ts-coverage`, `commitlint`,
+   packaging, sandbox), `test-suite`, `plugin-ts-coverage`, `commitlint`,
    `security-scan`, and `CodeQL` before merging. `ci.yml` also runs on pushes
    to `main`, so the merged SHA carries its own CI evidence.
 
@@ -748,7 +748,7 @@ Before cutting a release, verify:
 - [ ] Version manifests match: `package.json` == `plugin.json` ==
       `pyproject.toml` == [`src/plugins/tui/package.json`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui/package.json)
 - [ ] All required checks green on the bump PR **and on the push run for the
-      merged `main` SHA** (`validate`, `test-suite`, `plugin-v2-ts-coverage`,
+      merged `main` SHA** (`validate`, `test-suite`, `plugin-ts-coverage`,
       `commitlint`, `security-scan`, `CodeQL`)
 - [ ] The six release gates are expected to PASS for the frozen `TARGET_SHA`;
       the dispatch's `validate` job is the authority (it re-runs all six)

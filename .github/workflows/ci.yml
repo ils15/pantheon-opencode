@@ -219,6 +219,25 @@ jobs:
       - name: Validate publishable package
         run: npm run package:validate
 
+      # Generated artifacts are committed build outputs. `prepack` runs the
+      # roster check too, but prepack only runs when someone packs, so drift
+      # could sit on `main` until release day and surface as an unrelated
+      # packaging-test failure. Rebuild instead of `--check`: `--check` trims
+      # both sides, which hides formatter rewrites (trailing newline, quoting)
+      # that a fresh build does not reproduce.
+      - name: Generated artifacts are in sync
+        run: |
+          npm run build:roster
+          git diff --exit-code src/agents
+
+      # The plugin bundle is written by `build:plugin`, which `prepack` also
+      # runs. Assert the committed bundle is what the current sources build,
+      # so a stale (or concurrently mutated) src/plugin/index.js cannot ship.
+      - name: Plugin bundle freshness
+        run: |
+          npm run build:plugin
+          git diff --exit-code src/plugin
+
       - name: Verify tarball/package evidence
         run: npm run package:evidence -- --output-dir="$RUNNER_TEMP/package-evidence" --target-sha="$(git rev-parse HEAD)"
 
