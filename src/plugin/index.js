@@ -23663,7 +23663,7 @@ function extractSubagentLifecycleInfo(event) {
   const rawAgent = typeof input.agent === "string" ? input.agent : typeof input.subagent_type === "string" ? input.subagent_type : "subagent";
   const agent = rawAgent.trim().toLowerCase() || "subagent";
   const sessionID = typeof record2.sessionID === "string" && record2.sessionID ? record2.sessionID : void 0;
-  const callID = typeof record2.callID === "string" && record2.callID ? record2.callID : void 0;
+  const callID = typeof record2.callID === "string" && record2.callID ? record2.callID : typeof record2.id === "string" && record2.id ? record2.id : void 0;
   const description = typeof input.description === "string" && input.description.trim() ? input.description.trim().slice(0, 120) : void 0;
   return {
     tool: tool2,

@@ -12,6 +12,7 @@
     "isolatedModules": true,
     "types": ["node"],
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "paths": {
       "@opencode/plugin/gui": ["../../../node_modules/@opencode/plugin/dist/gui/index.d.ts"],
       "@opencode/plugin/gui/*": ["../../../node_modules/@opencode/plugin/dist/gui/*.d.ts"],

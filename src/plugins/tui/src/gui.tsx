@@ -14,6 +14,7 @@
  * - Slash commands `/pantheon-cockpit` and `/pantheon-settings`.
  */
 
+import { execFile } from 'node:child_process'
 import {
   appendFileSync,
   existsSync,
@@ -24,7 +25,8 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   Command,
   ComposerPill,
@@ -37,16 +39,70 @@ import {
 } from '@opencode/plugin/gui'
 import { Schema } from 'effect'
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from 'solid-js'
+
+const KNOWN_AGENTS = [
+  'zeus',
+  'athena',
+  'apollo',
+  'hermes',
+  'aphrodite',
+  'demeter',
+  'themis',
+  'iris',
+] as const
+
 import {
+  COOLDOWN_MS_CYCLE,
+  DEFAULT_DECISION_BUDGETS,
+  DEFAULT_GOAL_LOOP_PREFS,
+  type DecisionBudgets,
+  formatUsd,
+  type GoalLoopPrefs,
+  MAX_CONTINUATIONS_CYCLE,
+  MONTHLY_USD_CYCLE,
+  PER_DECISION_USD_CYCLE,
+  parseUsd,
+} from './autonomy-state'
+import { queryUsageHistory } from './cost-data'
+import {
+  applyDecisionRow,
+  credentialStatus,
+  DECISION_KNOWN_PROVIDERS,
+  DECISION_PROVIDER_CREDENTIALS,
+  DECISION_SELECTION_CYCLE,
+  DECISION_TARGET_CYCLE,
+  type DecisionCandidate,
   readDecisionRouterConfig,
   setDecisionEnabled,
   writeDecisionRouterConfig,
 } from './decision-router-state'
 import {
+  classifyDecisionConfigHealth,
+  classifyInstallVersion,
+  classifyOverridesHealth,
+  isSupportedNodeFloor,
+  MIN_SUPPORTED_NODE_VERSION,
+} from './doctor-state'
+import { J1_FLAG_ENV, J1_THRESHOLD_ENV, j1ModeFromEnv, j1ThresholdFromEnv } from './j1-gate-status'
+import {
+  cleanLegacyArtifacts,
+  formatBytes,
+  type LegacyAuditSummary,
+  purgeAllPantheonData,
+  scanLegacyArtifacts,
+} from './legacy-audit'
+import {
+  buildAboutTab,
+  type ChangelogHighlightItem,
+  canWriteOverrides,
   type EffectiveOverrides,
   isBehaviorDisabled,
+  mergedOverrides,
+  type OverridesLoad,
+  type OverridesScope,
   SETTINGS_BEHAVIORS,
-  toggledOverrides,
+  serializeOverrides,
+  setOverrideState,
 } from './pantheon-settings-state'
 import {
   clearActivePreset,
@@ -54,8 +110,34 @@ import {
   PRESET_NAMES,
   PRESET_NONE,
   readActivePresetMarker,
+  readConfiguredVisionModel,
+  VISION_MODEL_OPTIONS,
   writeActivePreset,
+  writeConfiguredVisionModel,
 } from './preset-state'
+import {
+  ACCENT_COLORS_CYCLE,
+  applyTuiRow,
+  BAR_SHAPES_CYCLE,
+  BAR_WIDTHS_CYCLE,
+  DEFAULT_TUI_PREFS,
+  GAUGE_STYLES,
+  LANGUAGE_CYCLE,
+  LAYOUT_PRESETS_CYCLE,
+  normalizeTuiPrefs,
+  SEPARATOR_STYLES_CYCLE,
+  SETTINGS_VIEW_MODES,
+  THEME_MODES_CYCLE,
+  type TuiPrefs,
+} from './tui-prefs'
+import {
+  isNewerUpdateAvailable,
+  nextCheckState,
+  type UpdateCheckState,
+  withKnownLatest,
+} from './update-notice'
+import { registryUrlForChannel, type UpdateChannel, updateChannelFor } from './update-status'
+import { extractHighlights, readChangelogForBundle } from './whats-new-highlights'
 
 declare const __PANTHEON_VERSION__: string | undefined
 
@@ -106,6 +188,37 @@ interface BehaviorSettingItem {
   description: string
   kind: 'install' | 'runtime'
   enabled: boolean
+  projectOverride: boolean
+}
+
+interface ModelSpendItem {
+  providerID: string
+  modelID: string
+  tokens: number
+  estimatedUsd?: number
+  rows: number
+}
+
+interface AgentModelOverrideItem {
+  agent: string
+  model: string
+  variant: string
+}
+
+interface CredentialStatusItem {
+  provider: string
+  status: string
+  note: string
+}
+
+interface DoctorHealthSnapshot {
+  installVersion: string
+  installStatus: string
+  nodeVersion: string
+  nodeSupported: boolean
+  overridesStatus: string
+  overridesUnknownCount: number
+  decisionStatus: string
 }
 
 interface GuiSnapshot {
@@ -114,14 +227,40 @@ interface GuiSnapshot {
   activeJobs: Array<{ id: string; agent: string; status: string; cost: number }>
   todayCostUSD: number
   monthCostUSD: number
+  modelSpend: ModelSpendItem[]
   overridesCount: number
+  corruptGlobalOverrides: boolean
   gateMode: string
+  cockpitAutoOpen: boolean
+  cockpitShowTodo: boolean
   artifactsCount: number
   activePreset: string
   presetProjectOverride: string | null
+  visionModel: string
+  agentModels: AgentModelOverrideItem[]
   decisionEnabled: boolean
   decisionMode: string
-  behaviors: BehaviorSettingItem[]
+  decisionTarget: string
+  decisionConsent: boolean
+  decisionCorrupt: boolean
+  decisionCandidates: DecisionCandidate[]
+  credentials: CredentialStatusItem[]
+  goalLoop: GoalLoopPrefs
+  goalLoopRestartPending: boolean
+  budgets: DecisionBudgets
+  j1Mode: string
+  j1Threshold: number
+  j1DisabledByOverride: boolean
+  tuiPrefs: TuiPrefs
+  updateChannel: UpdateChannel
+  lastUpdateCheckMs: number | null
+  latestVersion: string | null
+  legacyAudit: LegacyAuditSummary | null
+  doctor: DoctorHealthSnapshot
+  changelogHighlights: ChangelogHighlightItem[]
+  aboutToolGroups: Array<{ name: string; value: string; note: string }>
+  behaviorsGlobal: BehaviorSettingItem[]
+  behaviorsProject: BehaviorSettingItem[]
 }
 
 const PantheonBridge = Ipc.define({
@@ -136,6 +275,10 @@ const PantheonBridge = Ipc.define({
       output: Schema.String,
     },
     saveSettings: {
+      input: Schema.String,
+      output: Schema.String,
+    },
+    runAction: {
       input: Schema.String,
       output: Schema.String,
     },
@@ -201,9 +344,13 @@ async function openSqliteReadOnly(dbPath: string): Promise<SqliteDbLike | null> 
   }
 }
 
-async function readOpenCodeCosts(): Promise<{ todayCostUSD: number; monthCostUSD: number }> {
+async function readOpenCodeCosts(): Promise<{
+  todayCostUSD: number
+  monthCostUSD: number
+  modelSpend: ModelSpendItem[]
+}> {
   const dbPaths = resolveOpenCodeDbPaths()
-  if (dbPaths.length === 0) return { todayCostUSD: 0, monthCostUSD: 0 }
+  if (dbPaths.length === 0) return { todayCostUSD: 0, monthCostUSD: 0, modelSpend: [] }
 
   const now = Date.now()
   const startOfDay = new Date()
@@ -241,7 +388,25 @@ async function readOpenCodeCosts(): Promise<{ todayCostUSD: number; monthCostUSD
         todayCostUSD += Number(row?.today_cost ?? 0) || 0
         monthCostUSD += Number(row?.month_cost ?? 0) || 0
       }
-      return { todayCostUSD, monthCostUSD }
+
+      let modelSpend: ModelSpendItem[] = []
+      try {
+        const usage = await queryUsageHistory(dbPath, '30d', { now })
+        modelSpend = usage.models
+          .map((m) => ({
+            providerID: m.providerID,
+            modelID: m.modelID,
+            tokens: m.totals.total,
+            ...(m.estimatedUsd !== undefined ? { estimatedUsd: m.estimatedUsd } : {}),
+            rows: m.rows,
+          }))
+          .sort((a, b) => (b.estimatedUsd ?? 0) - (a.estimatedUsd ?? 0) || b.tokens - a.tokens)
+          .slice(0, 8)
+      } catch {
+        modelSpend = []
+      }
+
+      return { todayCostUSD, monthCostUSD, modelSpend }
     } catch {
       /* try next candidate db */
     } finally {
@@ -252,7 +417,11 @@ async function readOpenCodeCosts(): Promise<{ todayCostUSD: number; monthCostUSD
       }
     }
   }
-  return { todayCostUSD: 0, monthCostUSD: 0 }
+  return { todayCostUSD: 0, monthCostUSD: 0, modelSpend: [] }
+}
+
+function normalizeDirForCompare(dir: string): string {
+  return dir.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
 }
 
 function extractAgentFromSessionTitle(title: unknown): string {
@@ -273,69 +442,91 @@ async function readOpenCodeChildSessions(
   const dbPaths = resolveOpenCodeDbPaths()
   if (dbPaths.length === 0) return []
 
-  const normalizedRoot = rootDirectory.trim().toLowerCase()
+  const normalizedRoot = normalizeDirForCompare(rootDirectory)
   for (const dbPath of dbPaths) {
     const db = await openSqliteReadOnly(dbPath)
     if (!db) continue
     try {
-      const hasSession = db
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'session'")
-        .get() as { name?: unknown } | undefined
-      if (!hasSession?.name) continue
-
-      const cols = new Set(
-        (db.prepare('PRAGMA table_info(session)').all() as Array<{ name?: unknown }>).map((c) =>
-          String(c.name),
-        ),
+      const existingTables = new Set(
+        (
+          db
+            .prepare(
+              "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('session_v2', 'session')",
+            )
+            .all() as Array<{ name?: unknown }>
+        ).map((r) => String(r.name)),
       )
-      if (!cols.has('id') || !cols.has('parent_id')) continue
-
-      const selectCols = [
-        'id',
-        'parent_id',
-        cols.has('title') ? 'title' : "'' AS title",
-        cols.has('directory') ? 'directory' : "'' AS directory",
-        cols.has('time_updated') ? 'time_updated' : '0 AS time_updated',
-        cols.has('time_archived') ? 'time_archived' : 'NULL AS time_archived',
-      ].join(', ')
-
-      const rows = db
-        .prepare(
-          `SELECT ${selectCols} FROM session
-           WHERE parent_id IS NOT NULL AND parent_id != ''
-           ORDER BY time_updated DESC LIMIT 30`,
-        )
-        .all() as Array<{
-        id?: unknown
-        parent_id?: unknown
-        title?: unknown
-        directory?: unknown
-        time_updated?: unknown
-        time_archived?: unknown
-      }>
-
+      const collected: GuiSnapshot['activeJobs'] = []
+      const seenIds = new Set<string>()
       const now = Date.now()
-      const filtered =
-        normalizedRoot && cols.has('directory')
-          ? rows.filter((r) => {
-              const dir = typeof r.directory === 'string' ? r.directory.trim().toLowerCase() : ''
-              return !dir || dir === normalizedRoot
-            })
-          : rows
 
-      return filtered
-        .filter((r) => typeof r.id === 'string' && r.id.length > 0)
-        .map((r) => {
+      for (const table of ['session_v2', 'session'] as const) {
+        if (!existingTables.has(table)) continue
+        const cols = new Set(
+          (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: unknown }>).map((c) =>
+            String(c.name),
+          ),
+        )
+        if (!cols.has('id') || !cols.has('parent_id')) continue
+
+        const timeCol = cols.has('time_updated')
+          ? 'time_updated'
+          : cols.has('time_created')
+            ? 'time_created'
+            : null
+        const selectCols = [
+          'id',
+          'parent_id',
+          cols.has('agent') ? 'agent' : 'NULL AS agent',
+          cols.has('title') ? 'title' : "'' AS title",
+          cols.has('directory') ? 'directory' : "'' AS directory",
+          timeCol ? `${timeCol} AS time_updated` : '0 AS time_updated',
+          cols.has('time_archived') ? 'time_archived' : 'NULL AS time_archived',
+        ].join(', ')
+        const orderClause = timeCol ? `ORDER BY ${timeCol} DESC` : 'ORDER BY rowid DESC'
+
+        const rows = db
+          .prepare(
+            `SELECT ${selectCols} FROM ${table}
+             WHERE parent_id IS NOT NULL AND parent_id != ''
+             ${orderClause} LIMIT 30`,
+          )
+          .all() as Array<{
+          id?: unknown
+          parent_id?: unknown
+          agent?: unknown
+          title?: unknown
+          directory?: unknown
+          time_updated?: unknown
+          time_archived?: unknown
+        }>
+
+        const filtered =
+          normalizedRoot && cols.has('directory')
+            ? rows.filter((r) => {
+                const dir =
+                  typeof r.directory === 'string' ? normalizeDirForCompare(r.directory) : ''
+                return !dir || dir === normalizedRoot
+              })
+            : rows
+
+        for (const r of filtered) {
+          if (typeof r.id !== 'string' || !r.id || seenIds.has(r.id)) continue
+          seenIds.add(r.id)
           const updated = Number(r.time_updated ?? 0)
           const archived = r.time_archived !== null && r.time_archived !== undefined
           const isRecentActive = !archived && Number.isFinite(updated) && now - updated < 30_000
-          return {
-            id: String(r.id),
-            agent: extractAgentFromSessionTitle(r.title),
+          const explicitAgent =
+            typeof r.agent === 'string' && r.agent.trim() ? r.agent.trim().toLowerCase() : ''
+          collected.push({
+            id: r.id,
+            agent: explicitAgent || extractAgentFromSessionTitle(r.title),
             status: isRecentActive ? 'running' : 'completed',
             cost: 0,
-          }
-        })
+          })
+        }
+      }
+      if (collected.length > 0) return collected
     } catch {
       /* try next candidate db */
     } finally {
@@ -349,8 +540,305 @@ async function readOpenCodeChildSessions(
   return []
 }
 
+function atomicWriteFile(filePath: string, content: string, mode?: number): void {
+  mkdirSync(dirname(filePath), { recursive: true })
+  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
+  writeFileSync(tmpPath, content, mode !== undefined ? { encoding: 'utf8', mode } : 'utf8')
+  renameSync(tmpPath, filePath)
+}
+
+function xdgConfigRoot(): string {
+  return process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? homedir(), '.config')
+}
+
+function globalOverridesPath(): string {
+  return join(xdgConfigRoot(), 'opencode', 'pantheon-overrides.json')
+}
+
+function projectOverridesPath(workspaceDir: string): string {
+  return join(workspaceDir, '.pantheon', 'overrides.json')
+}
+
+function readOneOverrides(filePath: string): { value: EffectiveOverrides; corrupt: boolean } {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(filePath, 'utf8'))
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return { value: {}, corrupt: true }
+    }
+    return { value: parsed as EffectiveOverrides, corrupt: false }
+  } catch (error) {
+    return { value: {}, corrupt: (error as NodeJS.ErrnoException)?.code !== 'ENOENT' }
+  }
+}
+
+function readOverridesLoad(workspaceDir: string): OverridesLoad {
+  const globalRead = readOneOverrides(globalOverridesPath())
+  const projectRead = readOneOverrides(projectOverridesPath(workspaceDir))
+  return {
+    global: globalRead.value,
+    project: projectRead.value,
+    corruptGlobal: globalRead.corrupt,
+  }
+}
+
+function userOpenCodeConfigPath(): string {
+  return join(xdgConfigRoot(), 'opencode', 'opencode.json')
+}
+
+function readGoalLoopPrefs(): GoalLoopPrefs {
+  const fallback = { ...DEFAULT_GOAL_LOOP_PREFS }
+  try {
+    const parsed = JSON.parse(readFileSync(userOpenCodeConfigPath(), 'utf8')) as {
+      options?: { goal_loop?: Partial<GoalLoopPrefs> }
+    }
+    const raw = parsed?.options?.goal_loop
+    if (raw && typeof raw === 'object') {
+      return {
+        enabled: typeof raw.enabled === 'boolean' ? raw.enabled : fallback.enabled,
+        cooldownMs:
+          typeof raw.cooldownMs === 'number' && raw.cooldownMs >= 1000
+            ? Math.floor(raw.cooldownMs)
+            : fallback.cooldownMs,
+        maxContinuations:
+          typeof raw.maxContinuations === 'number' && raw.maxContinuations >= 1
+            ? Math.min(200, Math.floor(raw.maxContinuations))
+            : fallback.maxContinuations,
+      }
+    }
+  } catch {
+    /* fail-open */
+  }
+  return fallback
+}
+
+function writeUserOption(key: string, value: unknown): void {
+  const filePath = userOpenCodeConfigPath()
+  let doc: Record<string, unknown> = {}
+  try {
+    const parsed = JSON.parse(readFileSync(filePath, 'utf8')) as Record<string, unknown>
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) doc = parsed
+  } catch {
+    /* fresh object */
+  }
+  const options =
+    typeof doc.options === 'object' && doc.options !== null && !Array.isArray(doc.options)
+      ? { ...(doc.options as Record<string, unknown>) }
+      : {}
+  options[key] = value
+  doc.options = options
+  atomicWriteFile(filePath, `${JSON.stringify(doc, null, 2)}\n`)
+}
+
+function decisionRouterPath(): string {
+  return join(xdgConfigRoot(), 'pantheon', 'decision-router.json')
+}
+
+function readDecisionBudgets(): DecisionBudgets {
+  const fallback = { ...DEFAULT_DECISION_BUDGETS }
+  try {
+    const parsed = JSON.parse(readFileSync(decisionRouterPath(), 'utf8')) as {
+      budget?: Partial<DecisionBudgets>
+    }
+    const raw = parsed?.budget
+    if (raw && typeof raw === 'object') {
+      return {
+        monthlyUsd:
+          typeof raw.monthlyUsd === 'number' && raw.monthlyUsd > 0
+            ? raw.monthlyUsd
+            : fallback.monthlyUsd,
+        perDecisionUsd:
+          typeof raw.perDecisionUsd === 'number' && raw.perDecisionUsd > 0
+            ? raw.perDecisionUsd
+            : fallback.perDecisionUsd,
+      }
+    }
+  } catch {
+    /* fail-open */
+  }
+  return fallback
+}
+
+function writeDecisionBudget(budgets: DecisionBudgets): void {
+  const filePath = decisionRouterPath()
+  let doc: Record<string, unknown> = {}
+  try {
+    const parsed = JSON.parse(readFileSync(filePath, 'utf8')) as Record<string, unknown>
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) doc = parsed
+  } catch {
+    throw new Error('decision-router.json unreadable — repair via `decision-router setup-model`')
+  }
+  doc.budget = { ...budgets }
+  atomicWriteFile(filePath, `${JSON.stringify(doc, null, 2)}\n`, 0o600)
+}
+
+function readAuthProviders(): Set<string> {
+  const names = new Set<string>()
+  try {
+    const xdgData =
+      process.env.XDG_DATA_HOME ?? join(process.env.HOME ?? homedir(), '.local', 'share')
+    const parsed = JSON.parse(
+      readFileSync(join(xdgData, 'opencode', 'auth.json'), 'utf8'),
+    ) as Record<string, unknown>
+    for (const key of Object.keys(parsed)) names.add(key)
+  } catch {
+    /* ignore */
+  }
+  return names
+}
+
+function readConfigProviders(): Set<string> {
+  const names = new Set<string>()
+  try {
+    const parsed = JSON.parse(readFileSync(userOpenCodeConfigPath(), 'utf8')) as {
+      providers?: Record<string, unknown>
+    }
+    for (const key of Object.keys(parsed?.providers ?? {})) names.add(key)
+  } catch {
+    /* ignore */
+  }
+  return names
+}
+
+function guiTuiPrefsPath(): string {
+  return join(xdgConfigRoot(), 'opencode', '.pantheon', 'tui-prefs.json')
+}
+
+function readTuiPrefsFromDisk(): TuiPrefs {
+  try {
+    const parsed = JSON.parse(readFileSync(guiTuiPrefsPath(), 'utf8')) as unknown
+    return normalizeTuiPrefs(parsed)
+  } catch {
+    return DEFAULT_TUI_PREFS
+  }
+}
+
+function writeTuiPrefsToDisk(prefs: TuiPrefs): void {
+  atomicWriteFile(guiTuiPrefsPath(), `${JSON.stringify(prefs, null, 2)}\n`)
+}
+
+function readAgentModelsFromDisk(workspaceDir: string): AgentModelOverrideItem[] {
+  const candidates = [
+    join(workspaceDir, '.pantheon', 'active-preset.json'),
+    globalActivePresetPath(),
+  ]
+  const agentsMap: Record<
+    string,
+    { model?: unknown; variant?: unknown; reasoning_effort?: unknown }
+  > = {}
+  for (const candidate of candidates) {
+    if (!existsSync(candidate)) continue
+    try {
+      const raw = JSON.parse(readFileSync(candidate, 'utf8')) as {
+        overrides?: {
+          agents?: Record<
+            string,
+            { model?: unknown; variant?: unknown; reasoning_effort?: unknown }
+          >
+        }
+      }
+      const agents = raw?.overrides?.agents
+      if (agents && typeof agents === 'object' && !Array.isArray(agents)) {
+        for (const [k, v] of Object.entries(agents)) {
+          if (!agentsMap[k] && v && typeof v === 'object') agentsMap[k] = v
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return KNOWN_AGENTS.map((agent) => {
+    const entry = agentsMap[agent]
+    const model = typeof entry?.model === 'string' ? entry.model : ''
+    const rawVariant =
+      typeof entry?.variant === 'string'
+        ? entry.variant
+        : typeof entry?.reasoning_effort === 'string'
+          ? entry.reasoning_effort
+          : 'default'
+    return { agent, model, variant: rawVariant }
+  })
+}
+
+function writeAgentModelToDisk(
+  workspaceDir: string,
+  agent: string,
+  model: string,
+  variant: string,
+): void {
+  if (!KNOWN_AGENTS.includes(agent as (typeof KNOWN_AGENTS)[number])) {
+    throw new Error(`Unknown canonical agent "${agent}"`)
+  }
+  const targetPath = join(workspaceDir, '.pantheon', 'active-preset.json')
+  let doc: Record<string, unknown> = { version: 1, preset: PRESET_NONE, source: 'gui-settings' }
+  if (existsSync(targetPath)) {
+    try {
+      const parsed = JSON.parse(readFileSync(targetPath, 'utf8')) as unknown
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        doc = parsed as Record<string, unknown>
+      }
+    } catch {
+      /* keep default */
+    }
+  }
+  const overrides =
+    doc.overrides && typeof doc.overrides === 'object' && !Array.isArray(doc.overrides)
+      ? { ...(doc.overrides as Record<string, unknown>) }
+      : {}
+  const agents =
+    overrides.agents && typeof overrides.agents === 'object' && !Array.isArray(overrides.agents)
+      ? { ...(overrides.agents as Record<string, unknown>) }
+      : {}
+
+  const trimmedModel = model.trim()
+  if (!trimmedModel) {
+    delete agents[agent]
+  } else {
+    const entry: Record<string, unknown> = { model: trimmedModel }
+    if (variant === 'low' || variant === 'medium' || variant === 'high') {
+      entry.variant = variant
+    }
+    agents[agent] = entry
+  }
+  overrides.agents = agents
+  doc.overrides = overrides
+  doc.updated_at = new Date().toISOString()
+  atomicWriteFile(targetPath, `${JSON.stringify(doc, null, 2)}\n`)
+}
+
+function updateCheckStatePath(): string {
+  const stateDir =
+    process.env.XDG_STATE_HOME ?? join(process.env.HOME ?? homedir(), '.local', 'state')
+  return join(stateDir, 'pantheon', 'update-check.json')
+}
+
+function readUpdateCheckState(): UpdateCheckState {
+  try {
+    return JSON.parse(readFileSync(updateCheckStatePath(), 'utf8')) as UpdateCheckState
+  } catch {
+    return {}
+  }
+}
+
+function persistUpdateCheckState(previous: UpdateCheckState, latest: string | null): void {
+  try {
+    const next = withKnownLatest(
+      nextCheckState(previous, latest ? { version: latest, message: '' } : null, Date.now()),
+      latest,
+    )
+    atomicWriteFile(updateCheckStatePath(), `${JSON.stringify(next, null, 2)}\n`)
+  } catch {
+    /* non-fatal */
+  }
+}
+
+let guiGoalLoopRestartPending = false
+let guiSelectedUpdateChannel: UpdateChannel | null = null
+let guiCachedLegacyAudit: LegacyAuditSummary | null = null
+let guiCachedChangelog: ChangelogHighlightItem[] | null = null
+
 async function readSnapshotFromDisk(directory: string): Promise<GuiSnapshot> {
   const root = directory.trim() || process.cwd()
+  const runningVersion = resolveRunningVersion()
   const messages = readNdjsonLines<BoardMsg>(
     join(root, '.pantheon', 'board', 'messages.ndjson'),
     80,
@@ -454,8 +942,6 @@ async function readSnapshotFromDisk(directory: string): Promise<GuiSnapshot> {
     activeJobs.push(child)
   }
 
-  // Track subagent:start / subagent:stop & ephemeral:worker telemetry events
-  // when no explicit job record exists for that call/worker.
   const eventJobIndex = new Map<string, number>()
   for (const ev of events) {
     const kind = ev.kind ?? ev.type ?? ''
@@ -477,36 +963,36 @@ async function readSnapshotFromDisk(directory: string): Promise<GuiSnapshot> {
     }
   }
 
-  let overridesCount = 0
-  let effectiveOverrides: EffectiveOverrides = {}
-  const overridesPath = join(root, '.pantheon', 'overrides.json')
-  if (existsSync(overridesPath)) {
-    try {
-      const ov = JSON.parse(readFileSync(overridesPath, 'utf8')) as unknown
-      if (ov && typeof ov === 'object' && !Array.isArray(ov)) {
-        effectiveOverrides = ov as EffectiveOverrides
-        overridesCount = Object.keys(ov).length
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-  const behaviors: BehaviorSettingItem[] = SETTINGS_BEHAVIORS.map((b) => ({
+  const load = readOverridesLoad(root)
+  const merged = mergedOverrides(load)
+  const overridesCount = Object.keys(merged).length
+  const behaviorsGlobal: BehaviorSettingItem[] = SETTINGS_BEHAVIORS.map((b) => ({
     id: b.id,
     title: b.title,
     description: b.description,
     kind: b.kind,
-    enabled: !isBehaviorDisabled(effectiveOverrides, b.id),
+    enabled: !isBehaviorDisabled(load.global, b.id),
+    projectOverride: load.project[b.id] !== undefined,
+  }))
+  const behaviorsProject: BehaviorSettingItem[] = SETTINGS_BEHAVIORS.map((b) => ({
+    id: b.id,
+    title: b.title,
+    description: b.description,
+    kind: b.kind,
+    enabled: !isBehaviorDisabled(merged, b.id),
+    projectOverride: load.project[b.id] !== undefined,
   }))
 
   let gateMode = 'shadow'
+  let cockpitAutoOpen = false
+  let cockpitShowTodo = true
   const settingsPath = join(root, '.pantheon', 'cockpit-settings.json')
   if (existsSync(settingsPath)) {
     try {
       const cfg = JSON.parse(readFileSync(settingsPath, 'utf8')) as Record<string, unknown>
-      if (typeof cfg.gateMode === 'string' && cfg.gateMode) {
-        gateMode = cfg.gateMode
-      }
+      if (typeof cfg.gateMode === 'string' && cfg.gateMode) gateMode = cfg.gateMode
+      if (typeof cfg.autoOpen === 'boolean') cockpitAutoOpen = cfg.autoOpen
+      if (typeof cfg.showTodo === 'boolean') cockpitShowTodo = cfg.showTodo
     } catch {
       /* ignore */
     }
@@ -514,12 +1000,106 @@ async function readSnapshotFromDisk(directory: string): Promise<GuiSnapshot> {
 
   const globalPreset = readActivePresetMarker(globalActivePresetPath())
   const projectPreset = readActivePresetMarker(join(root, '.pantheon', 'active-preset.json'))
-  const activePreset = projectPreset?.name ?? globalPreset?.name ?? PRESET_NONE
+  const activePreset = globalPreset?.name ?? PRESET_NONE
   const presetProjectOverride = projectPreset?.name ?? null
+  const visionModel = readConfiguredVisionModel(root)
+  const agentModels = readAgentModelsFromDisk(root)
 
   const decisionRead = readDecisionRouterConfig()
-  const decisionEnabled = decisionRead.config.enabled
-  const decisionMode = decisionRead.config.selection.mode
+  const dec = decisionRead.config
+  const decisionTarget = dec.selection.provider
+    ? `${dec.selection.provider}/${dec.selection.model ?? ''}`
+    : (DECISION_TARGET_CYCLE[0] ?? 'openai-decisions/gpt-6-luna')
+  const authProviders = readAuthProviders()
+  const configProviders = readConfigProviders()
+  const credentials: CredentialStatusItem[] = DECISION_KNOWN_PROVIDERS.map((provider) => {
+    const status = credentialStatus(provider, process.env, authProviders, configProviders)
+    const cred = DECISION_PROVIDER_CREDENTIALS[provider] ?? { note: '' }
+    return {
+      provider,
+      status: status === 'missing' ? 'MISSING' : status,
+      note: cred.note,
+    }
+  })
+
+  const goalLoop = readGoalLoopPrefs()
+  const budgets = readDecisionBudgets()
+  const j1Mode = j1ModeFromEnv(process.env)
+  const j1Threshold = j1ThresholdFromEnv(process.env)
+  const j1DisabledByOverride = isBehaviorDisabled(merged, 'gate-j1-risk-gate')
+  const tuiPrefs = readTuiPrefsFromDisk()
+
+  const updateState = readUpdateCheckState()
+  const updateChannel = guiSelectedUpdateChannel ?? updateChannelFor(runningVersion)
+
+  if (guiCachedLegacyAudit === null) {
+    try {
+      guiCachedLegacyAudit = scanLegacyArtifacts({
+        workspaceDir: root,
+        runningVersion,
+      }).summary
+    } catch {
+      guiCachedLegacyAudit = null
+    }
+  }
+
+  if (guiCachedChangelog === null) {
+    try {
+      const md = await readChangelogForBundle(
+        typeof import.meta !== 'undefined' && import.meta.url ? import.meta.url : root,
+      )
+      if (md) {
+        const hl = extractHighlights(md, runningVersion)
+        if (hl.found) {
+          const items: ChangelogHighlightItem[] = []
+          for (const group of hl.groups) {
+            for (const item of group.items) {
+              const colon = item.indexOf(': ')
+              const emdash = item.indexOf('—')
+              const sep = colon !== -1 ? colon : emdash
+              const title = sep !== -1 ? item.slice(0, sep).trim() : item.slice(0, 26)
+              const detail = sep !== -1 ? item.slice(sep + (colon !== -1 ? 2 : 1)).trim() : item
+              items.push({ title, detail, group: group.heading ?? undefined })
+            }
+          }
+          guiCachedChangelog = items
+        } else {
+          guiCachedChangelog = []
+        }
+      } else {
+        guiCachedChangelog = []
+      }
+    } catch {
+      guiCachedChangelog = []
+    }
+  }
+
+  const installHealth = classifyInstallVersion(runningVersion)
+  const overridesHealth = classifyOverridesHealth(load)
+  const decisionHealth = classifyDecisionConfigHealth()
+  const doctor: DoctorHealthSnapshot = {
+    installVersion: installHealth.installed ?? 'unknown',
+    installStatus: installHealth.status,
+    nodeVersion: process.versions.node,
+    nodeSupported: isSupportedNodeFloor(process.versions.node),
+    overridesStatus: overridesHealth.status,
+    overridesUnknownCount: overridesHealth.unknownIds.length,
+    decisionStatus: decisionHealth.status,
+  }
+
+  const aboutTab = buildAboutTab(runningVersion, {
+    nodeVersion: process.versions.node,
+    platform: process.platform,
+    preset: projectPreset?.name ?? globalPreset?.name ?? null,
+    decisionEnabled: dec.enabled,
+    j1Mode,
+  })
+  const toolsGroup = aboutTab.groups.find((g) => g.title?.includes('Native Tools'))
+  const aboutToolGroups = (toolsGroup?.rows ?? []).map((r) => ({
+    name: r.name,
+    value: r.value,
+    note: r.note ?? '',
+  }))
 
   let artifactsCount = 0
   const plansDir = join(root, '.pantheon', 'plans')
@@ -531,7 +1111,7 @@ async function readSnapshotFromDisk(directory: string): Promise<GuiSnapshot> {
     }
   }
 
-  const { todayCostUSD, monthCostUSD } = await readOpenCodeCosts()
+  const { todayCostUSD, monthCostUSD, modelSpend } = await readOpenCodeCosts()
 
   return {
     messages,
@@ -539,14 +1119,40 @@ async function readSnapshotFromDisk(directory: string): Promise<GuiSnapshot> {
     activeJobs,
     todayCostUSD,
     monthCostUSD,
+    modelSpend,
     overridesCount,
+    corruptGlobalOverrides: load.corruptGlobal,
     gateMode,
+    cockpitAutoOpen,
+    cockpitShowTodo,
     artifactsCount,
     activePreset,
     presetProjectOverride,
-    decisionEnabled,
-    decisionMode,
-    behaviors,
+    visionModel,
+    agentModels,
+    decisionEnabled: dec.enabled,
+    decisionMode: dec.selection.mode,
+    decisionTarget,
+    decisionConsent: dec.egress_consent,
+    decisionCorrupt: decisionRead.corrupt,
+    decisionCandidates: [...dec.enabled_candidates],
+    credentials,
+    goalLoop,
+    goalLoopRestartPending: guiGoalLoopRestartPending,
+    budgets,
+    j1Mode,
+    j1Threshold,
+    j1DisabledByOverride,
+    tuiPrefs,
+    updateChannel,
+    lastUpdateCheckMs: updateState.lastCheckMs ?? null,
+    latestVersion: updateState.lastNotifiedVersion ?? null,
+    legacyAudit: guiCachedLegacyAudit,
+    doctor,
+    changelogHighlights: guiCachedChangelog ?? [],
+    aboutToolGroups,
+    behaviorsGlobal,
+    behaviorsProject,
   }
 }
 
@@ -592,15 +1198,31 @@ function saveSettingsToDisk(payloadRaw: string): string {
     const payload = JSON.parse(payloadRaw) as {
       directory?: string
       gateMode?: string
+      cockpitAutoOpen?: boolean
+      cockpitShowTodo?: boolean
       preset?: string
-      toggleBehaviorId?: string
+      visionModel?: string
+      agentModel?: { agent: string; model: string; variant: string }
+      overrideToggle?: { id: string; scope: OverridesScope; enabled: boolean }
       decisionEnabled?: boolean
+      decisionMode?: string
+      decisionTarget?: string
+      decisionConsent?: boolean
+      goalLoop?: Partial<GoalLoopPrefs>
+      budgetMonthly?: string
+      budgetPerDecision?: string
+      tuiPref?: { id: string; value: string }
+      updateChannel?: UpdateChannel
     }
     const root = payload.directory?.trim() || process.cwd()
     const pantheonDir = join(root, '.pantheon')
     mkdirSync(pantheonDir, { recursive: true })
 
-    if (typeof payload.gateMode === 'string') {
+    if (
+      typeof payload.gateMode === 'string' ||
+      typeof payload.cockpitAutoOpen === 'boolean' ||
+      typeof payload.cockpitShowTodo === 'boolean'
+    ) {
       const settingsPath = join(pantheonDir, 'cockpit-settings.json')
       let current: Record<string, unknown> = {}
       if (existsSync(settingsPath)) {
@@ -613,10 +1235,10 @@ function saveSettingsToDisk(payloadRaw: string): string {
           current = {}
         }
       }
-      current.gateMode = payload.gateMode
-      const tmpPath = `${settingsPath}.${process.pid}.${Date.now()}.tmp`
-      writeFileSync(tmpPath, `${JSON.stringify(current, null, 2)}\n`, 'utf8')
-      renameSync(tmpPath, settingsPath)
+      if (typeof payload.gateMode === 'string') current.gateMode = payload.gateMode
+      if (typeof payload.cockpitAutoOpen === 'boolean') current.autoOpen = payload.cockpitAutoOpen
+      if (typeof payload.cockpitShowTodo === 'boolean') current.showTodo = payload.cockpitShowTodo
+      atomicWriteFile(settingsPath, `${JSON.stringify(current, null, 2)}\n`)
     }
 
     if (typeof payload.preset === 'string') {
@@ -628,26 +1250,44 @@ function saveSettingsToDisk(payloadRaw: string): string {
       }
     }
 
-    if (typeof payload.toggleBehaviorId === 'string' && payload.toggleBehaviorId) {
-      const overridesPath = join(pantheonDir, 'overrides.json')
-      let current: EffectiveOverrides = {}
-      if (existsSync(overridesPath)) {
-        const parsed = JSON.parse(readFileSync(overridesPath, 'utf8')) as unknown
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-          return JSON.stringify({
-            ok: false,
-            error: 'overrides.json is not a valid object; refusing to overwrite',
-          })
-        }
-        current = parsed as EffectiveOverrides
-      }
-      const next = toggledOverrides(current, payload.toggleBehaviorId, 'toggled in Pantheon GUI')
-      const tmpPath = `${overridesPath}.${process.pid}.${Date.now()}.tmp`
-      writeFileSync(tmpPath, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
-      renameSync(tmpPath, overridesPath)
+    if (typeof payload.visionModel === 'string') {
+      writeConfiguredVisionModel(payload.visionModel, root)
     }
 
-    if (typeof payload.decisionEnabled === 'boolean') {
+    if (payload.agentModel) {
+      writeAgentModelToDisk(
+        root,
+        payload.agentModel.agent,
+        payload.agentModel.model,
+        payload.agentModel.variant,
+      )
+    }
+
+    if (payload.overrideToggle) {
+      const { id, scope, enabled } = payload.overrideToggle
+      const load = readOverridesLoad(root)
+      const target = enabled ? 'enabled' : 'disabled'
+      if (scope === 'project') {
+        const nextProject = setOverrideState(load.project, id, target, 'toggled in Pantheon GUI')
+        atomicWriteFile(projectOverridesPath(root), serializeOverrides(nextProject))
+      } else {
+        if (!canWriteOverrides(load)) {
+          return JSON.stringify({
+            ok: false,
+            error: 'Global overrides file unreadable — repair with `doctor --fix`',
+          })
+        }
+        const nextGlobal = setOverrideState(load.global, id, target, 'toggled in Pantheon GUI')
+        atomicWriteFile(globalOverridesPath(), serializeOverrides(nextGlobal))
+      }
+    }
+
+    if (
+      typeof payload.decisionEnabled === 'boolean' ||
+      typeof payload.decisionMode === 'string' ||
+      typeof payload.decisionTarget === 'string' ||
+      typeof payload.decisionConsent === 'boolean'
+    ) {
       const read = readDecisionRouterConfig()
       if (read.corrupt) {
         return JSON.stringify({
@@ -655,18 +1295,182 @@ function saveSettingsToDisk(payloadRaw: string): string {
           error: 'Decision router config is corrupt; refusing to overwrite',
         })
       }
-      const next = setDecisionEnabled(read.config, payload.decisionEnabled)
-      if (!next.ok) {
-        return JSON.stringify({ ok: false, error: next.reason })
+      let nextCfg = read.config
+      if (typeof payload.decisionConsent === 'boolean') {
+        nextCfg = applyDecisionRow(
+          nextCfg,
+          'decision.consent',
+          payload.decisionConsent ? 'granted' : 'not granted',
+        )
       }
-      writeDecisionRouterConfig(next.config)
+      if (typeof payload.decisionMode === 'string') {
+        nextCfg = applyDecisionRow(nextCfg, 'decision.selection.mode', payload.decisionMode)
+      }
+      if (typeof payload.decisionTarget === 'string') {
+        nextCfg = applyDecisionRow(nextCfg, 'decision.selection.target', payload.decisionTarget)
+      }
+      if (typeof payload.decisionEnabled === 'boolean') {
+        const guarded = setDecisionEnabled(nextCfg, payload.decisionEnabled)
+        if (!guarded.ok) {
+          return JSON.stringify({ ok: false, error: guarded.reason })
+        }
+        nextCfg = guarded.config
+      }
+      writeDecisionRouterConfig(nextCfg)
+    }
+
+    if (payload.goalLoop) {
+      const current = readGoalLoopPrefs()
+      const next: GoalLoopPrefs = {
+        enabled:
+          typeof payload.goalLoop.enabled === 'boolean'
+            ? payload.goalLoop.enabled
+            : current.enabled,
+        maxContinuations:
+          typeof payload.goalLoop.maxContinuations === 'number' &&
+          payload.goalLoop.maxContinuations >= 1 &&
+          payload.goalLoop.maxContinuations <= 200
+            ? Math.floor(payload.goalLoop.maxContinuations)
+            : current.maxContinuations,
+        cooldownMs:
+          typeof payload.goalLoop.cooldownMs === 'number' && payload.goalLoop.cooldownMs >= 1000
+            ? Math.floor(payload.goalLoop.cooldownMs)
+            : current.cooldownMs,
+      }
+      writeUserOption('goal_loop', next)
+      guiGoalLoopRestartPending = true
+    }
+
+    if (
+      typeof payload.budgetMonthly === 'string' ||
+      typeof payload.budgetPerDecision === 'string'
+    ) {
+      const current = readDecisionBudgets()
+      const monthly =
+        typeof payload.budgetMonthly === 'string'
+          ? parseUsd(payload.budgetMonthly)
+          : current.monthlyUsd
+      const perDecision =
+        typeof payload.budgetPerDecision === 'string'
+          ? parseUsd(payload.budgetPerDecision)
+          : current.perDecisionUsd
+      if (monthly === null || perDecision === null) {
+        return JSON.stringify({ ok: false, error: 'Invalid USD budget value' })
+      }
+      writeDecisionBudget({ monthlyUsd: monthly, perDecisionUsd: perDecision })
+    }
+
+    if (payload.tuiPref) {
+      const current = readTuiPrefsFromDisk()
+      const copy: TuiPrefs = JSON.parse(JSON.stringify(current)) as TuiPrefs
+      applyTuiRow(copy, payload.tuiPref.id, payload.tuiPref.value)
+      writeTuiPrefsToDisk(copy)
+    }
+
+    if (payload.updateChannel === 'stable' || payload.updateChannel === 'beta') {
+      guiSelectedUpdateChannel = payload.updateChannel
     }
 
     return JSON.stringify({ ok: true })
   } catch (err) {
     return JSON.stringify({
       ok: false,
-      error: err instanceof Error ? err.message : 'Failed to save cockpit settings',
+      error: err instanceof Error ? err.message : 'Failed to save Pantheon settings',
+    })
+  }
+}
+
+async function runActionOnDisk(payloadRaw: string): Promise<string> {
+  try {
+    const payload = JSON.parse(payloadRaw) as {
+      directory?: string
+      action?: string
+      channel?: UpdateChannel
+    }
+    const root = payload.directory?.trim() || process.cwd()
+    const runningVersion = resolveRunningVersion()
+    const channel = payload.channel ?? guiSelectedUpdateChannel ?? updateChannelFor(runningVersion)
+
+    if (payload.action === 'update-check') {
+      const prev = readUpdateCheckState()
+      let latest: string | null = null
+      try {
+        const res = await fetch(registryUrlForChannel(channel), {
+          signal: AbortSignal.timeout(5000),
+        })
+        const json = (await res.json()) as { version?: unknown }
+        latest = typeof json?.version === 'string' && json.version ? json.version : null
+      } catch {
+        latest = null
+      }
+      persistUpdateCheckState(prev, latest)
+      const isNewer = latest ? isNewerUpdateAvailable(runningVersion, latest) : false
+      return JSON.stringify({
+        ok: true,
+        message: latest
+          ? isNewer
+            ? `Update available: v${latest} (channel: ${channel})`
+            : `Up to date on v${runningVersion} (latest: v${latest})`
+          : 'Could not reach npm registry (offline or timeout)',
+      })
+    }
+
+    if (payload.action === 'update-run') {
+      const pkgSpec = channel === 'beta' ? 'pantheon-opencode@beta' : 'pantheon-opencode'
+      const runCmd = (cmd: string, args: string[]) =>
+        new Promise<Error | null>((resolve) => {
+          execFile(cmd, args, { cwd: root, timeout: 60_000 }, (err) => resolve(err ?? null))
+        })
+      let err = await runCmd('opencode', ['plugin', 'update', pkgSpec])
+      if (err) err = await runCmd('opencode', ['plugin', 'add', pkgSpec])
+      if (err) err = await runCmd('npm', ['install', '-g', pkgSpec])
+      if (err) {
+        return JSON.stringify({
+          ok: false,
+          error: `Run in terminal: opencode plugin update ${pkgSpec}`,
+        })
+      }
+      return JSON.stringify({
+        ok: true,
+        message: `Updated ${pkgSpec} — restart OpenCode to reload`,
+      })
+    }
+
+    if (payload.action === 'legacy-scan') {
+      const scan = scanLegacyArtifacts({ workspaceDir: root, runningVersion })
+      guiCachedLegacyAudit = scan.summary
+      return JSON.stringify({
+        ok: true,
+        message:
+          scan.summary.total === 0
+            ? 'No legacy or obsolete files detected'
+            : `Found ${scan.summary.total} item(s) (${formatBytes(scan.summary.totalBytes)})`,
+      })
+    }
+
+    if (payload.action === 'legacy-clean') {
+      const res = cleanLegacyArtifacts({ workspaceDir: root, runningVersion })
+      guiCachedLegacyAudit = scanLegacyArtifacts({ workspaceDir: root, runningVersion }).summary
+      return JSON.stringify({
+        ok: true,
+        message: `Removed ${res.removed.length} item(s) (${formatBytes(res.reclaimedBytes)}), ${res.migratedRecords} record(s) migrated`,
+      })
+    }
+
+    if (payload.action === 'legacy-purge') {
+      const res = purgeAllPantheonData({ workspaceDir: root, runningVersion })
+      guiCachedLegacyAudit = scanLegacyArtifacts({ workspaceDir: root, runningVersion }).summary
+      return JSON.stringify({
+        ok: true,
+        message: `Purged ${res.removed.length} item(s) (${formatBytes(res.reclaimedBytes)})`,
+      })
+    }
+
+    return JSON.stringify({ ok: false, error: `Unknown action "${payload.action ?? ''}"` })
+  } catch (err) {
+    return JSON.stringify({
+      ok: false,
+      error: err instanceof Error ? err.message : 'Action failed',
     })
   }
 }
@@ -679,24 +1483,71 @@ const [sharedSnapshot, setSharedSnapshot] = createSignal<GuiSnapshot>({
   activeJobs: [],
   todayCostUSD: 0,
   monthCostUSD: 0,
+  modelSpend: [],
   overridesCount: 0,
+  corruptGlobalOverrides: false,
   gateMode: 'shadow',
+  cockpitAutoOpen: false,
+  cockpitShowTodo: true,
   artifactsCount: 0,
   activePreset: PRESET_NONE,
   presetProjectOverride: null,
+  visionModel: 'auto',
+  agentModels: KNOWN_AGENTS.map((agent) => ({ agent, model: '', variant: 'default' })),
   decisionEnabled: false,
   decisionMode: 'local',
-  behaviors: SETTINGS_BEHAVIORS.map((b) => ({
+  decisionTarget: DECISION_TARGET_CYCLE[0] ?? 'openai-decisions/gpt-6-luna',
+  decisionConsent: false,
+  decisionCorrupt: false,
+  decisionCandidates: [],
+  credentials: DECISION_KNOWN_PROVIDERS.map((provider) => ({
+    provider,
+    status: 'MISSING',
+    note: DECISION_PROVIDER_CREDENTIALS[provider]?.note ?? '',
+  })),
+  goalLoop: { ...DEFAULT_GOAL_LOOP_PREFS },
+  goalLoopRestartPending: false,
+  budgets: { ...DEFAULT_DECISION_BUDGETS },
+  j1Mode: 'shadow',
+  j1Threshold: 0.8,
+  j1DisabledByOverride: false,
+  tuiPrefs: DEFAULT_TUI_PREFS,
+  updateChannel: 'stable',
+  lastUpdateCheckMs: null,
+  latestVersion: null,
+  legacyAudit: null,
+  doctor: {
+    installVersion: 'unknown',
+    installStatus: 'unknown',
+    nodeVersion: '26.x',
+    nodeSupported: true,
+    overridesStatus: 'clean',
+    overridesUnknownCount: 0,
+    decisionStatus: 'absent',
+  },
+  changelogHighlights: [],
+  aboutToolGroups: [],
+  behaviorsGlobal: SETTINGS_BEHAVIORS.map((b) => ({
     id: b.id,
     title: b.title,
     description: b.description,
     kind: b.kind,
     enabled: true,
+    projectOverride: false,
+  })),
+  behaviorsProject: SETTINGS_BEHAVIORS.map((b) => ({
+    id: b.id,
+    title: b.title,
+    description: b.description,
+    kind: b.kind,
+    enabled: true,
+    projectOverride: false,
   })),
 })
 
 const [activeDirectory, setActiveDirectory] = createSignal('')
 const [uiError, setUiError] = createSignal<string | null>(null)
+const [uiNotice, setUiNotice] = createSignal<string | null>(null)
 
 function resolveActiveDirectory(ctx: SetupContext<any>, explicit?: () => string): string {
   const direct = explicit?.().trim()
@@ -1207,17 +2058,60 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
   )
 }
 
+type SettingsSectionTab =
+  | 'overview'
+  | 'gates'
+  | 'preset'
+  | 'decision'
+  | 'autonomy'
+  | 'tui'
+  | 'updates'
+  | 'doctor'
+
+const cardStyle = {
+  display: 'flex',
+  'flex-direction': 'column' as const,
+  gap: '8px',
+  padding: '10px',
+  'border-radius': '6px',
+  border: '1px solid var(--border-weak-base, #2e2e32)',
+}
+
+const rowStyle = {
+  display: 'flex',
+  'justify-content': 'space-between' as const,
+  'align-items': 'center' as const,
+  gap: '8px',
+}
+
+function pillButtonStyle(active: boolean) {
+  return {
+    padding: '2px 8px',
+    'border-radius': '4px',
+    border: '1px solid var(--border-weak-base, #3f3f46)',
+    background: active ? '#fba970' : 'transparent',
+    color: active ? '#111' : 'inherit',
+    'font-family': 'monospace',
+    'font-size': '11px',
+    'font-weight': active ? 600 : 400,
+    cursor: 'pointer',
+  }
+}
+
 function PantheonSettingsControls(props: {
   ctx: SetupContext<any>
   directory: () => string
   onSaved: () => Promise<void>
 }) {
-  const savePatch = async (patch: {
-    gateMode?: string
-    preset?: string
-    toggleBehaviorId?: string
-    decisionEnabled?: boolean
-  }) => {
+  const [section, setSection] = createSignal<SettingsSectionTab>('overview')
+  const [gateScope, setGateScope] = createSignal<OverridesScope>('project')
+  const [editingAgent, setEditingAgent] = createSignal<string | null>(null)
+  const [agentModelInput, setAgentModelInput] = createSignal('')
+  const [agentVariantInput, setAgentVariantInput] = createSignal('default')
+  const [busyAction, setBusyAction] = createSignal<string | null>(null)
+  const [confirmPurge, setConfirmPurge] = createSignal(false)
+
+  const savePatch = async (patch: Record<string, unknown>, notice?: string) => {
     try {
       const raw = await props.ctx.main(PantheonBridge).saveSettings(
         JSON.stringify({
@@ -1231,178 +2125,980 @@ function PantheonSettingsControls(props: {
         return
       }
       setUiError(null)
+      if (notice) setUiNotice(notice)
       await props.onSaved()
     } catch (err) {
       setUiError(err instanceof Error ? err.message : 'Settings IPC unavailable')
     }
   }
 
-  return (
-    <div style={{ display: 'flex', 'flex-direction': 'column', gap: '10px' }}>
-      <div
+  const triggerAction = async (action: string) => {
+    if (busyAction()) return
+    if (action === 'legacy-purge' && !confirmPurge()) {
+      setConfirmPurge(true)
+      setUiNotice('Armed: click "Confirm Purge" again to erase local .pantheon stores')
+      return
+    }
+    setConfirmPurge(false)
+    setBusyAction(action)
+    try {
+      const raw = await props.ctx.main(PantheonBridge).runAction(
+        JSON.stringify({
+          directory: props.directory(),
+          action,
+          channel: sharedSnapshot().updateChannel,
+        }),
+      )
+      const res = JSON.parse(raw) as { ok?: boolean; error?: string; message?: string }
+      if (res.ok === false) {
+        setUiError(res.error ?? 'Action failed')
+      } else {
+        setUiError(null)
+        if (res.message) setUiNotice(res.message)
+      }
+      await props.onSaved()
+    } catch (err) {
+      setUiError(err instanceof Error ? err.message : 'Action IPC unavailable')
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const scopedBehaviors = () =>
+    gateScope() === 'project' ? sharedSnapshot().behaviorsProject : sharedSnapshot().behaviorsGlobal
+
+  const tui = () => sharedSnapshot().tuiPrefs
+
+  const renderTuiToggle = (id: string, label: string, current: boolean, note?: string) => (
+    <div style={rowStyle}>
+      <div style={{ display: 'flex', 'flex-direction': 'column' }}>
+        <span style={{ 'font-size': '12px' }}>{label}</span>
+        <Show when={note}>
+          <span style={{ opacity: 0.65, 'font-size': '10px' }}>{note}</span>
+        </Show>
+      </div>
+      <button
+        type="button"
+        onClick={() => void savePatch({ tuiPref: { id, value: current ? 'disabled' : 'enabled' } })}
         style={{
-          display: 'flex',
-          'justify-content': 'space-between',
-          padding: '8px',
-          'border-radius': '6px',
-          border: '1px solid var(--border-weak-base, #2e2e32)',
+          ...pillButtonStyle(false),
+          color: current ? '#4ade80' : '#f87171',
         }}
       >
-        <span>OpenCode Spend (Today / 30d)</span>
-        <span style={{ 'font-family': 'monospace' }}>
-          {`$${sharedSnapshot().todayCostUSD.toFixed(2)} / $${sharedSnapshot().monthCostUSD.toFixed(2)}`}
+        {current ? 'enabled' : 'disabled'}
+      </button>
+    </div>
+  )
+
+  const renderTuiCycle = (
+    id: string,
+    label: string,
+    current: string,
+    options: readonly string[],
+  ) => (
+    <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
+      <div style={rowStyle}>
+        <span style={{ 'font-size': '12px' }}>{label}</span>
+        <span style={{ opacity: 0.7, 'font-family': 'monospace', 'font-size': '11px' }}>
+          {current}
         </span>
       </div>
-
-      <div
-        style={{
-          display: 'flex',
-          'justify-content': 'space-between',
-          'align-items': 'center',
-          gap: '8px',
-          padding: '8px',
-          'border-radius': '6px',
-          border: '1px solid var(--border-weak-base, #2e2e32)',
-        }}
-      >
-        <span>Auto-Permissions Gate</span>
-        <div style={{ display: 'flex', gap: '4px' }}>
-          {(['shadow', 'enforce', 'off'] as const).map((mode) => (
-            <button
-              type="button"
-              onClick={() => void savePatch({ gateMode: mode })}
-              style={{
-                padding: '2px 8px',
-                'border-radius': '4px',
-                border: '1px solid var(--border-weak-base, #3f3f46)',
-                background: sharedSnapshot().gateMode === mode ? '#fba970' : 'transparent',
-                color: sharedSnapshot().gateMode === mode ? '#111' : 'inherit',
-                'font-family': 'monospace',
-                'font-weight': sharedSnapshot().gateMode === mode ? 600 : 400,
-                cursor: 'pointer',
-              }}
-            >
-              {mode}
-            </button>
-          ))}
-        </div>
+      <div style={{ display: 'flex', 'flex-wrap': 'wrap', gap: '4px' }}>
+        {options.map((opt) => (
+          <button
+            type="button"
+            onClick={() => void savePatch({ tuiPref: { id, value: opt } })}
+            style={pillButtonStyle(current === opt)}
+          >
+            {opt}
+          </button>
+        ))}
       </div>
+    </div>
+  )
 
-      <div
-        style={{
-          display: 'flex',
-          'flex-direction': 'column',
-          gap: '6px',
-          padding: '8px',
-          'border-radius': '6px',
-          border: '1px solid var(--border-weak-base, #2e2e32)',
-        }}
-      >
+  return (
+    <div style={{ display: 'flex', 'flex-direction': 'column', gap: '10px' }}>
+      {/* Notice Banner */}
+      <Show when={uiNotice() !== null}>
         <div
-          style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' }}
-        >
-          <span>Model Preset (Global)</span>
-          <span style={{ opacity: 0.7, 'font-family': 'monospace' }}>
-            {sharedSnapshot().presetProjectOverride
-              ? `project: ${sharedSnapshot().presetProjectOverride}`
-              : sharedSnapshot().activePreset}
-          </span>
-        </div>
-        <div style={{ display: 'flex', 'flex-wrap': 'wrap', gap: '4px' }}>
-          {[PRESET_NONE, ...PRESET_NAMES].map((preset) => (
-            <button
-              type="button"
-              onClick={() => void savePatch({ preset })}
-              style={{
-                padding: '2px 8px',
-                'border-radius': '4px',
-                border: '1px solid var(--border-weak-base, #3f3f46)',
-                background: sharedSnapshot().activePreset === preset ? '#fba970' : 'transparent',
-                color: sharedSnapshot().activePreset === preset ? '#111' : 'inherit',
-                'font-family': 'monospace',
-                'font-weight': sharedSnapshot().activePreset === preset ? 600 : 400,
-                cursor: 'pointer',
-              }}
-            >
-              {preset}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div
-        style={{
-          display: 'flex',
-          'justify-content': 'space-between',
-          'align-items': 'center',
-          padding: '8px',
-          'border-radius': '6px',
-          border: '1px solid var(--border-weak-base, #2e2e32)',
-        }}
-      >
-        <span>{`Decision Router (${sharedSnapshot().decisionMode})`}</span>
-        <button
-          type="button"
-          onClick={() => void savePatch({ decisionEnabled: !sharedSnapshot().decisionEnabled })}
           style={{
-            padding: '2px 10px',
+            display: 'flex',
+            'justify-content': 'space-between',
+            'align-items': 'center',
+            padding: '6px 8px',
             'border-radius': '4px',
-            border: '1px solid var(--border-weak-base, #3f3f46)',
-            background: sharedSnapshot().decisionEnabled ? '#fba970' : 'transparent',
-            color: sharedSnapshot().decisionEnabled ? '#111' : 'inherit',
-            'font-family': 'monospace',
-            cursor: 'pointer',
+            border: '1px solid #fba970',
+            color: '#fdba74',
+            'font-size': '11px',
           }}
         >
-          {sharedSnapshot().decisionEnabled ? 'enabled' : 'disabled'}
-        </button>
+          <span>{uiNotice()}</span>
+          <button
+            type="button"
+            onClick={() => setUiNotice(null)}
+            style={{
+              border: 'none',
+              background: 'transparent',
+              color: 'inherit',
+              cursor: 'pointer',
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      </Show>
+
+      {/* Section Pill Navigation */}
+      <div style={{ display: 'flex', 'flex-wrap': 'wrap', gap: '4px' }}>
+        {(
+          [
+            ['overview', 'Overview & Cost'],
+            ['gates', 'Gates'],
+            ['preset', 'Presets & Models'],
+            ['decision', 'Decision (Jev)'],
+            ['autonomy', 'Autonomy & J1'],
+            ['tui', 'TUI & Layout'],
+            ['updates', 'Updates & Cleanup'],
+            ['doctor', 'Doctor & About'],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            type="button"
+            onClick={() => {
+              setConfirmPurge(false)
+              setSection(id)
+            }}
+            style={pillButtonStyle(section() === id)}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
-      <div
-        style={{
-          display: 'flex',
-          'flex-direction': 'column',
-          gap: '6px',
-          padding: '8px',
-          'border-radius': '6px',
-          border: '1px solid var(--border-weak-base, #2e2e32)',
-        }}
-      >
-        <div style={{ 'font-weight': 600 }}>Behavior Overrides</div>
-        <For each={sharedSnapshot().behaviors}>
-          {(beh) => (
+      {/* 1. Overview & Cost */}
+      <Show when={section() === 'overview'}>
+        <div style={cardStyle}>
+          <div style={{ 'font-weight': 600 }}>OpenCode Spend (Today / 30d)</div>
+          <div style={rowStyle}>
+            <span>Total Cost</span>
+            <span style={{ 'font-family': 'monospace', 'font-weight': 600 }}>
+              {`$${sharedSnapshot().todayCostUSD.toFixed(2)} / $${sharedSnapshot().monthCostUSD.toFixed(2)}`}
+            </span>
+          </div>
+          <Show when={sharedSnapshot().modelSpend.length > 0}>
             <div
               style={{
                 display: 'flex',
-                'justify-content': 'space-between',
-                'align-items': 'center',
-                gap: '8px',
+                'flex-direction': 'column',
+                gap: '4px',
+                'border-top': '1px solid var(--border-weak-base, #2e2e32)',
+                'padding-top': '6px',
               }}
             >
-              <span style={{ opacity: 0.85 }}>{`${beh.title} (${beh.kind})`}</span>
+              <span style={{ opacity: 0.75, 'font-size': '11px' }}>30d Model Breakdown</span>
+              <For each={sharedSnapshot().modelSpend}>
+                {(m) => (
+                  <div style={{ ...rowStyle, 'font-size': '11px', 'font-family': 'monospace' }}>
+                    <span style={{ opacity: 0.9 }}>{`${m.providerID}/${m.modelID}`}</span>
+                    <span style={{ opacity: 0.75 }}>
+                      {`${(m.tokens / 1000).toFixed(1)}k tok · ${m.estimatedUsd !== undefined ? `$${m.estimatedUsd.toFixed(2)}` : 'unpriced'}`}
+                    </span>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
+        </div>
+
+        <div style={cardStyle}>
+          <div style={rowStyle}>
+            <span>Auto-Permissions Gate</span>
+            <div style={{ display: 'flex', gap: '4px' }}>
+              {(['shadow', 'enforce', 'off'] as const).map((mode) => (
+                <button
+                  type="button"
+                  onClick={() => void savePatch({ gateMode: mode })}
+                  style={pillButtonStyle(sharedSnapshot().gateMode === mode)}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={rowStyle}>
+            <span>Cockpit Auto-Open</span>
+            <button
+              type="button"
+              onClick={() => void savePatch({ cockpitAutoOpen: !sharedSnapshot().cockpitAutoOpen })}
+              style={{
+                ...pillButtonStyle(false),
+                color: sharedSnapshot().cockpitAutoOpen ? '#4ade80' : '#f87171',
+              }}
+            >
+              {sharedSnapshot().cockpitAutoOpen ? 'enabled' : 'disabled'}
+            </button>
+          </div>
+          <div style={rowStyle}>
+            <span>Show Todo Block in Cockpit</span>
+            <button
+              type="button"
+              onClick={() => void savePatch({ cockpitShowTodo: !sharedSnapshot().cockpitShowTodo })}
+              style={{
+                ...pillButtonStyle(false),
+                color: sharedSnapshot().cockpitShowTodo ? '#4ade80' : '#f87171',
+              }}
+            >
+              {sharedSnapshot().cockpitShowTodo ? 'enabled' : 'disabled'}
+            </button>
+          </div>
+        </div>
+
+        <div style={{ opacity: 0.75, 'font-size': '11px' }}>
+          {`Preset: ${sharedSnapshot().presetProjectOverride ?? sharedSnapshot().activePreset} · Decision: ${sharedSnapshot().decisionEnabled ? sharedSnapshot().decisionMode : 'off'} · Overrides: ${sharedSnapshot().overridesCount} · Plans: ${sharedSnapshot().artifactsCount} · Jobs: ${sharedSnapshot().activeJobs.length}`}
+        </div>
+      </Show>
+
+      {/* 2. Gates & Behavior Overrides */}
+      <Show when={section() === 'gates'}>
+        <div style={cardStyle}>
+          <div style={rowStyle}>
+            <span style={{ 'font-weight': 600 }}>Overrides Scope</span>
+            <div style={{ display: 'flex', gap: '4px' }}>
+              {(['project', 'global'] as const).map((sc) => (
+                <button
+                  type="button"
+                  onClick={() => setGateScope(sc)}
+                  style={pillButtonStyle(gateScope() === sc)}
+                >
+                  {sc === 'project' ? 'project (.pantheon)' : 'global (~/.config)'}
+                </button>
+              ))}
+            </div>
+          </div>
+          <Show when={gateScope() === 'global' && sharedSnapshot().corruptGlobalOverrides}>
+            <span style={{ color: '#fca5a5', 'font-size': '11px' }}>
+              Global overrides file is unreadable — repair with `doctor --fix` before editing.
+            </span>
+          </Show>
+        </div>
+
+        {(['install', 'runtime'] as const).map((kind) => (
+          <div style={cardStyle}>
+            <div style={{ 'font-weight': 600 }}>
+              {kind === 'install' ? 'Install Skills' : 'Runtime Gates'}
+            </div>
+            <For each={scopedBehaviors().filter((b) => b.kind === kind)}>
+              {(beh) => {
+                const blockedByProject = () => gateScope() === 'global' && beh.projectOverride
+                return (
+                  <div style={rowStyle}>
+                    <div style={{ display: 'flex', 'flex-direction': 'column' }}>
+                      <span>
+                        {beh.title}
+                        <Show when={beh.projectOverride}>
+                          <span style={{ opacity: 0.65, 'font-size': '10px' }}> (project)</span>
+                        </Show>
+                      </span>
+                      <span style={{ opacity: 0.65, 'font-size': '10px' }}>{beh.description}</span>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={blockedByProject()}
+                      onClick={() =>
+                        void savePatch({
+                          overrideToggle: {
+                            id: beh.id,
+                            scope: gateScope(),
+                            enabled: !beh.enabled,
+                          },
+                        })
+                      }
+                      style={{
+                        ...pillButtonStyle(false),
+                        opacity: blockedByProject() ? 0.45 : 1,
+                        cursor: blockedByProject() ? 'not-allowed' : 'pointer',
+                        color: beh.enabled ? '#4ade80' : '#f87171',
+                      }}
+                    >
+                      {beh.enabled ? 'enabled' : 'disabled'}
+                    </button>
+                  </div>
+                )
+              }}
+            </For>
+          </div>
+        ))}
+      </Show>
+
+      {/* 3. Presets & Per-Agent Models */}
+      <Show when={section() === 'preset'}>
+        <div style={cardStyle}>
+          <div style={rowStyle}>
+            <span style={{ 'font-weight': 600 }}>Model Preset (Global)</span>
+            <span style={{ opacity: 0.7, 'font-family': 'monospace', 'font-size': '11px' }}>
+              {sharedSnapshot().presetProjectOverride
+                ? `project wins: ${sharedSnapshot().presetProjectOverride}`
+                : sharedSnapshot().activePreset}
+            </span>
+          </div>
+          <div style={{ display: 'flex', 'flex-wrap': 'wrap', gap: '4px' }}>
+            {[PRESET_NONE, ...PRESET_NAMES].map((preset) => (
               <button
                 type="button"
-                onClick={() => void savePatch({ toggleBehaviorId: beh.id })}
-                style={{
-                  padding: '2px 8px',
-                  'border-radius': '4px',
-                  border: '1px solid var(--border-weak-base, #3f3f46)',
-                  background: 'transparent',
-                  color: beh.enabled ? '#4ade80' : '#f87171',
-                  'font-family': 'monospace',
-                  cursor: 'pointer',
-                }}
+                onClick={() => void savePatch({ preset }, `Global preset set to ${preset}`)}
+                style={pillButtonStyle(sharedSnapshot().activePreset === preset)}
               >
-                {beh.enabled ? 'on' : 'off'}
+                {preset}
               </button>
-            </div>
-          )}
-        </For>
-      </div>
+            ))}
+          </div>
+        </div>
 
-      <div style={{ opacity: 0.75, 'font-size': '11px' }}>
-        {`Overrides: ${sharedSnapshot().overridesCount} · Plans: ${sharedSnapshot().artifactsCount} · Active jobs: ${sharedSnapshot().activeJobs.length}`}
-      </div>
+        <div style={cardStyle}>
+          <div style={rowStyle}>
+            <span style={{ 'font-weight': 600 }}>Vision Model (vision_describe)</span>
+            <span style={{ opacity: 0.7, 'font-family': 'monospace', 'font-size': '11px' }}>
+              {sharedSnapshot().visionModel}
+            </span>
+          </div>
+          <div style={{ display: 'flex', 'flex-wrap': 'wrap', gap: '4px' }}>
+            {VISION_MODEL_OPTIONS.map((vm) => (
+              <button
+                type="button"
+                onClick={() => void savePatch({ visionModel: vm }, `Vision model set to ${vm}`)}
+                style={pillButtonStyle(sharedSnapshot().visionModel === vm)}
+              >
+                {vm}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={cardStyle}>
+          <div style={{ 'font-weight': 600 }}>
+            Per-Agent Model Overrides (.pantheon/active-preset.json)
+          </div>
+          <For each={sharedSnapshot().agentModels}>
+            {(item) => (
+              <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
+                <div style={rowStyle}>
+                  <span style={{ 'font-family': 'monospace', 'font-weight': 600 }}>
+                    {item.agent}
+                  </span>
+                  <div style={{ display: 'flex', 'align-items': 'center', gap: '6px' }}>
+                    <span style={{ opacity: 0.8, 'font-family': 'monospace', 'font-size': '11px' }}>
+                      {item.model ? `${item.model} (${item.variant})` : 'preset default'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (editingAgent() === item.agent) {
+                          setEditingAgent(null)
+                        } else {
+                          setEditingAgent(item.agent)
+                          setAgentModelInput(item.model)
+                          setAgentVariantInput(item.variant || 'default')
+                        }
+                      }}
+                      style={pillButtonStyle(editingAgent() === item.agent)}
+                    >
+                      {editingAgent() === item.agent ? 'Cancel' : 'Edit'}
+                    </button>
+                  </div>
+                </div>
+                <Show when={editingAgent() === item.agent}>
+                  <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
+                    <input
+                      type="text"
+                      placeholder="provider/model-id (empty = clear)"
+                      value={agentModelInput()}
+                      onInput={(e) => setAgentModelInput(e.currentTarget.value)}
+                      style={{
+                        flex: 1,
+                        padding: '3px 6px',
+                        'border-radius': '4px',
+                        border: '1px solid var(--border-weak-base, #3f3f46)',
+                        background: 'transparent',
+                        color: 'inherit',
+                        'font-family': 'monospace',
+                        'font-size': '11px',
+                      }}
+                    />
+                    <select
+                      value={agentVariantInput()}
+                      onChange={(e) => setAgentVariantInput(e.currentTarget.value)}
+                      style={{
+                        padding: '3px 6px',
+                        'border-radius': '4px',
+                        border: '1px solid var(--border-weak-base, #3f3f46)',
+                        background: '#18181b',
+                        color: 'inherit',
+                        'font-size': '11px',
+                      }}
+                    >
+                      <option value="default">default</option>
+                      <option value="low">low</option>
+                      <option value="medium">medium</option>
+                      <option value="high">high</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const agent = item.agent
+                        const model = agentModelInput()
+                        const variant = agentVariantInput()
+                        setEditingAgent(null)
+                        void savePatch(
+                          { agentModel: { agent, model, variant } },
+                          `Updated ${agent} model override`,
+                        )
+                      }}
+                      style={pillButtonStyle(true)}
+                    >
+                      Save
+                    </button>
+                  </div>
+                </Show>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
+
+      {/* 4. Decision Router (Jev) */}
+      <Show when={section() === 'decision'}>
+        <div style={cardStyle}>
+          <div style={{ 'font-weight': 600 }}>Decision Assistant (Jev)</div>
+          <Show when={sharedSnapshot().decisionCorrupt}>
+            <span style={{ color: '#fca5a5', 'font-size': '11px' }}>
+              decision-router.json is corrupt — repair via `decision-router setup-model`.
+            </span>
+          </Show>
+          <div style={rowStyle}>
+            <span>Jev Assistant</span>
+            <button
+              type="button"
+              onClick={() => void savePatch({ decisionEnabled: !sharedSnapshot().decisionEnabled })}
+              style={{
+                ...pillButtonStyle(sharedSnapshot().decisionEnabled),
+                color: sharedSnapshot().decisionEnabled ? '#111' : 'inherit',
+              }}
+            >
+              {sharedSnapshot().decisionEnabled ? 'enabled' : 'disabled'}
+            </button>
+          </div>
+          <div style={rowStyle}>
+            <span>Operation Mode</span>
+            <div style={{ display: 'flex', gap: '4px' }}>
+              {DECISION_SELECTION_CYCLE.map((mode) => (
+                <button
+                  type="button"
+                  onClick={() => void savePatch({ decisionMode: mode })}
+                  style={pillButtonStyle(sharedSnapshot().decisionMode === mode)}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
+            <div style={rowStyle}>
+              <span>Decision Model Target</span>
+              <span style={{ opacity: 0.7, 'font-family': 'monospace', 'font-size': '11px' }}>
+                {sharedSnapshot().decisionMode === 'local'
+                  ? 'local (on-device)'
+                  : sharedSnapshot().decisionTarget}
+              </span>
+            </div>
+            <div style={{ display: 'flex', 'flex-wrap': 'wrap', gap: '4px' }}>
+              {DECISION_TARGET_CYCLE.map((target) => (
+                <button
+                  type="button"
+                  onClick={() => void savePatch({ decisionTarget: target })}
+                  style={pillButtonStyle(sharedSnapshot().decisionTarget === target)}
+                >
+                  {target}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={rowStyle}>
+            <span>Cloud API Egress Consent</span>
+            <button
+              type="button"
+              onClick={() => void savePatch({ decisionConsent: !sharedSnapshot().decisionConsent })}
+              style={{
+                ...pillButtonStyle(false),
+                color: sharedSnapshot().decisionConsent ? '#4ade80' : '#f87171',
+              }}
+            >
+              {sharedSnapshot().decisionConsent ? 'granted' : 'not granted'}
+            </button>
+          </div>
+          <Show when={sharedSnapshot().decisionCandidates.length > 0}>
+            <div style={{ opacity: 0.75, 'font-size': '11px', 'font-family': 'monospace' }}>
+              {`Candidates: ${sharedSnapshot()
+                .decisionCandidates.map((c) => `${c.provider}/${c.model}`)
+                .join(', ')}`}
+            </div>
+          </Show>
+        </div>
+
+        <div style={cardStyle}>
+          <div style={{ 'font-weight': 600 }}>Provider Credentials (Status Only)</div>
+          <For each={sharedSnapshot().credentials}>
+            {(cred) => (
+              <div style={rowStyle}>
+                <div style={{ display: 'flex', 'flex-direction': 'column' }}>
+                  <span style={{ 'font-family': 'monospace', 'font-size': '11px' }}>
+                    {cred.provider}
+                  </span>
+                  <span style={{ opacity: 0.65, 'font-size': '10px' }}>{cred.note}</span>
+                </div>
+                <span
+                  style={{
+                    'font-family': 'monospace',
+                    'font-size': '11px',
+                    color: cred.status === 'MISSING' ? '#f87171' : '#4ade80',
+                  }}
+                >
+                  {cred.status}
+                </span>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
+
+      {/* 5. Autonomy & J1 Safety */}
+      <Show when={section() === 'autonomy'}>
+        <div style={cardStyle}>
+          <div style={rowStyle}>
+            <span style={{ 'font-weight': 600 }}>Auto-Continue Loop (goal_loop)</span>
+            <Show when={sharedSnapshot().goalLoopRestartPending}>
+              <span style={{ color: '#f59e0b', 'font-size': '11px' }}>
+                Restart OpenCode to apply
+              </span>
+            </Show>
+          </div>
+          <div style={rowStyle}>
+            <span>Enabled</span>
+            <button
+              type="button"
+              onClick={() =>
+                void savePatch({ goalLoop: { enabled: !sharedSnapshot().goalLoop.enabled } })
+              }
+              style={{
+                ...pillButtonStyle(false),
+                color: sharedSnapshot().goalLoop.enabled ? '#4ade80' : '#f87171',
+              }}
+            >
+              {sharedSnapshot().goalLoop.enabled ? 'enabled' : 'disabled'}
+            </button>
+          </div>
+          <div style={rowStyle}>
+            <span>Max Continuations</span>
+            <div style={{ display: 'flex', gap: '4px' }}>
+              {MAX_CONTINUATIONS_CYCLE.map((val) => (
+                <button
+                  type="button"
+                  onClick={() => void savePatch({ goalLoop: { maxContinuations: Number(val) } })}
+                  style={pillButtonStyle(
+                    String(sharedSnapshot().goalLoop.maxContinuations) === val,
+                  )}
+                >
+                  {val}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={rowStyle}>
+            <span>Cooldown (ms)</span>
+            <div style={{ display: 'flex', gap: '4px' }}>
+              {COOLDOWN_MS_CYCLE.map((val) => (
+                <button
+                  type="button"
+                  onClick={() => void savePatch({ goalLoop: { cooldownMs: Number(val) } })}
+                  style={pillButtonStyle(String(sharedSnapshot().goalLoop.cooldownMs) === val)}
+                >
+                  {val}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div style={cardStyle}>
+          <div style={{ 'font-weight': 600 }}>Decision Budgets (Jev)</div>
+          <div style={rowStyle}>
+            <span>Monthly Cap (USD)</span>
+            <div style={{ display: 'flex', 'flex-wrap': 'wrap', gap: '4px' }}>
+              {MONTHLY_USD_CYCLE.map((val) => (
+                <button
+                  type="button"
+                  onClick={() => void savePatch({ budgetMonthly: val })}
+                  style={pillButtonStyle(formatUsd(sharedSnapshot().budgets.monthlyUsd) === val)}
+                >
+                  {val}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={rowStyle}>
+            <span>Per-Decision Cap</span>
+            <div style={{ display: 'flex', 'flex-wrap': 'wrap', gap: '4px' }}>
+              {PER_DECISION_USD_CYCLE.map((val) => (
+                <button
+                  type="button"
+                  onClick={() => void savePatch({ budgetPerDecision: val })}
+                  style={pillButtonStyle(
+                    formatUsd(sharedSnapshot().budgets.perDecisionUsd) === val,
+                  )}
+                >
+                  {val}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div style={cardStyle}>
+          <div style={{ 'font-weight': 600 }}>J1 Safety Risk Gate (Startup Env)</div>
+          <div style={rowStyle}>
+            <span>Operation Mode</span>
+            <span style={{ 'font-family': 'monospace' }}>{sharedSnapshot().j1Mode}</span>
+          </div>
+          <div style={rowStyle}>
+            <span>Enforce Threshold</span>
+            <span style={{ 'font-family': 'monospace' }}>{sharedSnapshot().j1Threshold}</span>
+          </div>
+          <div style={rowStyle}>
+            <span>Gate Status</span>
+            <span style={{ 'font-family': 'monospace' }}>
+              {sharedSnapshot().j1DisabledByOverride
+                ? 'disabled via overrides'
+                : sharedSnapshot().j1Mode === 'off'
+                  ? 'off (env unset)'
+                  : 'active'}
+            </span>
+          </div>
+          <span style={{ opacity: 0.65, 'font-size': '10px' }}>
+            {`${J1_FLAG_ENV} / ${J1_THRESHOLD_ENV} · read once at startup`}
+          </span>
+        </div>
+      </Show>
+
+      {/* 6. TUI & Layout Preferences */}
+      <Show when={section() === 'tui'}>
+        <div style={cardStyle}>
+          <div style={{ 'font-weight': 600 }}>Preset & Layout</div>
+          {renderTuiCycle(
+            'tui.layout.preset',
+            'Layout Preset',
+            tui().layout.preset,
+            LAYOUT_PRESETS_CYCLE,
+          )}
+          {renderTuiCycle(
+            'tui.layout.separator',
+            'Separator',
+            tui().layout.separator,
+            SEPARATOR_STYLES_CYCLE,
+          )}
+          {renderTuiCycle(
+            'tui.layout.settingsView',
+            'Settings Surface',
+            tui().layout.settingsView ?? 'docked',
+            SETTINGS_VIEW_MODES,
+          )}
+          {renderTuiCycle(
+            'tui.layout.language',
+            'Language / Idioma',
+            tui().layout.language ?? 'auto',
+            LANGUAGE_CYCLE,
+          )}
+        </div>
+
+        <div style={cardStyle}>
+          <div style={{ 'font-weight': 600 }}>Colors & Theme</div>
+          {renderTuiCycle(
+            'tui.theme.mode',
+            'Theme Mode',
+            tui().theme?.mode ?? 'auto',
+            THEME_MODES_CYCLE,
+          )}
+          {renderTuiCycle(
+            'tui.theme.accent',
+            'Accent Color',
+            tui().theme?.accent ?? 'host',
+            ACCENT_COLORS_CYCLE,
+          )}
+        </div>
+
+        <div style={cardStyle}>
+          <div style={{ 'font-weight': 600 }}>Bars & Gauges</div>
+          {renderTuiCycle(
+            'tui.sidebar.context.barShape',
+            'Bar Shape',
+            tui().sidebar.context.barShape,
+            BAR_SHAPES_CYCLE,
+          )}
+          {renderTuiCycle(
+            'tui.sidebar.context.barWidth',
+            'Bar Width',
+            tui().sidebar.context.barWidth,
+            BAR_WIDTHS_CYCLE,
+          )}
+          {renderTuiCycle(
+            'tui.sidebar.context.gauge',
+            'Gauge Style',
+            tui().sidebar.context.gauge,
+            GAUGE_STYLES,
+          )}
+          {renderTuiToggle(
+            'tui.sidebar.context.evenMark',
+            'Even-Use Mark (50%)',
+            tui().sidebar.context.evenMark,
+          )}
+        </div>
+
+        <div style={cardStyle}>
+          <div style={{ 'font-weight': 600 }}>Sidebar Header, Blocks & Footers</div>
+          {renderTuiToggle(
+            'tui.sidebar.header.version',
+            'Header: Version',
+            tui().sidebar.header.version,
+          )}
+          {renderTuiToggle(
+            'tui.sidebar.header.preset',
+            'Header: Preset',
+            tui().sidebar.header.preset,
+          )}
+          {renderTuiToggle(
+            'tui.sidebar.header.session',
+            'Header: Session',
+            tui().sidebar.header.session,
+          )}
+          {renderTuiToggle(
+            'tui.sidebar.block.context',
+            'Block: Context',
+            tui().sidebar.blocks.context,
+          )}
+          {renderTuiToggle('tui.sidebar.block.git', 'Block: Git', tui().sidebar.blocks.git)}
+          {renderTuiToggle(
+            'tui.sidebar.block.todo',
+            'Block: Todo',
+            tui().sidebar.blocks.todo ?? true,
+          )}
+          {renderTuiToggle(
+            'tui.sidebar.block.dispatch',
+            'Block: Dispatch',
+            tui().sidebar.blocks.dispatch,
+          )}
+          {renderTuiToggle(
+            'tui.sidebar.context.tokens',
+            'Context: Tokens Row',
+            tui().sidebar.context.tokens,
+          )}
+          {renderTuiToggle(
+            'tui.sidebar.context.spent',
+            'Context: Spent Row',
+            tui().sidebar.context.spent,
+          )}
+          {renderTuiToggle(
+            'tui.sidebar.context.modelUsage',
+            'Context: Model Usage',
+            tui().sidebar.context.modelUsage,
+          )}
+          {renderTuiToggle(
+            'tui.sidebar.context.performance',
+            'Context: Performance',
+            tui().sidebar.context.performance,
+          )}
+          {renderTuiToggle(
+            'tui.sidebar.context.turnCost',
+            'Context: Turn Cost',
+            tui().sidebar.context.turnCost,
+          )}
+          {renderTuiToggle(
+            'tui.sidebar.context.tokenAnatomy',
+            'Context: Token Anatomy',
+            tui().sidebar.context.tokenAnatomy,
+          )}
+          {renderTuiToggle(
+            'tui.sidebar.context.localSpend',
+            'Context: Local Spend',
+            tui().sidebar.context.localSpend,
+          )}
+          {renderTuiToggle('tui.footer.prompt', 'Footer: Prompt', tui().footer.prompt)}
+          {renderTuiToggle('tui.footer.home', 'Footer: Home Status', tui().footer.home)}
+        </div>
+      </Show>
+
+      {/* 7. Updates & Legacy Cleanup */}
+      <Show when={section() === 'updates'}>
+        <div style={cardStyle}>
+          <div style={{ 'font-weight': 600 }}>Plugin Updates</div>
+          <div style={rowStyle}>
+            <span>Channel</span>
+            <div style={{ display: 'flex', gap: '4px' }}>
+              {(['stable', 'beta'] as const).map((ch) => (
+                <button
+                  type="button"
+                  onClick={() => void savePatch({ updateChannel: ch })}
+                  style={pillButtonStyle(sharedSnapshot().updateChannel === ch)}
+                >
+                  {ch}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={rowStyle}>
+            <span>Latest Registry Version</span>
+            <span style={{ 'font-family': 'monospace' }}>
+              {sharedSnapshot().latestVersion
+                ? `v${sharedSnapshot().latestVersion}`
+                : 'not checked'}
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}>
+            <button
+              type="button"
+              disabled={busyAction() !== null}
+              onClick={() => void triggerAction('update-check')}
+              style={pillButtonStyle(false)}
+            >
+              {busyAction() === 'update-check' ? 'Checking…' : 'Check Now'}
+            </button>
+            <button
+              type="button"
+              disabled={busyAction() !== null}
+              onClick={() => void triggerAction('update-run')}
+              style={pillButtonStyle(true)}
+            >
+              {busyAction() === 'update-run' ? 'Updating…' : 'Update / Refresh Plugin'}
+            </button>
+          </div>
+        </div>
+
+        <div style={cardStyle}>
+          <div style={{ 'font-weight': 600 }}>Legacy, Drift & Cleanup</div>
+          <div style={rowStyle}>
+            <span>Audit Status</span>
+            <span style={{ 'font-family': 'monospace' }}>
+              {sharedSnapshot().legacyAudit
+                ? sharedSnapshot().legacyAudit?.total === 0
+                  ? 'clean (0 obsolete)'
+                  : `${sharedSnapshot().legacyAudit?.total ?? 0} item(s) (${formatBytes(sharedSnapshot().legacyAudit?.totalBytes ?? 0)})`
+                : 'not scanned'}
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}>
+            <button
+              type="button"
+              disabled={busyAction() !== null}
+              onClick={() => void triggerAction('legacy-scan')}
+              style={pillButtonStyle(false)}
+            >
+              {busyAction() === 'legacy-scan' ? 'Scanning…' : 'Scan Legacy & Drift'}
+            </button>
+            <button
+              type="button"
+              disabled={busyAction() !== null}
+              onClick={() => void triggerAction('legacy-clean')}
+              style={pillButtonStyle(false)}
+            >
+              {busyAction() === 'legacy-clean' ? 'Cleaning…' : 'Migrate & Clean Obsolete'}
+            </button>
+            <button
+              type="button"
+              disabled={busyAction() !== null}
+              onClick={() => void triggerAction('legacy-purge')}
+              style={{
+                ...pillButtonStyle(confirmPurge()),
+                border: '1px solid #ef4444',
+                color: confirmPurge() ? '#111' : '#fca5a5',
+                background: confirmPurge() ? '#ef4444' : 'transparent',
+              }}
+            >
+              {busyAction() === 'legacy-purge'
+                ? 'Purging…'
+                : confirmPurge()
+                  ? 'Confirm Purge (.pantheon)'
+                  : 'Purge Pantheon Data'}
+            </button>
+          </div>
+        </div>
+      </Show>
+
+      {/* 8. Doctor, Changelog & About */}
+      <Show when={section() === 'doctor'}>
+        <div style={cardStyle}>
+          <div style={{ 'font-weight': 600 }}>Doctor Health (File-Derived)</div>
+          <div style={rowStyle}>
+            <span>Install Version</span>
+            <span style={{ 'font-family': 'monospace' }}>
+              {`${sharedSnapshot().doctor.installVersion} (${sharedSnapshot().doctor.installStatus})`}
+            </span>
+          </div>
+          <div style={rowStyle}>
+            <span>{`Node Runtime (>= ${MIN_SUPPORTED_NODE_VERSION})`}</span>
+            <span
+              style={{
+                'font-family': 'monospace',
+                color: sharedSnapshot().doctor.nodeSupported ? '#4ade80' : '#f87171',
+              }}
+            >
+              {`v${sharedSnapshot().doctor.nodeVersion}`}
+            </span>
+          </div>
+          <div style={rowStyle}>
+            <span>Overrides Health</span>
+            <span style={{ 'font-family': 'monospace' }}>
+              {sharedSnapshot().doctor.overridesStatus}
+            </span>
+          </div>
+          <div style={rowStyle}>
+            <span>Decision Config</span>
+            <span style={{ 'font-family': 'monospace' }}>
+              {sharedSnapshot().doctor.decisionStatus}
+            </span>
+          </div>
+        </div>
+
+        <Show when={sharedSnapshot().changelogHighlights.length > 0}>
+          <div style={cardStyle}>
+            <div style={{ 'font-weight': 600 }}>{`What's New in v${resolveRunningVersion()}`}</div>
+            <For each={sharedSnapshot().changelogHighlights.slice(0, 8)}>
+              {(hl) => (
+                <div style={{ 'font-size': '11px' }}>
+                  <strong>{hl.title}</strong>
+                  <span style={{ opacity: 0.75 }}>{`: ${hl.detail}`}</span>
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
+
+        <div style={cardStyle}>
+          <div style={{ 'font-weight': 600 }}>Native Tools (30)</div>
+          <For each={sharedSnapshot().aboutToolGroups}>
+            {(grp) => (
+              <div style={{ display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
+                <div style={rowStyle}>
+                  <span style={{ 'font-size': '11px', 'font-weight': 600 }}>{grp.name}</span>
+                  <span style={{ 'font-family': 'monospace', 'font-size': '10px', opacity: 0.8 }}>
+                    {grp.value}
+                  </span>
+                </div>
+                <span style={{ opacity: 0.65, 'font-size': '10px', 'font-family': 'monospace' }}>
+                  {grp.note}
+                </span>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
     </div>
   )
 }
@@ -1475,6 +3171,7 @@ export default Plugin.define({
       snapshot: async (directory) => JSON.stringify(await readSnapshotFromDisk(directory)),
       postBoardMessage: (payload) => appendBoardMessageToDisk(payload),
       saveSettings: (payload) => saveSettingsToDisk(payload),
+      runAction: async (payload) => await runActionOnDisk(payload),
     })
   },
   setup(ctx) {
