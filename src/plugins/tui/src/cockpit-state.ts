@@ -138,6 +138,8 @@ export interface CockpitStepEntry {
   readonly mutatedCount: number
   readonly receiptId?: string
   readonly hasBaselineTree: boolean
+  readonly dependsOn?: readonly string[]
+  readonly blockedBy?: readonly string[]
   readonly updatedAt: string
 }
 
@@ -198,6 +200,8 @@ export interface CockpitSnapshot {
     readonly gateGlyphs: string
     readonly gateSummary: string
     readonly steps: readonly CockpitStepEntry[]
+    /** `step-ledger.json` exists but cannot be read/parsed (state unknown, not empty). */
+    readonly stepsCorrupt: boolean
     readonly logs: readonly CockpitLogEntry[]
   }
 }
@@ -253,15 +257,32 @@ export function renderWorkMapLines(counts: {
   ]
 }
 
-function loadStepEntries(workspaceDir: string): CockpitStepEntry[] {
+function loadStepDependencyField(
+  step: Record<string, unknown>,
+  field: 'dependsOn' | 'blockedBy',
+): { dependsOn?: string[] } | { blockedBy?: string[] } {
+  const raw = step[field]
+  if (!Array.isArray(raw)) return {}
+  const keys = raw.filter((value): value is string => typeof value === 'string' && value.length > 0)
+  if (keys.length === 0) return {}
+  return field === 'dependsOn' ? { dependsOn: keys } : { blockedBy: keys }
+}
+
+interface StepLedgerLoad {
+  readonly entries: CockpitStepEntry[]
+  /** True when the ledger file exists but its content cannot be read/parsed. */
+  readonly corrupt: boolean
+}
+
+function loadStepEntries(workspaceDir: string): StepLedgerLoad {
   const ledgerPath = join(workspaceDir, '.pantheon', 'ledger', 'step-ledger.json')
-  if (!existsSync(ledgerPath)) return []
+  if (!existsSync(ledgerPath)) return { entries: [], corrupt: false }
   try {
     const parsed = JSON.parse(readFileSync(ledgerPath, 'utf8')) as {
       steps?: Record<string, Record<string, unknown>>
     }
     const list = Object.values(parsed.steps ?? {})
-    return list
+    const entries = list
       .map((s) => ({
         stepKey: String(s.stepKey ?? ''),
         objective: String(s.objective ?? ''),
@@ -271,11 +292,16 @@ function loadStepEntries(workspaceDir: string): CockpitStepEntry[] {
         mutatedCount: Array.isArray(s.mutatedFiles) ? s.mutatedFiles.length : 0,
         ...(typeof s.receiptId === 'string' ? { receiptId: s.receiptId } : {}),
         hasBaselineTree: typeof s.baselineTree === 'string' && s.baselineTree.length === 40,
+        ...loadStepDependencyField(s, 'dependsOn'),
+        ...loadStepDependencyField(s, 'blockedBy'),
         updatedAt: String(s.updatedAt ?? ''),
       }))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    return { entries, corrupt: false }
   } catch {
-    return []
+    // An unreadable ledger is NOT an empty ledger: surface it instead of
+    // rendering "no steps", which hides a corrupt/partial write.
+    return { entries: [], corrupt: true }
   }
 }
 
@@ -939,7 +965,10 @@ export function buildCockpitSnapshot(input: CockpitInput): CockpitSnapshot {
   const gauge = `[${'█'.repeat(filled)}${'░'.repeat(20 - filled)}] ${ctxPct}%`
 
   const artifacts = input.workspaceDir ? scanPantheonArtifacts(input.workspaceDir) : []
-  const steps = input.workspaceDir ? loadStepEntries(input.workspaceDir) : []
+  const stepLedger = input.workspaceDir
+    ? loadStepEntries(input.workspaceDir)
+    : { entries: [], corrupt: false }
+  const steps = stepLedger.entries
   const stepsDone = steps.filter((s) => s.state === 'done').length
 
   const runningCount = input.children.filter((c) => c.status === 'running').length
@@ -1027,7 +1056,12 @@ export function buildCockpitSnapshot(input: CockpitInput): CockpitSnapshot {
       surfaces: [
         { label: 'Native Tools (30)', status: 'active' },
         { label: 'FTS5 Memory + Worktree', status: 'ready' },
-        { label: 'Step-Ledger & Checkpoints', status: `${stepsDone}/${steps.length} done` },
+        {
+          label: 'Step-Ledger & Checkpoints',
+          status: stepLedger.corrupt
+            ? 'unreadable — ledger corrupt'
+            : `${stepsDone}/${steps.length} done`,
+        },
         { label: 'LSP + Per-Edit Guardrails', status: 'active' },
         { label: 'Artifacts & Mermaid', status: `${artifacts.length} file(s)` },
       ],
@@ -1050,6 +1084,7 @@ export function buildCockpitSnapshot(input: CockpitInput): CockpitSnapshot {
       gateGlyphs: formatGateMatrixGlyphs(allowed, approved, waiting, blocked),
       gateSummary: `${allowed} allowed · ${approved} receipts · ${waiting} active · ${blocked} blocked`,
       steps,
+      stepsCorrupt: stepLedger.corrupt,
       logs: events,
     },
   }
@@ -1120,8 +1155,9 @@ export function formatCockpitReplayArtifact(
           .join('\n')
       : '| _none_ | — | `░░░░░░░░░░░░` | 0s | $0.0000 |'
 
-  const stepLines =
-    snapshot.flightdeck.steps.length > 0
+  const stepLines = snapshot.flightdeck.stepsCorrupt
+    ? '- **⚠ `step-ledger.json` is unreadable (corrupt)** — step state is unknown, not empty. Inspect `.pantheon/ledger/` (`*.corrupt.<ts>` quarantine or a manual repair).'
+    : snapshot.flightdeck.steps.length > 0
       ? snapshot.flightdeck.steps
           .map((s) => `- **${s.stepKey}** (\`${s.state}\`, \`@${s.agent}\`) — ${s.objective}`)
           .join('\n')

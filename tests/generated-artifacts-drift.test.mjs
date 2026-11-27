@@ -200,12 +200,14 @@ test('pre-commit rebuilds both generators, backs up unstaged drift, and reports 
  */
 const HOOK_SOURCE = fileURLToPath(new URL('../scripts/check-generated-hook.mjs', import.meta.url))
 
-function makeHookFixture() {
+function makeHookFixture(options = {}) {
+  const { tuiBuildFails = false } = options
   const base = mkdtempSync(join(tmpdir(), 'pantheon-hook-fixture-'))
   const tmp = mkdtempSync(join(tmpdir(), 'pantheon-hook-tmp-'))
   mkdirSync(join(base, 'scripts'), { recursive: true })
   mkdirSync(join(base, 'src', 'agents'), { recursive: true })
   mkdirSync(join(base, 'src', 'plugin'), { recursive: true })
+  mkdirSync(join(base, 'src', 'plugins', 'tui', 'dist'), { recursive: true })
   writeFileSync(
     join(base, 'scripts', 'check-generated-hook.mjs'),
     readFileSync(HOOK_SOURCE, 'utf8'),
@@ -218,8 +220,31 @@ function makeHookFixture() {
     join(base, 'scripts', 'build-plugin.mjs'),
     "import { writeFileSync } from 'node:fs'\nwriteFileSync('src/plugin/index.js', 'canonical\\n')\n",
   )
+  // Third generator: the hook runs `npm --silent run build --prefix
+  // src/plugins/tui`. A stub package + build script keeps it deterministic and
+  // offline (no install, no tsdown).
+  writeFileSync(
+    join(base, 'src', 'plugins', 'tui', 'package.json'),
+    JSON.stringify(
+      { name: 'tui-fixture', private: true, scripts: { build: 'node build.mjs' } },
+      null,
+      2,
+    ),
+  )
+  writeFileSync(
+    join(base, 'src', 'plugins', 'tui', 'build.mjs'),
+    tuiBuildFails
+      ? "console.error('stub tui build failed')\nprocess.exit(1)\n"
+      : [
+          "import { mkdirSync, writeFileSync } from 'node:fs'",
+          "mkdirSync('dist', { recursive: true })",
+          "writeFileSync('dist/tui.js', 'canonical\\n')",
+          '',
+        ].join('\n'),
+  )
   writeFileSync(join(base, 'src', 'agents', 'a.md'), 'canonical\n')
   writeFileSync(join(base, 'src', 'plugin', 'index.js'), 'canonical\n')
+  writeFileSync(join(base, 'src', 'plugins', 'tui', 'dist', 'tui.js'), 'canonical\n')
   execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: base })
   execFileSync('git', ['add', '.'], { cwd: base })
   execFileSync(
@@ -243,11 +268,27 @@ function makeHookFixture() {
   }
 }
 
-test('hook behaviour: a clean generated tree exits zero and checks both generators', () => {
+test('hook behaviour: a clean generated tree exits zero and checks all three generators', () => {
   const fixture = makeHookFixture()
   try {
     const result = fixture.run()
     assert.equal(result.status, 0, result.stderr)
+    assert.match(result.stderr, /checking agent roster/)
+    assert.match(result.stderr, /checking plugin bundle/)
+    assert.match(result.stderr, /checking TUI bundle/)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('hook behaviour: a failing TUI generator is exercised, not tolerated', () => {
+  const fixture = makeHookFixture({ tuiBuildFails: true })
+  try {
+    const result = fixture.run()
+    assert.notEqual(result.status, 0, 'a failing TUI generator must fail the hook')
+    assert.match(result.stderr, /checking TUI bundle/)
+    assert.match(result.stderr, /TUI bundle: generator failed/)
+    // The other generators still ran, so one attempt reports every drift.
     assert.match(result.stderr, /checking agent roster/)
     assert.match(result.stderr, /checking plugin bundle/)
   } finally {
@@ -255,7 +296,7 @@ test('hook behaviour: a clean generated tree exits zero and checks both generato
   }
 })
 
-test('hook behaviour: a deleted generated file fails and still runs both generators', () => {
+test('hook behaviour: a deleted generated file fails and still runs all three generators', () => {
   const fixture = makeHookFixture()
   try {
     rmSync(join(fixture.base, 'src', 'agents', 'a.md'))
@@ -264,6 +305,7 @@ test('hook behaviour: a deleted generated file fails and still runs both generat
     assert.match(result.stderr, /missing\/deleted: src\/agents\/a\.md/)
     assert.match(result.stderr, /checking agent roster/)
     assert.match(result.stderr, /checking plugin bundle/)
+    assert.match(result.stderr, /checking TUI bundle/)
   } finally {
     fixture.cleanup()
   }

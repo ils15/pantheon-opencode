@@ -47,13 +47,28 @@ repos:
   # Unstaged/untracked generated files are copied to a temp directory first
   # (path printed) so a hand-edit is never lost; staged drift still fails.
   # Both generators run before the hook exits, so one attempt reports both.
+  # The same hook rebuilds and diffs the committed TUI bundle
+  # (`src/plugins/tui/dist`), which CI's `validate` job also rejects on drift.
   - repo: local
     hooks:
       - id: generated-artifacts
-        name: generated-artifacts — rebuild and diff src/agents + src/plugin
+        name: generated-artifacts — rebuild and diff src/agents + src/plugin + TUI dist
         entry: node scripts/check-generated-hook.mjs
         language: system
         pass_filenames: false
+
+      # `.pantheon/` runtime state has been ignored since v1.0, but a force-add
+      # (ecebfbb, 2026-08-05) put a release-audit snapshot into history anyway.
+      # History is not rewritten; instead this closes the boundary. The policy is
+      # deny-by-default with a small versioned exception list (ADRs + code-mode
+      # payload) that a test keeps in parity with the `.gitignore` un-ignore rules;
+      # files already tracked in HEAD are grandfathered. It holds with no
+      # `.gitignore` at all, and a nested `.pantheon/` is always blocked.
+      - id: pantheon-runtime-state
+        name: pantheon-runtime-state — reject staged .pantheon/ runtime state
+        entry: node scripts/hooks/check-pantheon-runtime-staged.mjs
+        language: system
+        pass_filenames: true
 
   # --- Local: custom Bifrost/API credential scan (header + value patterns) ---
   # scripts/secret-scan.mjs scans the full versionable set (index + untracked)

@@ -55,7 +55,12 @@ function findActiveBugfixStep(
     if (matches.length === 0) return null
     matches.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     return matches[0] ?? null
-  } catch {
+  } catch (err) {
+    // Never silent: a swallowed read error disables the bugfix repro gate for
+    // every edit in the session, which must be visible in the log.
+    console.warn(
+      `[pantheon] reproduction-gate: could not read the step ledger in ${cwd}; the bugfix RED gate is disabled for this call (${err instanceof Error ? err.message : String(err)}). Inspect .pantheon/ledger/step-ledger.json.`,
+    )
     return null
   }
 }

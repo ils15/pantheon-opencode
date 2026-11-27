@@ -75,6 +75,23 @@ export interface StepRollbackEventPayload {
   readonly timestamp: number
 }
 
+/** A `pending` step whose last unmet dependency just completed (S1). */
+export interface StepUnlockedEventPayload {
+  readonly stepKey: string
+  readonly unlockedBy: string
+  readonly dependsOn: readonly string[]
+  readonly timestamp: number
+}
+
+/** A step forced into `blocked` by an unmet/rolled-back dependency (S1). */
+export interface StepBlockedEventPayload {
+  readonly stepKey: string
+  readonly blockedBy: readonly string[]
+  readonly reason: string
+  readonly cascadeReason?: string | undefined
+  readonly timestamp: number
+}
+
 export interface ReproductionGateEventPayload {
   readonly stepKey: string
   readonly agent: string
@@ -154,6 +171,8 @@ export interface PantheonEventMap {
   'lsp:diagnostics': LspDiagnosticEventPayload
   'review:verdict': ReviewVerdictEventPayload
   'step:rollback': StepRollbackEventPayload
+  'step:unlocked': StepUnlockedEventPayload
+  'step:blocked': StepBlockedEventPayload
   'reproduction:gate': ReproductionGateEventPayload
   'board:message': BoardMessageEventPayload
   'swarm:stall:detected': SwarmStallDetectedEventPayload

@@ -36,7 +36,8 @@ with zero external Python dependency, automatically available in any workspace v
   plus comment-aware AST matching/rewriting (`$VAR` / `$$$ARGS`) confined to workspace bounds.
 - **Mechanical gates, atomic steps & agent forge:** `pantheon_step_ledger` (`init_step`,
   `record_reproduction`, `record_mutation`, `record_verification`, `rollback_step`,
-  `complete_step`, `status` with isolated temp-index git checkpoints and bugfix `RED` gates),
+  `complete_step`, `status` with isolated temp-index git checkpoints and bugfix `RED` gates,
+  plus `dependsOn` prerequisites — see [Step dependencies](#step-dependencies-and-readiness)),
   `pantheon_review_verdict` (typed `@themis` verdict + bounded `ctx.session.synthetic` remediation),
   `pantheon_deepwork`, `pantheon_agent_forge` (including `detect_stack`), and `pantheon_skill_search`.
 - **Editing, LSP diagnostics, telemetry & routing:** `hashline_edit` (workspace-confined
@@ -48,6 +49,107 @@ with zero external Python dependency, automatically available in any workspace v
 - **Host-conditional tools:** `vision_describe` when the host exposes its model catalog,
   and `pantheon_bounded_read` when the host exposes its permission and session APIs
   (root Zeus sessions only).
+
+## Step dependencies and readiness
+
+A step may declare prerequisites with `dependsOn`:
+
+```json
+{
+  "action": "init_step",
+  "stepKey": "b-tests",
+  "objective": "Add the ledger dependency tests",
+  "agent": "hermes",
+  "dependsOn": ["a-schema"]
+}
+```
+
+- **Validation is mechanical.** Unknown keys (`dependency_not_found`, naming every
+  offending key), self-dependencies (`self_dependency`), and cycles
+  (`cycle_detected` with the canonical path, e.g. `a -> c -> b -> a`) are refused;
+  duplicates are deduped. A dangling dependency is never silently dropped.
+- **States.** `init_step` stores `pending` when any dependency is not `done`, and
+  `in_progress` otherwise — so steps without `dependsOn` behave exactly as before.
+  A `pending` step becomes `in_progress` when `execute_step`/`spawn_ephemeral`
+  launches it. Only a **cascade-invalidated** step (`cascadeReason` set) is hard
+  blocked; a reflex-escalation `blocked` step stays retryable, and
+  `unblock_step` is the explicit recovery (it refuses until every declared
+  dependency is `done` again).
+- **Readiness.** `ready(k) = state(k) === 'pending' && dependsOn(k).length > 0 &&
+  every dependency is done`. Completing the last dependency emits `step:unlocked`
+  for each newly-ready dependent, and `status` returns
+  `graph: { waves, cycles, ready, unmet, dangling, unplaced }` — `waves` are the
+  parallel launch levels (`[[a], [b, c]]` for two independent branches), while
+  `unplaced` names the steps that can never launch (cyclic or dangling
+  dependency). A dangling dependency is never scheduled into a wave.
+- **Refusals.** `execute_step`/`spawn_ephemeral` refuse with `dependencies_unmet`
+  (`unmet: [...]`) or `step_blocked` (`blockedBy`) and create no sub-session. The
+  gate is re-evaluated inside the same lock acquisition that flips the state, so a
+  cascade landing in between cannot be defeated by timing. `complete_step` also
+  refuses (`dependencies_unmet`) while a declared dependency is not `done` — a
+  passing verification never lifts a cascade block.
+- **Rollback cascade.** `rollback_step` refuses (`dependents_done`, with
+  `treeUntouched: true`) while a transitive dependent is `done`; the refusal is
+  decided under the lock **before** any Git restore, so it is a no-op. A late
+  refusal after the restore restores the pre-rollback tree it captured and returns
+  it as `restoredTree`. `cascade: true` blocks dependents with `blockedBy` + an
+  explicit `cascadeReason`, emits `step:blocked`, and returns the invalidated
+  `receiptId`s. The reflex-escalation path applies the same cascade.
+- **Verification counters.** `verificationAttempts` counts every
+  `record_verification`; `verificationFailures` counts the non-zero exits, so
+  `retries = verificationFailures` (a first-try success is `1 / 0`).
+- **Recovery from a dangling or self-referential edge.** A ledger that was
+  restored, hand-edited, or partially written can leave a step whose `dependsOn`
+  points at a deleted key (or at itself). `status.graph.dangling` and
+  `status.graph.unplaced` name it, and `execute_step`, `complete_step`, and
+  `unblock_step` all refuse with `dependencies_unmet`. Re-running `init_step` for
+  that `stepKey` is the working escape hatch, but it **destroys the step's
+  runtime state**: `mutatedFiles`, `lastMutationAt`/`lastVerifiedAt`,
+  `verificationCommand`/`verificationExitCode`,
+  `verificationAttempts`/`verificationFailures`, `receiptId`, `baselineTree`, and
+  the `reproduction*` fields are all reset (and the Git baseline is re-captured
+  from the current tree), so the step must be re-mutated and re-verified. If the
+  entry must be preserved, repair the offending `dependsOn` edge in
+  `.pantheon/ledger/step-ledger.json` instead.
+- **Checkpoints never carry runtime state.** `captureGitCheckpoint` writes a
+  temporary-index tree and drops `.pantheon/` before `write-tree`;
+  `restoreGitCheckpoint` drops it from the index before `checkout-index`, so even a
+  checkpoint written by an older version cannot roll back the ledger, board,
+  memory DB, or deepwork state. Nothing legitimately needs `.pantheon/` inside a
+  checkpoint: the ledger drives the rollback itself, and board/memory/deepwork are
+  append-only runtime records. Checkpoints from before this exclusion can be
+  repaired in place with `pantheon_step_ledger(action="scrub_checkpoints")`
+  (`dryRun: true` reports first): each referenced tree is rewritten without
+  `.pantheon/`, the ledger's `baselineTree` is updated, and the old tree becomes
+  unreachable for Git's normal expiry to reclaim.
+- **Every baseline is anchored, so GC cannot eat it.** `init_step` wraps the
+  baseline tree in a parentless commit and points
+  `refs/pantheon/step-baselines/<key>-<hash>` at it (`baselineRef` on the entry),
+  which makes checkpoints reachable and — for the first time — enumerable
+  (`git for-each-ref refs/pantheon/step-baselines`). The `<hash>` suffix keeps the
+  mapping injective for keys that sanitize alike (`auth:1` vs `auth_1`). A plain
+  tree is a dangling object that Git's default two-week expiry silently deletes,
+  which would make a later rollback impossible. Do **not** run
+  `git gc --prune=now` to clean up after a scrub: it also deletes any baseline that
+  has not been anchored yet. Normal `git gc` is safe. Legacy entries (created
+  before anchoring) get their ref on the next `scrub_checkpoints`, which is their
+  migration path; `rollback_step` reports `baseline_missing` (with the tree SHA and
+  the ref, when known) instead of silently restoring nothing. Anchored refs are
+  **permanent**: nothing prunes them, there is one per step key, and they are
+  retained forever (a future `prune` action could drop refs for removed steps —
+  not implemented). `git push --mirror` transfers `refs/pantheon/*` to the
+  destination, so a mirror clone/fetch carries the step keys with it; a normal
+  `git push`/`push --all` does not.
+- **Concurrency.** The ledger is a single JSON file, so every mutation goes through
+  `updateStepLedger`: a lock file `.pantheon/ledger/.step-ledger.lock` holding a
+  unique `<pid>:<uuid>` owner token, acquired with `open(..., 'wx')`. A stale lock
+  (> 2 s) is moved to a quarantine path and only removed when its token matches
+  what was observed — a breaker can never delete a live writer's lock, and release
+  re-checks the token too. Waits are bounded (4 s) with an actionable error naming
+  the lock path and the `rm -f` recovery; a lock owned by the current process fails
+  fast as re-entrant misuse. Writes go to `*.tmp.<pid>` + `renameSync`, orphan
+  temp files older than 60 s are swept, and a corrupt ledger is quarantined as
+  `step-ledger.json.corrupt.<ts>` instead of being overwritten with an empty store.
 
 ## Per-agent MCP permissions
 

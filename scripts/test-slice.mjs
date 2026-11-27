@@ -102,12 +102,99 @@ export function getChangedFiles(cwd = process.cwd()) {
 }
 
 /**
+ * Files whose correctness is pinned by a test with a different name, so the
+ * stem-based lookup below reports a "mapping gap" and falls back to the repo
+ * suite. Three contract failures reached PR #508 that way (a workflow edit, the
+ * generated-artifacts hook, and a shipped script tripping the packaging
+ * redaction gate) while the local slice was green.
+ */
+const CONTRACT_SLICES = [
+  {
+    pattern: /^\.github\/workflows\//,
+    command: 'node --test tests/ci-workflow-fail-closed.test.mjs',
+    selection: 'workflow contract (fail-closed CI assertions)',
+  },
+  {
+    pattern: /^(?:scripts\/check-generated-hook\.mjs|\.pre-commit-config\.yaml)$/,
+    command: 'node --test tests/generated-artifacts-drift.test.mjs',
+    selection: 'generated-artifacts hook contract',
+  },
+  {
+    pattern: /^scripts\/check-tui-dist\.mjs$/,
+    command: 'node --test tests/ci-workflow-fail-closed.test.mjs',
+    selection: 'TUI dist-freshness contract (the build must survive)',
+  },
+  {
+    pattern: /^scripts\/hooks\//,
+    command: 'node --test tests/pantheon/precommit-runtime-guard.test.mjs',
+    selection: 'pre-commit runtime-state guard',
+  },
+  {
+    pattern: /^scripts\/[^/]+\.mjs$/,
+    command: (file) => `node scripts/redaction-gate.mjs ${file}`,
+    selection: 'shipped-script redaction gate (tarball payload)',
+  },
+  // Source files whose suites are named after the feature, not the file.
+  {
+    pattern: /^src\/pantheon\/(?:step-ledger|step-dependencies)\.ts$/,
+    command: 'npx tsx tests/pantheon/step-ledger-dependencies.test.ts',
+    selection: 'step-ledger + dependency contracts',
+  },
+  {
+    pattern: /^src\/pantheon\/(?:step-runner|git-checkpoint)\.ts$/,
+    command: 'npx tsx tests/pantheon/step-runner-and-checkpoint.test.ts',
+    selection: 'step runner + git checkpoint',
+  },
+  {
+    pattern: /^src\/pantheon\/reproduction-gate\.ts$/,
+    command: 'npx tsx tests/pantheon/pillars-3-4-5.test.ts',
+    selection: 'reproduction gate (bugfix RED gate)',
+  },
+  {
+    pattern: /^src\/plugins\/tui\/(?:src\/)?[^/]+$/,
+    command: 'node --test tests/tui-cockpit.test.mjs',
+    selection: 'TUI cockpit selector suite',
+  },
+  {
+    pattern: /^(?:src\/plugin\/index\.js|src\/plugins\/tui\/dist\/.+)$/,
+    command: 'npm run check:generated',
+    selection: 'generated-artifact freshness (rebuild must be a no-op)',
+  },
+]
+
+/** True when `filePath` has an explicit contract slice. */
+export function hasContractSlice(filePath) {
+  const normalized = filePath.replace(/\\/g, '/')
+  return CONTRACT_SLICES.some((entry) => entry.pattern.test(normalized))
+}
+
+/** The contract slice for `filePath`, or `null`. */
+export function findContractSlice(filePath) {
+  const normalized = filePath.replace(/\\/g, '/')
+  for (const entry of CONTRACT_SLICES) {
+    if (!entry.pattern.test(normalized)) continue
+    const command = typeof entry.command === 'function' ? entry.command(normalized) : entry.command
+    return {
+      command,
+      testFile: null,
+      type: 'contract-slice',
+      selection: `contract slice for ${normalized}: ${entry.selection}`,
+    }
+  }
+  return null
+}
+
+/**
  * Map a single source or test file to its narrow test slice command.
  */
 export function mapFileToSlice(filePath, cwd = process.cwd()) {
   const normalized = filePath.replace(/\\/g, '/')
   const ext = extname(normalized)
   const base = basename(normalized)
+
+  // 1. A file whose contract test has a different name wins over the stem guess.
+  const contract = findContractSlice(normalized)
+  if (contract) return contract
 
   // 1. If already a test file, run it directly
   if (
@@ -210,10 +297,16 @@ export function resolveTestSlice(files = [], options = {}) {
           ? 'schema-migration'
           : undefined)
 
-  // Filter for relevant source or test files
+  // Filter for relevant source or test files (contract-mapped files are kept
+  // even when their extension is not a source extension, e.g. workflows).
   const relevantFiles = files.filter((f) => {
     const ext = extname(f)
-    return SOURCE_EXTENSIONS.has(ext) || TEST_EXTENSIONS.has(ext) || f.includes('.test.')
+    return (
+      SOURCE_EXTENSIONS.has(ext) ||
+      TEST_EXTENSIONS.has(ext) ||
+      f.includes('.test.') ||
+      hasContractSlice(f)
+    )
   })
 
   // 1. If an explicit escalation trigger is present and repo has a suite selector, escalate (Issue #444)
