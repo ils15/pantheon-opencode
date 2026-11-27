@@ -20,6 +20,12 @@ import { validateInventory } from './manifest-inventory.mjs'
 import { validateNodeEnginePolicy } from './node-engine-policy.mjs'
 
 const CI_ARGS = ['ci', '--ignore-scripts', '--omit=dev', '--no-audit', '--no-fund']
+/**
+ * `tar` listings are unbounded child-process output; Node's 1 MiB default is
+ * below a realistic archive listing (and far below the generated plugin bundle,
+ * which is why `redaction-gate.mjs` needs the same ceiling).
+ */
+const MAX_CHILD_BUFFER_BYTES = 64 * 1024 * 1024
 const REQUIRED_PAYLOAD = [
   'package/package.json',
   'package/plugin.json',
@@ -82,7 +88,10 @@ function packOnce(root, outputDir) {
 }
 
 function validateArchiveEntries(tarball) {
-  const listing = execFileSync('tar', ['-tzf', tarball], { encoding: 'utf8' })
+  const listing = execFileSync('tar', ['-tzf', tarball], {
+    encoding: 'utf8',
+    maxBuffer: MAX_CHILD_BUFFER_BYTES,
+  })
   const entries = listing.split('\n').filter(Boolean)
   if (entries.length === 0) fail('package tarball is empty')
   for (const entry of entries) {
@@ -97,7 +106,10 @@ function validateArchiveEntries(tarball) {
       fail(`unsafe package archive entry: ${entry}`)
     }
   }
-  const detailed = execFileSync('tar', ['-tvzf', tarball], { encoding: 'utf8' })
+  const detailed = execFileSync('tar', ['-tvzf', tarball], {
+    encoding: 'utf8',
+    maxBuffer: MAX_CHILD_BUFFER_BYTES,
+  })
   for (const line of detailed.split('\n').filter(Boolean)) {
     if (/^[lh]/i.test(line)) fail(`package archive contains a link entry: ${line}`)
   }
