@@ -155,15 +155,20 @@ test('buildAtomicStepPrompt renders ownedFiles and forbiddenFiles boundaries', (
   assert.match(prompt, /NEVER modify or touch forbiddenFiles/)
 })
 
-test('runAtomicStepSubSession halts cleanly with wall_clock_exceeded when wallClockMs is exceeded', async () => {
+test('runAtomicStepSubSession halts cleanly with wall_clock_exceeded when wallClockMs is exceeded', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'pantheon-wallclock-'))
   try {
     initGitRepo(dir)
+    // Capture the real timer before virtualizing it, so test sequencing never
+    // depends on the mocked clock.
+    const realSetTimeout = globalThis.setTimeout
     let promptCalls = 0
     const sessionDomain = {
       create: async () => ({ id: 'ses-wc-1' }),
       prompt: async () => {
         promptCalls += 1
+        // Parked until the test advances the virtual clock: the runner must
+        // halt on its own wall-clock timer, never on this prompt completing.
         await new Promise((r) => setTimeout(r, 25))
         return { ok: true }
       },
@@ -171,7 +176,11 @@ test('runAtomicStepSubSession halts cleanly with wall_clock_exceeded when wallCl
       remove: async () => {},
     }
 
-    const res = await runAtomicStepSubSession({
+    // Virtualize both the timer and Date so elapsedMs measures the runner's own
+    // accounting (startedAt -> halt) instead of host scheduling jitter.
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+
+    const runPromise = runAtomicStepSubSession({
       sessionDomain,
       cwd: dir,
       stepKey: 'wc-1',
@@ -181,11 +190,30 @@ test('runAtomicStepSubSession halts cleanly with wall_clock_exceeded when wallCl
       wallClockMs: 10,
     })
 
+    // The ledger checkpoint spawns real git processes before the first prompt.
+    // This wait only sequences the deterministic tick; it asserts nothing about
+    // timing, and it fails loudly instead of hanging if the runner stalls.
+    const readyDeadline = performance.now() + 10_000
+    while (promptCalls === 0) {
+      assert.ok(performance.now() < readyDeadline, 'runner never dispatched its first prompt')
+      await new Promise((r) => realSetTimeout(r, 2))
+    }
+    // Let the runner register its wall-clock race timer now that prompt() returned.
+    await new Promise((r) => setImmediate(r))
+
+    t.mock.timers.tick(10)
+    const res = await runPromise
+
     assert.equal(res.ok, false)
     assert.equal(res.haltedReason, 'wall_clock_exceeded')
     assert.equal(promptCalls, 1)
-    assert.ok(typeof res.elapsedMs === 'number' && res.elapsedMs >= 10)
-    assert.match(res.error ?? '', /wall-clock timeout exceeded/)
+    // Deterministic: exactly the virtual budget elapsed before the halt.
+    assert.equal(res.elapsedMs, 10)
+    assert.match(res.error ?? '', /wall-clock timeout exceeded \(10ms >= 10ms\)/)
+
+    // Drain the parked prompt so no mocked timer outlives the test.
+    t.mock.timers.tick(15)
+    await new Promise((r) => setImmediate(r))
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
