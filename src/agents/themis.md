@@ -14,6 +14,7 @@ permission:
   ast_rewrite: deny
   pantheon_worktree: deny
   pantheon_review_verdict: allow
+  pantheon_strategy: allow
   pantheon_deepwork: allow
   task:
     "*": deny

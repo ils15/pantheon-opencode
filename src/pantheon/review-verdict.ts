@@ -8,6 +8,8 @@
  */
 
 import { getSharedBus } from './bus.ts'
+import { attachThemisVerdictSafe } from './strategy-store.ts'
+import { resolveMemoryStoreCwd } from './tool-context.ts'
 import type { PantheonToolDef, PantheonToolResult } from './tools.ts'
 
 export type ReviewVerdictValue = 'APPROVE' | 'APPROVE_WITH_NOTES' | 'BLOCK'
@@ -198,6 +200,33 @@ export function createReviewVerdictTool(
         remediationCounts.delete(`${sessionID}:${targetAgent}`)
       }
 
+      // S4: a BLOCK is also a failed strategy. Attach it to the latest run so
+      // the ladder cannot keep advertising a strategy Themis refused; a broken
+      // strategy store must never fail the verdict (attachThemisVerdictSafe).
+      let strategy: Record<string, unknown> | undefined
+      if (verdict === 'BLOCK') {
+        const stepKey =
+          typeof input.stepKey === 'string' && input.stepKey.trim()
+            ? input.stepKey.trim()
+            : undefined
+        const attach = attachThemisVerdictSafe(resolveMemoryStoreCwd(context), {
+          verdict,
+          ...(stepKey ? { stepKey } : {}),
+        })
+        strategy = {
+          attached: attach.attached,
+          ...(attach.runId ? { runId: attach.runId } : {}),
+          ...(attach.strategyId ? { strategyId: attach.strategyId } : {}),
+          ...(attach.reason ? { reason: attach.reason } : {}),
+          ...(typeof attach.forcedSuccessZero === 'boolean'
+            ? { forcedSuccessZero: attach.forcedSuccessZero }
+            : {}),
+          ...(typeof attach.objections === 'number' ? { objections: attach.objections } : {}),
+          ...(attach.status ? { status: attach.status } : {}),
+          ...(attach.error ? { error: attach.error } : {}),
+        }
+      }
+
       return jsonResult({
         ok: true,
         verdict,
@@ -208,6 +237,7 @@ export function createReviewVerdictTool(
         ...(remediationAttempt > 0
           ? { remediationAttempt, maxRemediations: MAX_AUTO_REMEDIATIONS }
           : {}),
+        ...(strategy ? { strategy } : {}),
       })
     },
   }

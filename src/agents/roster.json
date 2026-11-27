@@ -21,9 +21,17 @@
       ],
       "mcp_tools": {
         "pantheon-resources": "all",
-        "pantheon-memory": ["memory_search"],
-        "pantheon-code-mode": ["execute_code_script"],
-        "pantheon-vision": ["vision_describe", "vision_ocr", "vision_analyze"]
+        "pantheon-memory": [
+          "memory_search"
+        ],
+        "pantheon-code-mode": [
+          "execute_code_script"
+        ],
+        "pantheon-vision": [
+          "vision_describe",
+          "vision_ocr",
+          "vision_analyze"
+        ]
       },
       "permission": {
         "read": "allow",
@@ -60,7 +68,11 @@
       ],
       "mcp_tools": {
         "pantheon-resources": "all",
-        "pantheon-memory": ["memory_search", "code_query", "code_neighbors"]
+        "pantheon-memory": [
+          "memory_search",
+          "code_query",
+          "code_neighbors"
+        ]
       },
       "permission": {
         "read": "allow",
@@ -100,7 +112,11 @@
       ],
       "mcp_tools": {
         "pantheon-resources": "all",
-        "pantheon-memory": ["memory_search", "code_query", "code_neighbors"]
+        "pantheon-memory": [
+          "memory_search",
+          "code_query",
+          "code_neighbors"
+        ]
       },
       "permission": {
         "edit": "deny",
@@ -114,6 +130,7 @@
         "glob": "allow",
         "webfetch": "allow",
         "pantheon_deepwork": "allow",
+        "pantheon_strategy": "allow",
         "question": "allow",
         "todowrite": "allow",
         "task": {
@@ -141,8 +158,12 @@
       ],
       "mcp_tools": {
         "pantheon-resources": "all",
-        "pantheon-memory": ["memory_search"],
-        "pantheon-code-mode": ["execute_code_script"]
+        "pantheon-memory": [
+          "memory_search"
+        ],
+        "pantheon-code-mode": [
+          "execute_code_script"
+        ]
       },
       "permission": {
         "read": "allow",
@@ -182,8 +203,12 @@
       ],
       "mcp_tools": {
         "pantheon-resources": "all",
-        "pantheon-memory": ["memory_search"],
-        "pantheon-code-mode": ["execute_code_script"]
+        "pantheon-memory": [
+          "memory_search"
+        ],
+        "pantheon-code-mode": [
+          "execute_code_script"
+        ]
       },
       "permission": {
         "bash": "allow",
@@ -230,7 +255,9 @@
           "memory_list",
           "memory_stats"
         ],
-        "pantheon-code-mode": ["execute_code_script"]
+        "pantheon-code-mode": [
+          "execute_code_script"
+        ]
       },
       "permission": {
         "read": "allow",
@@ -273,7 +300,9 @@
       ],
       "mcp_tools": {
         "pantheon-resources": "all",
-        "pantheon-memory": ["memory_search"]
+        "pantheon-memory": [
+          "memory_search"
+        ]
       },
       "permission": {
         "read": "allow",
@@ -285,6 +314,7 @@
         "ast_rewrite": "deny",
         "pantheon_worktree": "deny",
         "pantheon_review_verdict": "allow",
+        "pantheon_strategy": "allow",
         "pantheon_deepwork": "allow",
         "task": {
           "*": "deny"
@@ -323,7 +353,9 @@
       ],
       "mcp_tools": {
         "pantheon-resources": "all",
-        "pantheon-memory": ["memory_search"],
+        "pantheon-memory": [
+          "memory_search"
+        ],
         "pantheon-persistence": [
           "context_save",
           "context_get",
@@ -332,7 +364,9 @@
           "goal_update",
           "goal_done"
         ],
-        "pantheon-vision": ["vision_describe"]
+        "pantheon-vision": [
+          "vision_describe"
+        ]
       },
       "permission": {
         "read": "allow",
@@ -348,6 +382,7 @@
         "pantheon_agent_forge": "allow",
         "pantheon_board": "allow",
         "pantheon_step_ledger": "allow",
+        "pantheon_strategy": "allow",
         "pantheon_worktree": "allow",
         "question": "allow",
         "todowrite": "allow",

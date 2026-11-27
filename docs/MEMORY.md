@@ -34,6 +34,7 @@ flowchart TD
 | `pantheon-memory` MCP | SQLite `memory.db`; entries are capped at 64 KiB serialized by default and expire only when stored with `ttl_seconds` (expired entries are hidden from search and purged explicitly) | Reusable project facts and decisions |
 | `pantheon-persistence` MCP | Separate SQLite store; session-qualified context checkpoints default to 4h (heartbeat: 5m) | Explicit checkpoints and temporary key/value data |
 | `.pantheon/memory-bank/` | Project files in the working tree; Git tracking depends on repository ignore/commit policy | Human-reviewed project context and ADRs |
+| `pantheon_strategy` (plugin tool) | Strategy tables in the same `memory.db` file, beside `memories` but never federated or returned by `memory_search`; `strategy_runs` prunes at 30 days / 10k rows, aggregates never prune | Per-step strategy outcomes and success rates (FTS5 BM25 only, no embeddings) |
 
 External MCP providers, such as `flashmemory`, use stores separate from
 Pantheon's `pantheon-memory` SQLite database. Using the same namespace string

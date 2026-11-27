@@ -15,6 +15,7 @@ permission:
   glob: allow
   webfetch: allow
   pantheon_deepwork: allow
+  pantheon_strategy: allow
   question: allow
   todowrite: allow
   task:

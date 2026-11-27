@@ -40,6 +40,9 @@ Sandbox mechanics are in [Release Process](../RELEASING.md).
 | Variable | Default | Purpose |
 |---|---|---|
 | `PANTHEON_MEMORY_MAX_ENTRY_BYTES` | `65536` | Per-entry serialized size cap for `memory_store`. Any positive integer; an invalid value falls back to 64 KiB. Read per write. |
+| `PANTHEON_STRATEGY_PROMOTION_MIN` | `0.8` | Success-rate threshold for the `proven` strategy rung. Any number in `0..1`; anything else falls back to `0.8` and the query payload reports `promotionMinInvalid: true`. |
+| `PANTHEON_STRATEGY_MAX_AGE_DAYS` | `30` | Age window for `strategy_runs` retention. Positive integer; invalid values fall back to 30. `strategy_stats` and `strategy_docs` are never pruned. |
+| `PANTHEON_STRATEGY_MAX_ROWS` | `10000` | Row cap for `strategy_runs`. Positive integer; invalid values fall back to 10000. |
 
 Memory policy is in [Memory](../MEMORY.md).
 

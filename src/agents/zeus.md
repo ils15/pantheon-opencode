@@ -18,6 +18,7 @@ permission:
   pantheon_agent_forge: allow
   pantheon_board: allow
   pantheon_step_ledger: allow
+  pantheon_strategy: allow
   pantheon_worktree: allow
   question: allow
   todowrite: allow
