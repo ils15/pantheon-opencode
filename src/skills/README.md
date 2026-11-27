@@ -19,7 +19,7 @@ There are **26 skills** divided into **6 domains**.
    - Used by: Zeus
 
 3. **fast-path-execution** — `fast-path-execution/SKILL.md`
-   - Fast-track execution protocol for bounded micro-edits (<= 2 files). Zero council overhead, direct specialist dispatch, inline verification.
+   - Fast-track and lean execution: bounded micro-edits (<= 2 files) skip council overhead; every problem gets one owner, no orchestrator re-verification, approval gates only for irreversible actions, one worktree per specialist.
    - Used by: Zeus, Hermes, Aphrodite
 
 4. **artifact-management** — `artifact-management/SKILL.md`
