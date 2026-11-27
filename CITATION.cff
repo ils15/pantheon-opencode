@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: "If you use Pantheon, please cite this software."
 title: "Pantheon Opencode"
 abstract: >-
-  Pantheon v2.1.6 is an OpenCode plugin and installer coordinating 14
+  Pantheon v2.3.4 is an OpenCode plugin and installer coordinating 14
   specialized agents with high-speed direct dispatch, native subagents,
   and progressive skill disclosure for OpenCode 2.x.
 version: 2.3.4
