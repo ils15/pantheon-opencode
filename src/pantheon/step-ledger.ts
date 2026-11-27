@@ -14,11 +14,14 @@
  * @module pantheon/step-ledger
  */
 
+import { randomUUID } from 'node:crypto'
 import {
   closeSync,
   existsSync,
+  linkSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -27,7 +30,7 @@ import {
   writeFileSync,
   writeSync,
 } from 'node:fs'
-import { dirname, join, resolve, sep } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { getSharedBus } from './bus.ts'
 import {
   deriveEphemeralRoleSlug,
@@ -41,6 +44,7 @@ import {
   cascadeBlock,
   type DependencyNode,
   type DependencyValidationResult,
+  isReservedStepKey,
   normalizeDependencies,
   readyStepKeys,
   unmetDependencies,
@@ -86,6 +90,11 @@ export interface StepLedgerEntry {
   verificationExitCode?: number
   /** Number of `record_verification` calls (success and failure) for this step. */
   verificationAttempts?: number
+  /**
+   * Failed verification calls. `retries = verificationFailures`; a first-try
+   * success has `attempts === 1 && failures === 0`.
+   */
+  verificationFailures?: number
   receiptId?: string
   /** Prerequisite step keys; independent steps of the same wave launch in parallel. */
   dependsOn?: string[]
@@ -113,6 +122,11 @@ function assertSafeStepKey(stepKey: unknown): string {
   if (typeof stepKey !== 'string' || !SAFE_STEP_KEY_RE.test(stepKey) || stepKey.includes('..')) {
     throw new Error('stepKey must be a safe alphanumeric identifier (1..128 chars)')
   }
+  // Security: a plain-object store would treat `__proto__` as a prototype
+  // setter and silently drop the entry (prototype pollution).
+  if (isReservedStepKey(stepKey)) {
+    throw new Error(`stepKey "${stepKey}" is reserved and cannot be used as a step id`)
+  }
   return stepKey
 }
 
@@ -129,27 +143,61 @@ function resolveLedgerPath(workspaceDir: string): string {
   return filePath
 }
 
+/**
+ * Parse the on-disk store. A corrupt file is **quarantined**, never silently
+ * replaced by an empty store: the next atomic write would otherwise cement the
+ * loss of every step. Callers see a loud, actionable error.
+ */
 function readLedgerFileAtPath(filePath: string): StepLedgerStore {
   if (!existsSync(filePath)) return { version: 1, steps: {} }
+  let raw: string
   try {
-    const parsed = JSON.parse(readFileSync(filePath, 'utf8')) as Partial<StepLedgerStore>
-    if (parsed && typeof parsed.steps === 'object' && parsed.steps !== null) {
-      return { version: 1, steps: parsed.steps as Record<string, StepLedgerEntry> }
-    }
-  } catch {
-    /* recover empty store on corrupt file */
+    raw = readFileSync(filePath, 'utf8')
+  } catch (err) {
+    throw new Error(
+      `step-ledger cannot be read at ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+    )
   }
-  return { version: 1, steps: {} }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch (err) {
+    const quarantine = `${filePath}.corrupt.${Date.now()}`
+    try {
+      renameSync(filePath, quarantine)
+    } catch {
+      /* keep the original in place if the rename fails */
+    }
+    throw new Error(
+      `step-ledger is corrupt and was moved aside to ${quarantine} (${err instanceof Error ? err.message : String(err)}). Inspect it and restore a valid ledger before retrying — refusing to overwrite it with an empty store.`,
+    )
+  }
+  const candidate = parsed as Partial<StepLedgerStore> | null
+  if (!candidate || typeof candidate.steps !== 'object' || candidate.steps === null) {
+    const quarantine = `${filePath}.corrupt.${Date.now()}`
+    try {
+      renameSync(filePath, quarantine)
+    } catch {
+      /* keep the original in place if the rename fails */
+    }
+    throw new Error(
+      `step-ledger at ${filePath} has no "steps" object and was moved aside to ${quarantine}. Refusing to overwrite it with an empty store.`,
+    )
+  }
+  return { version: 1, steps: candidate.steps as Record<string, StepLedgerEntry> }
 }
 
 export function readStepLedger(workspaceDir: string): StepLedgerStore {
   return readLedgerFileAtPath(resolveLedgerPath(workspaceDir))
 }
 
-/** Seconds a lock file may live before it is considered abandoned by a dead writer. */
-const LOCK_STALE_MS = 10_000
-const LOCK_RETRIES = 20
+/** How long a lock may live before it is treated as abandoned by a dead writer. */
+const LOCK_STALE_MS = 2_000
+/** Total time a writer waits for a live holder before failing with guidance. */
+const LOCK_WAIT_BUDGET_MS = 4_000
 const LOCK_RETRY_MS = 25
+/** Orphan `*.tmp.<pid>` files older than this are garbage-collected. */
+const TMP_SWEEP_AGE_MS = 60_000
 
 const sleepBuffer = new Int32Array(new SharedArrayBuffer(4))
 
@@ -161,45 +209,153 @@ function resolveLockPath(ledgerPath: string): string {
   return join(dirname(ledgerPath), '.step-ledger.lock')
 }
 
+function createLockToken(): string {
+  return `${process.pid}:${randomUUID()}`
+}
+
+function lockOwnerPid(token: string): number | undefined {
+  const [pid] = token.trim().split(':')
+  const parsed = Number(pid)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined
+}
+
+function readLockToken(lockPath: string): string | undefined {
+  try {
+    return readFileSync(lockPath, 'utf8').trim()
+  } catch {
+    return undefined
+  }
+}
+
 /**
- * Acquire the ledger write lock (`open(..., 'wx')`). Bounded retry (20 x 25 ms)
- * with a stale-lock break when the holder died mid-write (mtime > 10 s).
+ * Remove orphan temp files left by a writer killed between tmp-write and
+ * rename. Only files older than `TMP_SWEEP_AGE_MS` are touched so a live
+ * writer's in-flight temp file is never deleted.
  */
-function acquireLedgerLock(lockPath: string): void {
-  for (let attempt = 0; attempt <= LOCK_RETRIES; attempt += 1) {
+function sweepOrphanTempFiles(filePath: string): void {
+  const dir = dirname(filePath)
+  const prefix = `${basename(filePath)}.tmp.`
+  let entries: string[]
+  try {
+    entries = readdirSync(dir)
+  } catch {
+    return
+  }
+  const now = Date.now()
+  for (const entry of entries) {
+    if (!entry.startsWith(prefix)) continue
+    const candidate = join(dir, entry)
     try {
-      const fd = openSync(lockPath, 'wx')
-      try {
-        writeSync(fd, `${process.pid}\n`)
-      } finally {
-        closeSync(fd)
-      }
-      return
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException | undefined)?.code
-      if (code !== 'EEXIST') throw err
-      try {
-        if (Date.now() - statSync(lockPath).mtimeMs > LOCK_STALE_MS) {
-          unlinkSync(lockPath)
-          continue
-        }
-      } catch {
-        /* lock vanished between open and stat — retry immediately */
-        continue
-      }
-      if (attempt === LOCK_RETRIES) {
-        throw new Error(`step-ledger lock timeout after ${LOCK_RETRIES * LOCK_RETRY_MS}ms`)
-      }
-      sleepMs(LOCK_RETRY_MS)
+      if (now - statSync(candidate).mtimeMs > TMP_SWEEP_AGE_MS) unlinkSync(candidate)
+    } catch {
+      /* raced with its owner or already gone */
     }
   }
 }
 
-function releaseLedgerLock(lockPath: string): void {
+/**
+ * Break a lock judged stale without ever deleting a lock someone else acquired
+ * in the meantime.
+ *
+ * The stale file is atomically renamed to a unique quarantine path. If the
+ * quarantined token is the one we judged stale, we broke the right lock and the
+ * quarantine is discarded. If it is not, another writer replaced the lock
+ * between our stat and the rename: the quarantined inode is linked back to the
+ * lock path (which fails harmlessly with EEXIST if a third writer already holds
+ * it), so no writer can ever delete another writer's lock.
+ */
+function breakStaleLock(lockPath: string, observedToken: string): void {
+  const quarantine = `${lockPath}.stale.${process.pid}.${Date.now()}`
+  try {
+    renameSync(lockPath, quarantine)
+  } catch {
+    return
+  }
+  const token = readLockToken(quarantine)
+  if (token !== observedToken) {
+    // We raced a live writer: put its lock back if the slot is still free.
+    try {
+      linkSync(quarantine, lockPath)
+    } catch {
+      /* a newer lock already occupies the path — leave it alone */
+    }
+    try {
+      unlinkSync(quarantine)
+    } catch {
+      /* best effort */
+    }
+    return
+  }
+  try {
+    unlinkSync(quarantine)
+  } catch {
+    /* best effort */
+  }
+}
+
+/**
+ * Acquire the ledger write lock.
+ *
+ * - `open(..., 'wx')` is the atomic claim; the holder writes a unique
+ *   `<pid>:<uuid>` token that release and stale-breaking verify.
+ * - A lock older than `LOCK_STALE_MS` is broken via rename-to-quarantine (see
+ *   `breakStaleLock`), never by a blind unlink.
+ * - A lock owned by *this* process means re-entrant mutation (a listener that
+ *   writes the ledger from inside a mutator) — fail fast instead of burning the
+ *   whole wait budget.
+ */
+function acquireLedgerLock(lockPath: string): string {
+  const token = createLockToken()
+  const deadline = Date.now() + LOCK_WAIT_BUDGET_MS
+
+  for (;;) {
+    try {
+      const fd = openSync(lockPath, 'wx')
+      try {
+        writeSync(fd, `${token}\n`)
+      } finally {
+        closeSync(fd)
+      }
+      return token
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException | undefined)?.code
+      if (code !== 'EEXIST') throw err
+    }
+
+    const observedToken = readLockToken(lockPath)
+    if (observedToken !== undefined && lockOwnerPid(observedToken) === process.pid) {
+      throw new Error(
+        `step-ledger lock ${lockPath} is held by this process: re-entrant updateStepLedger is not supported. Move the nested write outside the mutator.`,
+      )
+    }
+
+    let age = Number.POSITIVE_INFINITY
+    try {
+      age = Date.now() - statSync(lockPath).mtimeMs
+    } catch {
+      continue // lock vanished — retry immediately
+    }
+    if (age > LOCK_STALE_MS && observedToken !== undefined) {
+      breakStaleLock(lockPath, observedToken)
+      continue
+    }
+
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `step-ledger lock timeout after ${LOCK_WAIT_BUDGET_MS}ms waiting on ${lockPath} (held by pid ${observedToken ?? 'unknown'}). If that writer crashed, remove the file: rm -f ${lockPath}`,
+      )
+    }
+    sleepMs(LOCK_RETRY_MS)
+  }
+}
+
+/** Release only a lock this caller still owns (token match), never a successor's. */
+function releaseLedgerLock(lockPath: string, token: string): void {
+  if (readLockToken(lockPath) !== token) return
   try {
     unlinkSync(lockPath)
   } catch {
-    /* already released or never created */
+    /* already released */
   }
 }
 
@@ -225,7 +381,7 @@ function writeLedgerFileAtomic(filePath: string, store: StepLedgerStore): void {
  * Every mutating action (and `step-runner.ts`'s auto-create path) must go
  * through this helper: parallel waves otherwise race with last-writer-wins and
  * silently drop step entries. Keep the mutator synchronous — it runs while the
- * lock is held.
+ * lock is held, and a nested call fails fast (re-entrancy is a bug, not a wait).
  */
 export function updateStepLedger<T>(
   workspaceDir: string,
@@ -233,32 +389,29 @@ export function updateStepLedger<T>(
 ): T {
   const filePath = resolveLedgerPath(workspaceDir)
   const lockPath = resolveLockPath(filePath)
-  acquireLedgerLock(lockPath)
+  const token = acquireLedgerLock(lockPath)
   try {
+    sweepOrphanTempFiles(filePath)
     const store = readLedgerFileAtPath(filePath)
     const result = mutator(store)
     store.version = 1
     writeLedgerFileAtomic(filePath, store)
     return result
   } finally {
-    releaseLedgerLock(lockPath)
+    releaseLedgerLock(lockPath, token)
   }
 }
 
 /**
- * Compatibility export. Route writes through `updateStepLedger` when you need a
- * read-modify-write; this is locked and atomic but still overwrites the whole
- * store with the caller's snapshot.
+ * @deprecated Route writes through `updateStepLedger` (read-modify-write). This
+ * compatibility export now delegates to it, so it shares the lock/atomic-write
+ * path instead of clobbering the store with a stale snapshot under a second
+ * acquisition.
  */
 export function writeStepLedger(workspaceDir: string, store: StepLedgerStore): void {
-  const filePath = resolveLedgerPath(workspaceDir)
-  const lockPath = resolveLockPath(filePath)
-  acquireLedgerLock(lockPath)
-  try {
-    writeLedgerFileAtomic(filePath, { version: 1, steps: store.steps })
-  } finally {
-    releaseLedgerLock(lockPath)
-  }
+  updateStepLedger(workspaceDir, (target) => {
+    target.steps = { ...store.steps }
+  })
 }
 
 /**
@@ -300,25 +453,57 @@ type LaunchGate =
 
 /**
  * Mechanical launch gate for `execute_step` / `spawn_ephemeral`.
- * A blocked step wins over a merely unmet one: the caller must see why it was
- * invalidated rather than a generic dependency message.
+ *
+ * Only a **cascade-invalidated** step (`cascadeReason` set) is hard-blocked:
+ * `blocked` is also the reflex-escalation state, and those steps must remain
+ * retryable (pre-`dependsOn` behaviour). Every other refusal is dependency
+ * based, so a stuck step always reports its unmet prerequisites.
  */
 function evaluateLaunchGate(
   entry: StepLedgerEntry | undefined,
   store: StepLedgerStore,
 ): LaunchGate {
   if (!entry) return { ok: true }
-  if (entry.state === 'blocked') {
+  if (entry.state === 'blocked' && entry.cascadeReason) {
     return {
       ok: false,
       error: 'step_blocked',
       blockedBy: [...(entry.blockedBy ?? [])],
-      ...(entry.cascadeReason ? { cascadeReason: entry.cascadeReason } : {}),
+      cascadeReason: entry.cascadeReason,
     }
   }
   const unmet = (entry.dependsOn ?? []).filter((dep) => store.steps[dep]?.state !== 'done')
   if (unmet.length > 0) return { ok: false, error: 'dependencies_unmet', unmet }
   return { ok: true }
+}
+
+/**
+ * Authoritative launch transition: re-evaluates the gate and flips the state
+ * **inside one lock acquisition**, so a cascade that lands between the caller's
+ * gate check and the state flip cannot slip through (A1). Returns the gate when
+ * the launch must abort.
+ */
+function claimStepForLaunch(
+  cwd: string,
+  stepKey: string,
+  nowIso: string,
+): { ok: true; resumed: boolean } | { ok: false; gate: LaunchGate } {
+  return updateStepLedger(cwd, (ledger) => {
+    const entry = ledger.steps[stepKey]
+    // No entry yet: the runner auto-creates it, and a step without a ledger
+    // row cannot declare dependencies.
+    if (!entry) return { ok: true as const, resumed: false }
+    const gate = evaluateLaunchGate(entry, ledger)
+    if (!gate.ok) return { ok: false as const, gate }
+    const resumed = entry.state === 'blocked'
+    if (entry.state === 'pending' || entry.state === 'blocked') {
+      entry.state = 'in_progress'
+      entry.updatedAt = nowIso
+      delete entry.blockedBy
+      delete entry.cascadeReason
+    }
+    return { ok: true as const, resumed }
+  })
 }
 
 function dependencyFailurePayload(
@@ -375,18 +560,6 @@ function emitBlocked(stepKey: string, entry: StepLedgerEntry | undefined): void 
   })
 }
 
-/** A ready `pending` step becomes `in_progress` the moment it is launched. */
-function markStepInProgress(cwd: string, stepKey: string, nowIso: string): void {
-  updateStepLedger(cwd, (ledger) => {
-    const entry = ledger.steps[stepKey]
-    if (entry?.state !== 'pending') return
-    entry.state = 'in_progress'
-    entry.updatedAt = nowIso
-    delete entry.blockedBy
-    delete entry.cascadeReason
-  })
-}
-
 export function createStepLedgerTool(
   fallbackDir?: string,
   sessionDomain?: SubSessionDomainLike,
@@ -395,7 +568,7 @@ export function createStepLedgerTool(
     name: 'pantheon_step_ledger',
     description:
       'Manage atomic Step-Ledger execution contracts with hard verification gates, Git checkpoints, bugfix reproduction tracking, and isolated sub-session step runner. ' +
-      'Lifecycle: init_step | execute_step -> [record_reproduction] -> record_mutation -> record_verification -> complete_step | rollback_step | status.',
+      'Lifecycle: init_step | execute_step -> [record_reproduction] -> record_mutation -> record_verification -> complete_step | rollback_step | unblock_step | status.',
     input: {
       type: 'object',
       additionalProperties: false,
@@ -413,10 +586,11 @@ export function createStepLedgerTool(
             'record_verification',
             'complete_step',
             'rollback_step',
+            'unblock_step',
             'status',
           ],
           description:
-            'Ledger operation (init_step | execute_step | spawn_ephemeral | verify_ephemeral | record_reproduction | record_mutation | record_verification | complete_step | rollback_step | status)',
+            'Ledger operation (init_step | execute_step | spawn_ephemeral | verify_ephemeral | record_reproduction | record_mutation | record_verification | complete_step | rollback_step | unblock_step | status)',
         },
         stepKey: {
           type: 'string',
@@ -715,7 +889,8 @@ export function createStepLedgerTool(
               ? input.objective.trim()
               : (launchStore.steps[key]?.objective ?? '')
           if (!objective) return jsonResult({ ok: false, error: 'objective is required' })
-          markStepInProgress(cwd, key, nowIso)
+          const claim = claimStepForLaunch(cwd, key, nowIso)
+          if (!claim.ok) return jsonResult({ ...claim.gate, stepKey: key })
           const agent =
             typeof input.agent === 'string' && input.agent.trim()
               ? input.agent.trim().replace(/^@/, '')
@@ -789,7 +964,8 @@ export function createStepLedgerTool(
               ? input.objective.trim()
               : (launchStore.steps[key]?.objective ?? '')
           if (!objective) return jsonResult({ ok: false, error: 'objective is required' })
-          markStepInProgress(cwd, key, nowIso)
+          const claim = claimStepForLaunch(cwd, key, nowIso)
+          if (!claim.ok) return jsonResult({ ...claim.gate, stepKey: key })
           const role =
             typeof input.role === 'string' && input.role.trim()
               ? input.role.trim()
@@ -885,37 +1061,64 @@ export function createStepLedgerTool(
             return jsonResult({ ok: false, error: `Step "${key}" has no Git baselineTree`, step })
           }
           const cascade = input.cascade === true
-          const doneDependents = cascadeBlock(
-            Object.values(preStore.steps) as DependencyNode[],
-            key,
-            'manual_rollback_step',
-          ).filter((target) => preStore.steps[target.stepKey]?.state === 'done')
-          if (doneDependents.length > 0 && !cascade) {
+          const doneDependentKeys = (store: StepLedgerStore): string[] =>
+            cascadeBlock(
+              Object.values(store.steps) as DependencyNode[],
+              key,
+              'manual_rollback_step',
+            )
+              .filter((target) => store.steps[target.stepKey]?.state === 'done')
+              .map((target) => target.stepKey)
+
+          // Fast refusal before the lock (cheap, no tree touched).
+          const preflightDone = doneDependentKeys(preStore)
+          if (preflightDone.length > 0 && !cascade) {
             return jsonResult({
               ok: false,
               error: 'dependents_done',
-              dependents: doneDependents.map((target) => target.stepKey),
+              dependents: preflightDone,
+              treeUntouched: true,
               hint: 'Re-run rollback_step with cascade:true to invalidate dependents explicitly.',
               step,
             })
           }
 
+          // Authoritative decision **under the lock and before any restore**: a
+          // refusal must be a no-op, never a tree rollback followed by an error.
+          const decision = updateStepLedger(cwd, (ledger) => {
+            const current = ledger.steps[key]
+            if (!current) return { kind: 'missing' as const }
+            const lateDone = doneDependentKeys(ledger)
+            if (lateDone.length > 0 && !cascade) {
+              return { kind: 'refused' as const, dependents: lateDone }
+            }
+            return { kind: 'proceed' as const }
+          })
+          if (decision.kind === 'missing') {
+            return jsonResult({ ok: false, error: `Step "${key}" is not initialized` })
+          }
+          if (decision.kind === 'refused') {
+            return jsonResult({
+              ok: false,
+              error: 'dependents_done',
+              dependents: decision.dependents,
+              treeUntouched: true,
+              step,
+            })
+          }
+
+          // Snapshot the pre-rollback tree so a late refusal can be undone and
+          // the caller always has a recovery handle.
+          const preRollback = await captureGitCheckpoint(cwd, `${key}-pre-rollback`)
           const rb = await restoreGitCheckpoint(cwd, step.baselineTree)
           const cascadeReason = `Step "${key}" was rolled back; dependent invalidated by cascade`
           const outcome = updateStepLedger(cwd, (ledger) => {
             const entry = ledger.steps[key]
             if (!entry) return { kind: 'missing' as const }
-            // Defensive re-check under the lock: a dependent could have completed
-            // between the pre-read and the restore above.
-            const lateDone = cascadeBlock(
-              Object.values(ledger.steps) as DependencyNode[],
-              key,
-              'manual_rollback_step',
-            )
-              .filter((target) => ledger.steps[target.stepKey]?.state === 'done')
-              .map((target) => target.stepKey)
+            // A dependent can only complete after our restore, inside this window.
+            const lateDone = doneDependentKeys(ledger)
             if (lateDone.length > 0 && !cascade) {
-              return { kind: 'dependents_done' as const, dependents: lateDone }
+              return { kind: 'late_refusal' as const, dependents: lateDone }
             }
             if (rb.ok) {
               entry.state = 'rolled_back'
@@ -937,11 +1140,17 @@ export function createStepLedgerTool(
           if (outcome.kind === 'missing') {
             return jsonResult({ ok: false, error: `Step "${key}" is not initialized` })
           }
-          if (outcome.kind === 'dependents_done') {
+          if (outcome.kind === 'late_refusal') {
+            // Undo our restore so the refusal stays a no-op, and hand the caller
+            // the tree we preserved.
+            if (preRollback.ok && preRollback.treeHash) {
+              await restoreGitCheckpoint(cwd, preRollback.treeHash)
+            }
             return jsonResult({
               ok: false,
               error: 'dependents_done',
               dependents: outcome.dependents,
+              ...(preRollback.treeHash ? { restoredTree: preRollback.treeHash } : {}),
               step,
             })
           }
@@ -976,6 +1185,7 @@ export function createStepLedgerTool(
           return jsonResult({
             ok: rb.ok,
             restoredTree: step.baselineTree,
+            ...(preRollback.treeHash ? { preRollbackTree: preRollback.treeHash } : {}),
             error: rb.reason,
             step: outcome.step,
             ...(cascade ? { invalidated: outcome.invalidated } : {}),
@@ -1012,6 +1222,9 @@ export function createStepLedgerTool(
             entry.verificationExitCode = exitCode
             entry.lastVerifiedAt = now
             entry.verificationAttempts = (entry.verificationAttempts ?? 0) + 1
+            if (exitCode !== 0) {
+              entry.verificationFailures = (entry.verificationFailures ?? 0) + 1
+            }
             entry.updatedAt = nowIso
 
             if (exitCode === 0) {
@@ -1023,8 +1236,10 @@ export function createStepLedgerTool(
                 testSlice: { command, exitCode: 0, durationMs },
               })
               entry.receiptId = receipt.receiptId
-              delete entry.blockedBy
-              delete entry.cascadeReason
+              // A cascade block is only lifted by `unblock_step` (or by being
+              // re-initialized). A passing verification never unblocks: that
+              // would let a dependent complete while its prerequisite is
+              // rolled_back.
               return { kind: 'verified' as const, receiptId: receipt.receiptId, step: entry }
             }
 
@@ -1128,10 +1343,57 @@ export function createStepLedgerTool(
           })
         }
 
+        if (action === 'unblock_step') {
+          const outcome = updateStepLedger(cwd, (ledger) => {
+            const entry = ledger.steps[key]
+            if (!entry) return { kind: 'missing' as const }
+            if (entry.state !== 'blocked') {
+              return { kind: 'not_blocked' as const, state: entry.state, step: entry }
+            }
+            const unmet = (entry.dependsOn ?? []).filter(
+              (dep) => ledger.steps[dep]?.state !== 'done',
+            )
+            if (unmet.length > 0) return { kind: 'unmet' as const, unmet, step: entry }
+            entry.state = 'in_progress'
+            entry.updatedAt = nowIso
+            delete entry.blockedBy
+            delete entry.cascadeReason
+            return { kind: 'unblocked' as const, step: entry }
+          })
+          if (outcome.kind === 'missing') {
+            return jsonResult({ ok: false, error: `Step "${key}" is not initialized` })
+          }
+          if (outcome.kind === 'unmet') {
+            return jsonResult({
+              ok: false,
+              error: 'dependencies_unmet',
+              unmet: outcome.unmet,
+              step: outcome.step,
+            })
+          }
+          if (outcome.kind === 'not_blocked') {
+            return jsonResult({
+              ok: false,
+              error: 'not_blocked',
+              state: outcome.state,
+              step: outcome.step,
+            })
+          }
+          return jsonResult({ ok: true, status: 'in_progress', step: outcome.step })
+        }
+
         if (action === 'complete_step') {
           const outcome = updateStepLedger(cwd, (ledger) => {
             const entry = ledger.steps[key]
             if (!entry) return { kind: 'missing' as const }
+            // A cascade-blocked dependent must never become `done` while its
+            // prerequisite is rolled_back: dependencies gate completion too.
+            const unmet = (entry.dependsOn ?? []).filter(
+              (dep) => ledger.steps[dep]?.state !== 'done',
+            )
+            if (unmet.length > 0) {
+              return { kind: 'unmet' as const, unmet, step: entry }
+            }
             const gate = canTransitionStepToDone(entry)
             if (!gate.allowed) return { kind: 'refused' as const, reason: gate.reason, step: entry }
             const readyBefore = new Set(
@@ -1147,6 +1409,14 @@ export function createStepLedgerTool(
           })
           if (outcome.kind === 'missing') {
             return jsonResult({ ok: false, error: `Step "${key}" is not initialized` })
+          }
+          if (outcome.kind === 'unmet') {
+            return jsonResult({
+              ok: false,
+              error: 'dependencies_unmet',
+              unmet: outcome.unmet,
+              step: outcome.step,
+            })
           }
           if (outcome.kind === 'refused') {
             return jsonResult({ ok: false, error: outcome.reason, step: outcome.step })

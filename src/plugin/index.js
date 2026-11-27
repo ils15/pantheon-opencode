@@ -6,7 +6,7 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
 });
 
 // src/plugin.ts
-import { appendFileSync as appendFileSync3, existsSync as existsSync27, mkdirSync as mkdirSync15, readdirSync as readdirSync8, readFileSync as readFileSync22 } from "node:fs";
+import { appendFileSync as appendFileSync3, existsSync as existsSync27, mkdirSync as mkdirSync15, readdirSync as readdirSync9, readFileSync as readFileSync22 } from "node:fs";
 import { realpath as realpathAsync } from "node:fs/promises";
 import path5 from "node:path";
 import { fileURLToPath as fileURLToPath6 } from "node:url";
@@ -12864,11 +12864,14 @@ ${layers.history.map((h) => h.trim()).join("\n\n")}`
 }
 
 // src/pantheon/step-ledger.ts
+import { randomUUID as randomUUID3 } from "node:crypto";
 import {
   closeSync as closeSync4,
   existsSync as existsSync16,
+  linkSync,
   mkdirSync as mkdirSync10,
   openSync as openSync4,
+  readdirSync as readdirSync3,
   readFileSync as readFileSync13,
   realpathSync as realpathSync7,
   renameSync as renameSync4,
@@ -12877,7 +12880,7 @@ import {
   writeFileSync as writeFileSync7,
   writeSync
 } from "node:fs";
-import { dirname as dirname14, join as join21, resolve as resolve16, sep as sep7 } from "node:path";
+import { basename as basename6, dirname as dirname14, join as join21, resolve as resolve16, sep as sep7 } from "node:path";
 
 // src/pantheon/ephemeral-worker.ts
 import { execFile as execFile5 } from "node:child_process";
@@ -15469,6 +15472,9 @@ function createExecutionReceipt(input) {
 
 // src/pantheon/step-dependencies.ts
 var RESERVED_KEYS = /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]);
+function isReservedStepKey(key) {
+  return typeof key === "string" && RESERVED_KEYS.has(key);
+}
 function compareKeys(a, b) {
   return a < b ? -1 : a > b ? 1 : 0;
 }
@@ -15497,6 +15503,45 @@ function indexNodes(nodes) {
 function declaredDependencies(node) {
   return normalizeDependencies(node?.dependsOn);
 }
+function knownAdjacency(nodes) {
+  const byKey = indexNodes(nodes);
+  const adjacency = /* @__PURE__ */ new Map();
+  for (const [key, node] of byKey) {
+    adjacency.set(
+      key,
+      declaredDependencies(node).filter((dep) => byKey.has(dep)).sort(compareKeys)
+    );
+  }
+  return adjacency;
+}
+function shortestPath(adjacency, from, to) {
+  const previous = /* @__PURE__ */ new Map();
+  const seen = /* @__PURE__ */ new Set([from]);
+  const queue = [from];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (current === void 0) break;
+    for (const next of adjacency.get(current) ?? []) {
+      if (next === current) continue;
+      if (seen.has(next)) continue;
+      seen.add(next);
+      previous.set(next, current);
+      if (next === to) {
+        const path6 = [to];
+        let cursor = to;
+        while (cursor !== from) {
+          const parent = previous.get(cursor);
+          if (parent === void 0) break;
+          path6.unshift(parent);
+          cursor = parent;
+        }
+        return path6;
+      }
+      queue.push(next);
+    }
+  }
+  return void 0;
+}
 function canonicalizeCycle(nodes) {
   if (nodes.length === 0) return [];
   let minIdx = 0;
@@ -15507,45 +15552,102 @@ function canonicalizeCycle(nodes) {
   const first = rotated[0];
   return first !== void 0 ? [...rotated, first] : rotated;
 }
-function detectDependencyCycles(nodes) {
-  const byKey = indexNodes(nodes);
-  const graph = /* @__PURE__ */ new Map();
-  for (const [key, node] of byKey) {
-    graph.set(
-      key,
-      declaredDependencies(node).filter((dep) => dep !== key && byKey.has(dep))
-    );
-  }
-  const state = /* @__PURE__ */ new Map();
-  const stack = [];
+function dedupeCycles(cycles) {
   const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const cycle of cycles) {
+    const signature = cycle.join(">");
+    if (seen.has(signature)) continue;
+    seen.add(signature);
+    out.push(cycle);
+  }
+  return out.sort((a, b) => compareKeys(a.join(">"), b.join(">")));
+}
+function cyclesThroughStep(nodes, stepKey) {
+  const adjacency = knownAdjacency(nodes);
+  const deps = adjacency.get(stepKey);
+  if (!deps || deps.length === 0) return [];
   const cycles = [];
-  const visit = (key) => {
-    state.set(key, "visiting");
-    stack.push(key);
-    for (const next of graph.get(key) ?? []) {
-      const nextState = state.get(next);
-      if (nextState === "visiting") {
-        const idx = stack.indexOf(next);
-        if (idx >= 0) {
-          const cycle = canonicalizeCycle(stack.slice(idx));
-          const signature = cycle.join(">");
-          if (!seen.has(signature)) {
-            seen.add(signature);
-            cycles.push(cycle);
-          }
-        }
-      } else if (nextState === void 0) {
-        visit(next);
+  for (const dep of deps) {
+    if (dep === stepKey) continue;
+    const path6 = shortestPath(adjacency, dep, stepKey);
+    if (!path6) continue;
+    cycles.push(canonicalizeCycle([stepKey, ...path6.slice(0, -1)]));
+  }
+  return dedupeCycles(cycles);
+}
+function stronglyConnectedComponents(adjacency) {
+  const index = /* @__PURE__ */ new Map();
+  const lowLink = /* @__PURE__ */ new Map();
+  const onStack = /* @__PURE__ */ new Set();
+  const stack = [];
+  const components = [];
+  let nextIndex = 0;
+  const strongConnect = (node) => {
+    index.set(node, nextIndex);
+    lowLink.set(node, nextIndex);
+    nextIndex += 1;
+    stack.push(node);
+    onStack.add(node);
+    for (const next of adjacency.get(node) ?? []) {
+      if (!index.has(next)) {
+        strongConnect(next);
+        lowLink.set(node, Math.min(lowLink.get(node) ?? 0, lowLink.get(next) ?? 0));
+      } else if (onStack.has(next)) {
+        lowLink.set(node, Math.min(lowLink.get(node) ?? 0, index.get(next) ?? 0));
       }
     }
-    stack.pop();
-    state.set(key, "visited");
+    if ((lowLink.get(node) ?? 0) === (index.get(node) ?? 0)) {
+      const component = [];
+      for (; ; ) {
+        const member = stack.pop();
+        if (member === void 0) break;
+        onStack.delete(member);
+        component.push(member);
+        if (member === node) break;
+      }
+      components.push(component.sort(compareKeys));
+    }
   };
-  for (const key of [...graph.keys()].sort(compareKeys)) {
-    if (!state.has(key)) visit(key);
+  for (const node of [...adjacency.keys()].sort(compareKeys)) {
+    if (!index.has(node)) strongConnect(node);
   }
-  return cycles.sort((a, b) => compareKeys(a.join(">"), b.join(">")));
+  return components;
+}
+function detectDependencyCycles(nodes) {
+  const adjacency = knownAdjacency(nodes);
+  const cycles = [];
+  for (const component of stronglyConnectedComponents(adjacency)) {
+    const [only] = component;
+    if (component.length === 1 && only !== void 0) {
+      if ((adjacency.get(only) ?? []).includes(only)) cycles.push([only, only]);
+      continue;
+    }
+    if (component.length === 0 || only === void 0) continue;
+    const members = new Set(component);
+    const restricted = /* @__PURE__ */ new Map();
+    for (const member of component) {
+      restricted.set(
+        member,
+        (adjacency.get(member) ?? []).filter((dep) => members.has(dep))
+      );
+    }
+    const candidates = [];
+    for (const dep of restricted.get(only) ?? []) {
+      if (dep === only) {
+        candidates.push([only, only]);
+        continue;
+      }
+      const path6 = shortestPath(restricted, dep, only);
+      if (path6) candidates.push([only, ...path6]);
+    }
+    if (candidates.length === 0) continue;
+    candidates.sort((a, b) => a.length - b.length || compareKeys(a.join(">"), b.join(">")));
+    const [shortest] = candidates;
+    if (!shortest) continue;
+    cycles.push(canonicalizeCycle(shortest.slice(0, -1)));
+  }
+  return dedupeCycles(cycles);
 }
 function validateDependencies(stepKey, rawDependsOn, nodes) {
   const byKey = indexNodes(nodes);
@@ -15557,7 +15659,7 @@ function validateDependencies(stepKey, rawDependsOn, nodes) {
     ...nodes.filter((node) => node.stepKey !== stepKey),
     { stepKey, dependsOn: candidateDeps }
   ];
-  const cycles = detectDependencyCycles(candidateNodes).filter((cycle) => cycle.includes(stepKey));
+  const cycles = cyclesThroughStep(candidateNodes, stepKey);
   const issues = [];
   if (selfDependency) {
     issues.push({
@@ -15592,12 +15694,14 @@ function validateDependencies(stepKey, rawDependsOn, nodes) {
 }
 function computeWaves(nodes) {
   const byKey = indexNodes(nodes);
-  const depsOf = (key) => declaredDependencies(byKey.get(key)).filter((dep) => dep !== key && byKey.has(dep));
+  const depsOf = (key) => declaredDependencies(byKey.get(key)).filter((dep) => dep !== key);
   const placed = /* @__PURE__ */ new Set();
   const waves = [];
   let remaining = [...byKey.keys()].sort(compareKeys);
   while (remaining.length > 0) {
-    const level = remaining.filter((key) => depsOf(key).every((dep) => placed.has(dep)));
+    const level = remaining.filter(
+      (key) => depsOf(key).every((dep) => byKey.has(dep) && placed.has(dep))
+    );
     if (level.length === 0) break;
     for (const key of level) placed.add(key);
     waves.push(level);
@@ -15637,13 +15741,14 @@ function danglingDependencies(nodes) {
   return dangling;
 }
 function buildDependencyGraph(nodes) {
-  const { waves, cycles } = computeWaves(nodes);
+  const { waves, cycles, unplaced } = computeWaves(nodes);
   return {
     waves,
     cycles,
     ready: readyStepKeys(nodes),
     unmet: unmetDependencies(nodes),
-    dangling: danglingDependencies(nodes)
+    dangling: danglingDependencies(nodes),
+    unplaced
   };
 }
 function cascadeBlock(nodes, rootStepKey, reason) {
@@ -15797,6 +15902,9 @@ function assertSafeStepKey(stepKey) {
   if (typeof stepKey !== "string" || !SAFE_STEP_KEY_RE.test(stepKey) || stepKey.includes("..")) {
     throw new Error("stepKey must be a safe alphanumeric identifier (1..128 chars)");
   }
+  if (isReservedStepKey(stepKey)) {
+    throw new Error(`stepKey "${stepKey}" is reserved and cannot be used as a step id`);
+  }
   return stepKey;
 }
 function resolveLedgerPath(workspaceDir) {
@@ -15813,21 +15921,47 @@ function resolveLedgerPath(workspaceDir) {
 }
 function readLedgerFileAtPath(filePath) {
   if (!existsSync16(filePath)) return { version: 1, steps: {} };
+  let raw;
   try {
-    const parsed = JSON.parse(readFileSync13(filePath, "utf8"));
-    if (parsed && typeof parsed.steps === "object" && parsed.steps !== null) {
-      return { version: 1, steps: parsed.steps };
-    }
-  } catch {
+    raw = readFileSync13(filePath, "utf8");
+  } catch (err) {
+    throw new Error(
+      `step-ledger cannot be read at ${filePath}: ${err instanceof Error ? err.message : String(err)}`
+    );
   }
-  return { version: 1, steps: {} };
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    const quarantine = `${filePath}.corrupt.${Date.now()}`;
+    try {
+      renameSync4(filePath, quarantine);
+    } catch {
+    }
+    throw new Error(
+      `step-ledger is corrupt and was moved aside to ${quarantine} (${err instanceof Error ? err.message : String(err)}). Inspect it and restore a valid ledger before retrying \u2014 refusing to overwrite it with an empty store.`
+    );
+  }
+  const candidate = parsed;
+  if (!candidate || typeof candidate.steps !== "object" || candidate.steps === null) {
+    const quarantine = `${filePath}.corrupt.${Date.now()}`;
+    try {
+      renameSync4(filePath, quarantine);
+    } catch {
+    }
+    throw new Error(
+      `step-ledger at ${filePath} has no "steps" object and was moved aside to ${quarantine}. Refusing to overwrite it with an empty store.`
+    );
+  }
+  return { version: 1, steps: candidate.steps };
 }
 function readStepLedger(workspaceDir) {
   return readLedgerFileAtPath(resolveLedgerPath(workspaceDir));
 }
-var LOCK_STALE_MS = 1e4;
-var LOCK_RETRIES = 20;
+var LOCK_STALE_MS = 2e3;
+var LOCK_WAIT_BUDGET_MS = 4e3;
 var LOCK_RETRY_MS = 25;
+var TMP_SWEEP_AGE_MS = 6e4;
 var sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
 function sleepMs(ms) {
   Atomics.wait(sleepBuffer, 0, 0, ms);
@@ -15835,36 +15969,107 @@ function sleepMs(ms) {
 function resolveLockPath(ledgerPath) {
   return join21(dirname14(ledgerPath), ".step-ledger.lock");
 }
+function createLockToken() {
+  return `${process.pid}:${randomUUID3()}`;
+}
+function lockOwnerPid(token) {
+  const [pid] = token.trim().split(":");
+  const parsed = Number(pid);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : void 0;
+}
+function readLockToken(lockPath) {
+  try {
+    return readFileSync13(lockPath, "utf8").trim();
+  } catch {
+    return void 0;
+  }
+}
+function sweepOrphanTempFiles(filePath) {
+  const dir = dirname14(filePath);
+  const prefix = `${basename6(filePath)}.tmp.`;
+  let entries;
+  try {
+    entries = readdirSync3(dir);
+  } catch {
+    return;
+  }
+  const now = Date.now();
+  for (const entry of entries) {
+    if (!entry.startsWith(prefix)) continue;
+    const candidate = join21(dir, entry);
+    try {
+      if (now - statSync6(candidate).mtimeMs > TMP_SWEEP_AGE_MS) unlinkSync4(candidate);
+    } catch {
+    }
+  }
+}
+function breakStaleLock(lockPath, observedToken) {
+  const quarantine = `${lockPath}.stale.${process.pid}.${Date.now()}`;
+  try {
+    renameSync4(lockPath, quarantine);
+  } catch {
+    return;
+  }
+  const token = readLockToken(quarantine);
+  if (token !== observedToken) {
+    try {
+      linkSync(quarantine, lockPath);
+    } catch {
+    }
+    try {
+      unlinkSync4(quarantine);
+    } catch {
+    }
+    return;
+  }
+  try {
+    unlinkSync4(quarantine);
+  } catch {
+  }
+}
 function acquireLedgerLock(lockPath) {
-  for (let attempt = 0; attempt <= LOCK_RETRIES; attempt += 1) {
+  const token = createLockToken();
+  const deadline = Date.now() + LOCK_WAIT_BUDGET_MS;
+  for (; ; ) {
     try {
       const fd = openSync4(lockPath, "wx");
       try {
-        writeSync(fd, `${process.pid}
+        writeSync(fd, `${token}
 `);
       } finally {
         closeSync4(fd);
       }
-      return;
+      return token;
     } catch (err) {
       const code = err?.code;
       if (code !== "EEXIST") throw err;
-      try {
-        if (Date.now() - statSync6(lockPath).mtimeMs > LOCK_STALE_MS) {
-          unlinkSync4(lockPath);
-          continue;
-        }
-      } catch {
-        continue;
-      }
-      if (attempt === LOCK_RETRIES) {
-        throw new Error(`step-ledger lock timeout after ${LOCK_RETRIES * LOCK_RETRY_MS}ms`);
-      }
-      sleepMs(LOCK_RETRY_MS);
     }
+    const observedToken = readLockToken(lockPath);
+    if (observedToken !== void 0 && lockOwnerPid(observedToken) === process.pid) {
+      throw new Error(
+        `step-ledger lock ${lockPath} is held by this process: re-entrant updateStepLedger is not supported. Move the nested write outside the mutator.`
+      );
+    }
+    let age = Number.POSITIVE_INFINITY;
+    try {
+      age = Date.now() - statSync6(lockPath).mtimeMs;
+    } catch {
+      continue;
+    }
+    if (age > LOCK_STALE_MS && observedToken !== void 0) {
+      breakStaleLock(lockPath, observedToken);
+      continue;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `step-ledger lock timeout after ${LOCK_WAIT_BUDGET_MS}ms waiting on ${lockPath} (held by pid ${observedToken ?? "unknown"}). If that writer crashed, remove the file: rm -f ${lockPath}`
+      );
+    }
+    sleepMs(LOCK_RETRY_MS);
   }
 }
-function releaseLedgerLock(lockPath) {
+function releaseLedgerLock(lockPath, token) {
+  if (readLockToken(lockPath) !== token) return;
   try {
     unlinkSync4(lockPath);
   } catch {
@@ -15887,15 +16092,16 @@ function writeLedgerFileAtomic(filePath, store2) {
 function updateStepLedger(workspaceDir, mutator) {
   const filePath = resolveLedgerPath(workspaceDir);
   const lockPath = resolveLockPath(filePath);
-  acquireLedgerLock(lockPath);
+  const token = acquireLedgerLock(lockPath);
   try {
+    sweepOrphanTempFiles(filePath);
     const store2 = readLedgerFileAtPath(filePath);
     const result = mutator(store2);
     store2.version = 1;
     writeLedgerFileAtomic(filePath, store2);
     return result;
   } finally {
-    releaseLedgerLock(lockPath);
+    releaseLedgerLock(lockPath, token);
   }
 }
 function canTransitionStepToDone(step) {
@@ -15918,17 +16124,33 @@ function jsonResult3(payload) {
 }
 function evaluateLaunchGate(entry, store2) {
   if (!entry) return { ok: true };
-  if (entry.state === "blocked") {
+  if (entry.state === "blocked" && entry.cascadeReason) {
     return {
       ok: false,
       error: "step_blocked",
       blockedBy: [...entry.blockedBy ?? []],
-      ...entry.cascadeReason ? { cascadeReason: entry.cascadeReason } : {}
+      cascadeReason: entry.cascadeReason
     };
   }
   const unmet = (entry.dependsOn ?? []).filter((dep) => store2.steps[dep]?.state !== "done");
   if (unmet.length > 0) return { ok: false, error: "dependencies_unmet", unmet };
   return { ok: true };
+}
+function claimStepForLaunch(cwd, stepKey, nowIso) {
+  return updateStepLedger(cwd, (ledger) => {
+    const entry = ledger.steps[stepKey];
+    if (!entry) return { ok: true, resumed: false };
+    const gate = evaluateLaunchGate(entry, ledger);
+    if (!gate.ok) return { ok: false, gate };
+    const resumed = entry.state === "blocked";
+    if (entry.state === "pending" || entry.state === "blocked") {
+      entry.state = "in_progress";
+      entry.updatedAt = nowIso;
+      delete entry.blockedBy;
+      delete entry.cascadeReason;
+    }
+    return { ok: true, resumed };
+  });
 }
 function dependencyFailurePayload(stepKey, result) {
   const issue = result.issues[0];
@@ -15972,20 +16194,10 @@ function emitBlocked(stepKey, entry) {
     timestamp: Date.now()
   });
 }
-function markStepInProgress(cwd, stepKey, nowIso) {
-  updateStepLedger(cwd, (ledger) => {
-    const entry = ledger.steps[stepKey];
-    if (entry?.state !== "pending") return;
-    entry.state = "in_progress";
-    entry.updatedAt = nowIso;
-    delete entry.blockedBy;
-    delete entry.cascadeReason;
-  });
-}
 function createStepLedgerTool(fallbackDir, sessionDomain) {
   return {
     name: "pantheon_step_ledger",
-    description: "Manage atomic Step-Ledger execution contracts with hard verification gates, Git checkpoints, bugfix reproduction tracking, and isolated sub-session step runner. Lifecycle: init_step | execute_step -> [record_reproduction] -> record_mutation -> record_verification -> complete_step | rollback_step | status.",
+    description: "Manage atomic Step-Ledger execution contracts with hard verification gates, Git checkpoints, bugfix reproduction tracking, and isolated sub-session step runner. Lifecycle: init_step | execute_step -> [record_reproduction] -> record_mutation -> record_verification -> complete_step | rollback_step | unblock_step | status.",
     input: {
       type: "object",
       additionalProperties: false,
@@ -16003,9 +16215,10 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             "record_verification",
             "complete_step",
             "rollback_step",
+            "unblock_step",
             "status"
           ],
-          description: "Ledger operation (init_step | execute_step | spawn_ephemeral | verify_ephemeral | record_reproduction | record_mutation | record_verification | complete_step | rollback_step | status)"
+          description: "Ledger operation (init_step | execute_step | spawn_ephemeral | verify_ephemeral | record_reproduction | record_mutation | record_verification | complete_step | rollback_step | unblock_step | status)"
         },
         stepKey: {
           type: "string",
@@ -16243,7 +16456,8 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
           if (!launchGate.ok) return jsonResult3({ ...launchGate, stepKey: key });
           const objective = typeof input.objective === "string" && input.objective.trim() ? input.objective.trim() : launchStore.steps[key]?.objective ?? "";
           if (!objective) return jsonResult3({ ok: false, error: "objective is required" });
-          markStepInProgress(cwd, key, nowIso);
+          const claim = claimStepForLaunch(cwd, key, nowIso);
+          if (!claim.ok) return jsonResult3({ ...claim.gate, stepKey: key });
           const agent = typeof input.agent === "string" && input.agent.trim() ? input.agent.trim().replace(/^@/, "") : launchStore.steps[key]?.agent ?? "hermes";
           const rawTaskType = input.taskType;
           const taskType = rawTaskType === "feature" || rawTaskType === "bugfix" || rawTaskType === "refactor" || rawTaskType === "chore" ? rawTaskType : launchStore.steps[key]?.taskType;
@@ -16285,7 +16499,8 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
           if (!launchGate.ok) return jsonResult3({ ...launchGate, stepKey: key });
           const objective = typeof input.objective === "string" && input.objective.trim() ? input.objective.trim() : launchStore.steps[key]?.objective ?? "";
           if (!objective) return jsonResult3({ ok: false, error: "objective is required" });
-          markStepInProgress(cwd, key, nowIso);
+          const claim = claimStepForLaunch(cwd, key, nowIso);
+          if (!claim.ok) return jsonResult3({ ...claim.gate, stepKey: key });
           const role = typeof input.role === "string" && input.role.trim() ? input.role.trim() : deriveEphemeralRoleSlug(`worker-${key}`);
           const parentSid = typeof context?.sessionID === "string" ? context.sessionID ?? void 0 : void 0;
           const ephOut = await spawnEphemeralWorker({
@@ -16353,32 +16568,52 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             return jsonResult3({ ok: false, error: `Step "${key}" has no Git baselineTree`, step });
           }
           const cascade = input.cascade === true;
-          const doneDependents = cascadeBlock(
-            Object.values(preStore.steps),
+          const doneDependentKeys = (store2) => cascadeBlock(
+            Object.values(store2.steps),
             key,
             "manual_rollback_step"
-          ).filter((target) => preStore.steps[target.stepKey]?.state === "done");
-          if (doneDependents.length > 0 && !cascade) {
+          ).filter((target) => store2.steps[target.stepKey]?.state === "done").map((target) => target.stepKey);
+          const preflightDone = doneDependentKeys(preStore);
+          if (preflightDone.length > 0 && !cascade) {
             return jsonResult3({
               ok: false,
               error: "dependents_done",
-              dependents: doneDependents.map((target) => target.stepKey),
+              dependents: preflightDone,
+              treeUntouched: true,
               hint: "Re-run rollback_step with cascade:true to invalidate dependents explicitly.",
               step
             });
           }
+          const decision2 = updateStepLedger(cwd, (ledger) => {
+            const current = ledger.steps[key];
+            if (!current) return { kind: "missing" };
+            const lateDone = doneDependentKeys(ledger);
+            if (lateDone.length > 0 && !cascade) {
+              return { kind: "refused", dependents: lateDone };
+            }
+            return { kind: "proceed" };
+          });
+          if (decision2.kind === "missing") {
+            return jsonResult3({ ok: false, error: `Step "${key}" is not initialized` });
+          }
+          if (decision2.kind === "refused") {
+            return jsonResult3({
+              ok: false,
+              error: "dependents_done",
+              dependents: decision2.dependents,
+              treeUntouched: true,
+              step
+            });
+          }
+          const preRollback = await captureGitCheckpoint(cwd, `${key}-pre-rollback`);
           const rb = await restoreGitCheckpoint(cwd, step.baselineTree);
           const cascadeReason = `Step "${key}" was rolled back; dependent invalidated by cascade`;
           const outcome = updateStepLedger(cwd, (ledger) => {
             const entry = ledger.steps[key];
             if (!entry) return { kind: "missing" };
-            const lateDone = cascadeBlock(
-              Object.values(ledger.steps),
-              key,
-              "manual_rollback_step"
-            ).filter((target) => ledger.steps[target.stepKey]?.state === "done").map((target) => target.stepKey);
+            const lateDone = doneDependentKeys(ledger);
             if (lateDone.length > 0 && !cascade) {
-              return { kind: "dependents_done", dependents: lateDone };
+              return { kind: "late_refusal", dependents: lateDone };
             }
             if (rb.ok) {
               entry.state = "rolled_back";
@@ -16400,11 +16635,15 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
           if (outcome.kind === "missing") {
             return jsonResult3({ ok: false, error: `Step "${key}" is not initialized` });
           }
-          if (outcome.kind === "dependents_done") {
+          if (outcome.kind === "late_refusal") {
+            if (preRollback.ok && preRollback.treeHash) {
+              await restoreGitCheckpoint(cwd, preRollback.treeHash);
+            }
             return jsonResult3({
               ok: false,
               error: "dependents_done",
               dependents: outcome.dependents,
+              ...preRollback.treeHash ? { restoredTree: preRollback.treeHash } : {},
               step
             });
           }
@@ -16426,6 +16665,7 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
           return jsonResult3({
             ok: rb.ok,
             restoredTree: step.baselineTree,
+            ...preRollback.treeHash ? { preRollbackTree: preRollback.treeHash } : {},
             error: rb.reason,
             step: outcome.step,
             ...cascade ? { invalidated: outcome.invalidated } : {}
@@ -16459,6 +16699,9 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             entry.verificationExitCode = exitCode;
             entry.lastVerifiedAt = now;
             entry.verificationAttempts = (entry.verificationAttempts ?? 0) + 1;
+            if (exitCode !== 0) {
+              entry.verificationFailures = (entry.verificationFailures ?? 0) + 1;
+            }
             entry.updatedAt = nowIso;
             if (exitCode === 0) {
               stepReflex.evaluate(key, entry.agent, []);
@@ -16469,8 +16712,6 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
                 testSlice: { command, exitCode: 0, durationMs }
               });
               entry.receiptId = receipt.receiptId;
-              delete entry.blockedBy;
-              delete entry.cascadeReason;
               return { kind: "verified", receiptId: receipt.receiptId, step: entry };
             }
             const reflex = stepReflex.evaluate(key, entry.agent, [
@@ -16567,10 +16808,54 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             ...patched.blocked.length > 0 ? { blocked: patched.blocked } : {}
           });
         }
+        if (action === "unblock_step") {
+          const outcome = updateStepLedger(cwd, (ledger) => {
+            const entry = ledger.steps[key];
+            if (!entry) return { kind: "missing" };
+            if (entry.state !== "blocked") {
+              return { kind: "not_blocked", state: entry.state, step: entry };
+            }
+            const unmet = (entry.dependsOn ?? []).filter(
+              (dep) => ledger.steps[dep]?.state !== "done"
+            );
+            if (unmet.length > 0) return { kind: "unmet", unmet, step: entry };
+            entry.state = "in_progress";
+            entry.updatedAt = nowIso;
+            delete entry.blockedBy;
+            delete entry.cascadeReason;
+            return { kind: "unblocked", step: entry };
+          });
+          if (outcome.kind === "missing") {
+            return jsonResult3({ ok: false, error: `Step "${key}" is not initialized` });
+          }
+          if (outcome.kind === "unmet") {
+            return jsonResult3({
+              ok: false,
+              error: "dependencies_unmet",
+              unmet: outcome.unmet,
+              step: outcome.step
+            });
+          }
+          if (outcome.kind === "not_blocked") {
+            return jsonResult3({
+              ok: false,
+              error: "not_blocked",
+              state: outcome.state,
+              step: outcome.step
+            });
+          }
+          return jsonResult3({ ok: true, status: "in_progress", step: outcome.step });
+        }
         if (action === "complete_step") {
           const outcome = updateStepLedger(cwd, (ledger) => {
             const entry = ledger.steps[key];
             if (!entry) return { kind: "missing" };
+            const unmet = (entry.dependsOn ?? []).filter(
+              (dep) => ledger.steps[dep]?.state !== "done"
+            );
+            if (unmet.length > 0) {
+              return { kind: "unmet", unmet, step: entry };
+            }
             const gate = canTransitionStepToDone(entry);
             if (!gate.allowed) return { kind: "refused", reason: gate.reason, step: entry };
             const readyBefore = new Set(
@@ -16586,6 +16871,14 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
           });
           if (outcome.kind === "missing") {
             return jsonResult3({ ok: false, error: `Step "${key}" is not initialized` });
+          }
+          if (outcome.kind === "unmet") {
+            return jsonResult3({
+              ok: false,
+              error: "dependencies_unmet",
+              unmet: outcome.unmet,
+              step: outcome.step
+            });
           }
           if (outcome.kind === "refused") {
             return jsonResult3({ ok: false, error: outcome.reason, step: outcome.step });
@@ -16687,7 +16980,7 @@ function evaluateReproductionGate(params) {
 }
 
 // src/pantheon/shell-hooks.ts
-import { randomUUID as randomUUID3 } from "node:crypto";
+import { randomUUID as randomUUID4 } from "node:crypto";
 
 // src/plugins/hook-runner.ts
 import { spawn as spawn2 } from "node:child_process";
@@ -16939,7 +17232,7 @@ function createV2ShellHooks(options = {}) {
         return;
       }
       const start = {
-        delegationId: randomUUID3(),
+        delegationId: randomUUID4(),
         agent: delegationAgent(tool2, event.input),
         startedAt: now()
       };
@@ -16977,7 +17270,7 @@ function createV2ShellHooks(options = {}) {
           // the record was evicted). The STOP still needs a key field to be a
           // well-formed audit line, so it gets a fresh one — an orphan STOP,
           // never an unkeyed one.
-          delegation_id: randomUUID3()
+          delegation_id: randomUUID4()
         } : {
           // The BEFORE-time agent wins: the AFTER-time args may carry the
           // merged background result, which has no subagent_type.
@@ -17845,7 +18138,7 @@ import { promisify as promisify6 } from "node:util";
 import {
   existsSync as existsSync18,
   mkdirSync as mkdirSync11,
-  readdirSync as readdirSync3,
+  readdirSync as readdirSync4,
   readFileSync as readFileSync15,
   realpathSync as realpathSync8,
   rmSync as rmSync3,
@@ -18139,7 +18432,7 @@ function createAgentForgeTool(fallbackDir) {
         }
         const agentsDir = resolveAgentsDir(cwd);
         if (action === "list") {
-          const files = readdirSync3(agentsDir).filter((f) => f.endsWith(".md") && f.toLowerCase() !== "readme.md").sort();
+          const files = readdirSync4(agentsDir).filter((f) => f.endsWith(".md") && f.toLowerCase() !== "readme.md").sort();
           const agents = files.map((file) => {
             const id = file.replace(/\.md$/, "");
             const raw = readFileSync15(join23(agentsDir, file), "utf8");
@@ -18230,7 +18523,7 @@ function createAgentForgeTool(fallbackDir) {
 }
 
 // src/pantheon/ast-tools.ts
-import { readdirSync as readdirSync4, readFileSync as readFileSync16, statSync as statSync7, writeFileSync as writeFileSync9 } from "node:fs";
+import { readdirSync as readdirSync5, readFileSync as readFileSync16, statSync as statSync7, writeFileSync as writeFileSync9 } from "node:fs";
 import { extname as extname3, join as join24, relative as relative5, resolve as resolve19 } from "node:path";
 var SKIP_DIRS = /* @__PURE__ */ new Set([".git", "node_modules", ".pantheon", ".venv", "dist", "build"]);
 var SUPPORTED_EXTS = /* @__PURE__ */ new Set([
@@ -18446,7 +18739,7 @@ function collectFiles(targetPath) {
   const st = statSync7(targetPath);
   if (st.isFile()) return [targetPath];
   const walk = (dir) => {
-    for (const entry of readdirSync4(dir, { withFileTypes: true })) {
+    for (const entry of readdirSync5(dir, { withFileTypes: true })) {
       if (SKIP_DIRS.has(entry.name)) continue;
       const full = join24(dir, entry.name);
       if (entry.isDirectory()) walk(full);
@@ -18653,7 +18946,7 @@ function createAstTools(fallbackDir) {
 
 // src/pantheon/codemap-tools.ts
 import { createHash as createHash7 } from "node:crypto";
-import { existsSync as existsSync19, mkdirSync as mkdirSync12, readdirSync as readdirSync5, readFileSync as readFileSync17, realpathSync as realpathSync9, statSync as statSync8 } from "node:fs";
+import { existsSync as existsSync19, mkdirSync as mkdirSync12, readdirSync as readdirSync6, readFileSync as readFileSync17, realpathSync as realpathSync9, statSync as statSync8 } from "node:fs";
 import { extname as extname4, join as join25, relative as relative6, resolve as resolve20, sep as sep9 } from "node:path";
 import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
 var IGNORED_DIRS = /* @__PURE__ */ new Set([
@@ -18876,7 +19169,7 @@ function collectSourceFiles(currentDir, maxFiles = 500) {
     if (results.length >= maxFiles) return;
     let entries;
     try {
-      entries = readdirSync5(dir, { withFileTypes: true });
+      entries = readdirSync6(dir, { withFileTypes: true });
     } catch {
       return;
     }
@@ -21609,7 +21902,7 @@ import { randomBytes } from "node:crypto";
 import { constants as constants4 } from "node:fs";
 import { lstat as lstat2, mkdir as mkdir8, open as open3, rename as rename7, unlink as unlink4 } from "node:fs/promises";
 import { homedir as homedir8 } from "node:os";
-import { basename as basename6, dirname as dirname17, join as join31, resolve as resolve22 } from "node:path";
+import { basename as basename7, dirname as dirname17, join as join31, resolve as resolve22 } from "node:path";
 import { z as z5 } from "zod";
 var MODEL_REF_PATTERN2 = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._:+-]*$/;
 var SAFE_PRESET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -21695,7 +21988,7 @@ async function syncDirectory(path6) {
 }
 async function createTemporaryFile(path6) {
   const directory = dirname17(path6);
-  const prefix = `.${basename6(path6)}.tmp-`;
+  const prefix = `.${basename7(path6)}.tmp-`;
   const flags = constants4.O_WRONLY | constants4.O_CREAT | constants4.O_EXCL | NO_FOLLOW;
   for (let attempt = 0; attempt < 10; attempt += 1) {
     const temporaryPath = join31(directory, `${prefix}${randomBytes(16).toString("hex")}`);
@@ -22360,7 +22653,7 @@ function createModelCommand(options = {}) {
 import {
   existsSync as existsSync24,
   mkdirSync as mkdirSync14,
-  readdirSync as readdirSync6,
+  readdirSync as readdirSync7,
   readFileSync as readFileSync20,
   realpathSync as realpathSync11,
   writeFileSync as writeFileSync11
@@ -22371,7 +22664,7 @@ import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
 // src/pantheon/memory-federation.ts
 import { existsSync as existsSync23, readFileSync as readFileSync19, realpathSync as realpathSync10 } from "node:fs";
 import { homedir as homedir9 } from "node:os";
-import { basename as basename7, join as join32, resolve as resolve23 } from "node:path";
+import { basename as basename8, join as join32, resolve as resolve23 } from "node:path";
 import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
 var NOT_EXPIRED_SQL = "(expires_at IS NULL OR expires_at > ?)";
 function safeRealpath(dir) {
@@ -22423,7 +22716,7 @@ function resolveFederatedRepoDirs(primaryWorkspaceDir, options = {}) {
 function querySinglePeerDb(peerRoot, rawQuery, nowIso, limit, namespace) {
   const dbPath = join32(peerRoot, ".pantheon", "memory", "memory.db");
   if (!existsSync23(dbPath)) return [];
-  const repoName = basename7(peerRoot) || peerRoot;
+  const repoName = basename8(peerRoot) || peerRoot;
   let db;
   try {
     db = new DatabaseSync4(dbPath, { readOnly: true });
@@ -22510,7 +22803,7 @@ function getFederatedStats(primaryWorkspaceDir, options = {}) {
       } catch {
       }
     }
-    repos.push({ repo: basename7(peer) || peer, path: peer, total: count });
+    repos.push({ repo: basename8(peer) || peer, path: peer, total: count });
     total += count;
   }
   return { total, repos };
@@ -23084,7 +23377,7 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
             if (!existsSync24(filePath)) return jsonResult7({ ok: false, error: "not_found", id });
             return jsonResult7(JSON.parse(readFileSync20(filePath, "utf8")));
           }
-          const files = readdirSync6(goalsDir).filter((f) => f.endsWith(".json")).sort();
+          const files = readdirSync7(goalsDir).filter((f) => f.endsWith(".json")).sort();
           const latest = files.at(-1);
           if (!latest) return jsonResult7({ ok: false, error: "no_active_goals" });
           return jsonResult7(JSON.parse(readFileSync20(resolveConfinedPath(goalsDir, latest), "utf8")));
@@ -23328,7 +23621,7 @@ function createReviewVerdictTool(sessionDomain) {
 }
 
 // src/pantheon/skill-search-tool.ts
-import { existsSync as existsSync25, readdirSync as readdirSync7, readFileSync as readFileSync21 } from "node:fs";
+import { existsSync as existsSync25, readdirSync as readdirSync8, readFileSync as readFileSync21 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
 import { join as join34 } from "node:path";
 
@@ -23588,7 +23881,7 @@ function scanInstalledSkills(cwd = process.cwd()) {
   const scanDir = (baseDir, scope) => {
     try {
       if (!existsSync25(baseDir)) return;
-      const entries = readdirSync7(baseDir, { withFileTypes: true });
+      const entries = readdirSync8(baseDir, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
         const skillName = entry.name;
@@ -24754,7 +25047,7 @@ function transformSkills(draft) {
   const editor = draft;
   if (typeof editor.add === "function") {
     try {
-      const entries = readdirSync8(skillsDir, { withFileTypes: true });
+      const entries = readdirSync9(skillsDir, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
         const skillId = entry.name;

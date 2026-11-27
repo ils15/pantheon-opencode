@@ -2040,6 +2040,13 @@ function renderWorkMapLines(counts) {
 		`  [FTS5 Memory] ─┴─ [AST + LSP Diagnostics]`
 	];
 }
+function loadStepDependencyField(step, field) {
+	const raw = step[field];
+	if (!Array.isArray(raw)) return {};
+	const keys = raw.filter((value) => typeof value === "string" && value.length > 0);
+	if (keys.length === 0) return {};
+	return field === "dependsOn" ? { dependsOn: keys } : { blockedBy: keys };
+}
 function loadStepEntries(workspaceDir) {
 	const ledgerPath = join(workspaceDir, ".pantheon", "ledger", "step-ledger.json");
 	if (!existsSync(ledgerPath)) return [];
@@ -2054,6 +2061,8 @@ function loadStepEntries(workspaceDir) {
 			mutatedCount: Array.isArray(s.mutatedFiles) ? s.mutatedFiles.length : 0,
 			...typeof s.receiptId === "string" ? { receiptId: s.receiptId } : {},
 			hasBaselineTree: typeof s.baselineTree === "string" && s.baselineTree.length === 40,
+			...loadStepDependencyField(s, "dependsOn"),
+			...loadStepDependencyField(s, "blockedBy"),
 			updatedAt: String(s.updatedAt ?? "")
 		})).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 	} catch {

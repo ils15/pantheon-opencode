@@ -20,7 +20,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const GENERATED_PATHS = ['src/agents', 'src/plugin']
+const GENERATED_PATHS = ['src/agents', 'src/plugin', 'src/plugins/tui/dist']
 const BACKUP_PREFIX = 'pantheon-generated-backup-'
 const BACKUP_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 
@@ -93,14 +93,32 @@ if (dirty.length > 0) {
 }
 
 const steps = [
-  { label: 'agent roster', script: 'scripts/build-roster.mjs', path: 'src/agents' },
-  { label: 'plugin bundle', script: 'scripts/build-plugin.mjs', path: 'src/plugin' },
+  {
+    label: 'agent roster',
+    command: process.execPath,
+    args: ['scripts/build-roster.mjs'],
+    path: 'src/agents',
+  },
+  {
+    label: 'plugin bundle',
+    command: process.execPath,
+    args: ['scripts/build-plugin.mjs'],
+    path: 'src/plugin',
+  },
+  {
+    // The TUI bundle is a committed artifact too (CI's `validate` rebuilds it
+    // and fails on drift); gate it here so the class cannot recur.
+    label: 'TUI bundle',
+    command: 'npm',
+    args: ['--silent', 'run', 'build', '--prefix', 'src/plugins/tui'],
+    path: 'src/plugins/tui/dist',
+  },
 ]
 
 for (const step of steps) {
   console.error(`[generated-artifacts] checking ${step.label}`)
   try {
-    execFileSync(process.execPath, [step.script], { cwd: root, stdio: 'inherit' })
+    execFileSync(step.command, step.args, { cwd: root, stdio: 'inherit' })
   } catch {
     failed = true
     console.error(`[generated-artifacts] ${step.label}: generator failed`)

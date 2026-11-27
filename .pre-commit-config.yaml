@@ -47,10 +47,12 @@ repos:
   # Unstaged/untracked generated files are copied to a temp directory first
   # (path printed) so a hand-edit is never lost; staged drift still fails.
   # Both generators run before the hook exits, so one attempt reports both.
+  # The same hook rebuilds and diffs the committed TUI bundle
+  # (`src/plugins/tui/dist`), which CI's `validate` job also rejects on drift.
   - repo: local
     hooks:
       - id: generated-artifacts
-        name: generated-artifacts — rebuild and diff src/agents + src/plugin
+        name: generated-artifacts — rebuild and diff src/agents + src/plugin + TUI dist
         entry: node scripts/check-generated-hook.mjs
         language: system
         pass_filenames: false

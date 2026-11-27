@@ -54,7 +54,10 @@ export interface WavePlan {
   readonly waves: string[][]
   /** Canonical cycles found in the declaration graph. */
   readonly cycles: string[][]
-  /** Known steps that can never be scheduled (cycles or unschedulable deps). */
+  /**
+   * Known steps that can never be scheduled: members of a cycle, or steps with
+   * a dangling (deleted/never-initialized) dependency.
+   */
   readonly unplaced: string[]
 }
 
@@ -69,6 +72,8 @@ export interface DependencyGraph {
   readonly ready: string[]
   readonly unmet: Record<string, string[]>
   readonly dangling: DanglingDependency[]
+  /** Steps that will never launch (cyclic or dangling dependencies). */
+  readonly unplaced: string[]
 }
 
 export interface CascadeBlockTarget {
@@ -80,6 +85,11 @@ export interface CascadeBlockTarget {
 
 /** Keys that would corrupt `Object`/`Map` semantics if used as step ids. */
 const RESERVED_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
+
+/** Security: `__proto__`/`prototype`/`constructor` must never be step ids. */
+export function isReservedStepKey(key: unknown): boolean {
+  return typeof key === 'string' && RESERVED_KEYS.has(key)
+}
 
 function compareKeys(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0
@@ -117,10 +127,56 @@ function declaredDependencies(node: DependencyNode | undefined): string[] {
   return normalizeDependencies(node?.dependsOn)
 }
 
-/**
- * Canonical form of a cycle: rotate so the lexicographically smallest key comes
- * first, then close the loop by repeating that key. `[c, b, a]` -> `[a, c, b, a]`.
- */
+/** Adjacency restricted to declared deps that exist as nodes (self edges kept). */
+function knownAdjacency(nodes: readonly DependencyNode[]): Map<string, string[]> {
+  const byKey = indexNodes(nodes)
+  const adjacency = new Map<string, string[]>()
+  for (const [key, node] of byKey) {
+    adjacency.set(
+      key,
+      declaredDependencies(node)
+        .filter((dep) => byKey.has(dep))
+        .sort(compareKeys),
+    )
+  }
+  return adjacency
+}
+
+/** Breadth-first shortest path `from -> … -> to` (inclusive), or `undefined`. */
+function shortestPath(
+  adjacency: ReadonlyMap<string, readonly string[]>,
+  from: string,
+  to: string,
+): string[] | undefined {
+  const previous = new Map<string, string>()
+  const seen = new Set<string>([from])
+  const queue: string[] = [from]
+  while (queue.length > 0) {
+    const current = queue.shift()
+    if (current === undefined) break
+    for (const next of adjacency.get(current) ?? []) {
+      if (next === current) continue
+      if (seen.has(next)) continue
+      seen.add(next)
+      previous.set(next, current)
+      if (next === to) {
+        const path = [to]
+        let cursor = to
+        while (cursor !== from) {
+          const parent = previous.get(cursor)
+          if (parent === undefined) break
+          path.unshift(parent)
+          cursor = parent
+        }
+        return path
+      }
+      queue.push(next)
+    }
+  }
+  return undefined
+}
+
+/** Canonical form of a cycle: rotate so the smallest key is first, then close it. */
 function canonicalizeCycle(nodes: readonly string[]): string[] {
   if (nodes.length === 0) return []
   let minIdx = 0
@@ -132,52 +188,128 @@ function canonicalizeCycle(nodes: readonly string[]): string[] {
   return first !== undefined ? [...rotated, first] : rotated
 }
 
-/**
- * Depth-first detection over `stepKey -> dependsOn` edges. Only edges between
- * known steps participate; a dangling key cannot close a cycle.
- */
-export function detectDependencyCycles(nodes: readonly DependencyNode[]): string[][] {
-  const byKey = indexNodes(nodes)
-  const graph = new Map<string, string[]>()
-  for (const [key, node] of byKey) {
-    graph.set(
-      key,
-      declaredDependencies(node).filter((dep) => dep !== key && byKey.has(dep)),
-    )
-  }
-
-  const state = new Map<string, 'visiting' | 'visited'>()
-  const stack: string[] = []
+function dedupeCycles(cycles: string[][]): string[][] {
   const seen = new Set<string>()
-  const cycles: string[][] = []
+  const out: string[][] = []
+  for (const cycle of cycles) {
+    const signature = cycle.join('>')
+    if (seen.has(signature)) continue
+    seen.add(signature)
+    out.push(cycle)
+  }
+  return out.sort((a, b) => compareKeys(a.join('>'), b.join('>')))
+}
 
-  const visit = (key: string): void => {
-    state.set(key, 'visiting')
-    stack.push(key)
-    for (const next of graph.get(key) ?? []) {
-      const nextState = state.get(next)
-      if (nextState === 'visiting') {
-        const idx = stack.indexOf(next)
-        if (idx >= 0) {
-          const cycle = canonicalizeCycle(stack.slice(idx))
-          const signature = cycle.join('>')
-          if (!seen.has(signature)) {
-            seen.add(signature)
-            cycles.push(cycle)
-          }
-        }
-      } else if (nextState === undefined) {
-        visit(next)
+/**
+ * Every cycle **that passes through `stepKey`**, reported with its canonical
+ * path. Order-independent: it is a reachability check `candidate -> … ->
+ * candidate` over each declared edge, so an overlapping SCC elsewhere can no
+ * longer mask the candidate's own cycle (the DFS-pruning false negative).
+ */
+function cyclesThroughStep(nodes: readonly DependencyNode[], stepKey: string): string[][] {
+  const adjacency = knownAdjacency(nodes)
+  const deps = adjacency.get(stepKey)
+  if (!deps || deps.length === 0) return []
+  const cycles: string[][] = []
+  for (const dep of deps) {
+    if (dep === stepKey) continue
+    const path = shortestPath(adjacency, dep, stepKey)
+    if (!path) continue
+    // `path` already ends at `stepKey`; drop that tail so `canonicalizeCycle`
+    // owns the single closing repetition.
+    cycles.push(canonicalizeCycle([stepKey, ...path.slice(0, -1)]))
+  }
+  return dedupeCycles(cycles)
+}
+
+/**
+ * Strongly connected components (Tarjan). Complete coverage without the
+ * "already visited" pruning that hides cycles sharing a node.
+ */
+function stronglyConnectedComponents(
+  adjacency: ReadonlyMap<string, readonly string[]>,
+): string[][] {
+  const index = new Map<string, number>()
+  const lowLink = new Map<string, number>()
+  const onStack = new Set<string>()
+  const stack: string[] = []
+  const components: string[][] = []
+  let nextIndex = 0
+
+  const strongConnect = (node: string): void => {
+    index.set(node, nextIndex)
+    lowLink.set(node, nextIndex)
+    nextIndex += 1
+    stack.push(node)
+    onStack.add(node)
+
+    for (const next of adjacency.get(node) ?? []) {
+      if (!index.has(next)) {
+        strongConnect(next)
+        lowLink.set(node, Math.min(lowLink.get(node) ?? 0, lowLink.get(next) ?? 0))
+      } else if (onStack.has(next)) {
+        lowLink.set(node, Math.min(lowLink.get(node) ?? 0, index.get(next) ?? 0))
       }
     }
-    stack.pop()
-    state.set(key, 'visited')
+
+    if ((lowLink.get(node) ?? 0) === (index.get(node) ?? 0)) {
+      const component: string[] = []
+      for (;;) {
+        const member = stack.pop()
+        if (member === undefined) break
+        onStack.delete(member)
+        component.push(member)
+        if (member === node) break
+      }
+      components.push(component.sort(compareKeys))
+    }
   }
 
-  for (const key of [...graph.keys()].sort(compareKeys)) {
-    if (!state.has(key)) visit(key)
+  for (const node of [...adjacency.keys()].sort(compareKeys)) {
+    if (!index.has(node)) strongConnect(node)
   }
-  return cycles.sort((a, b) => compareKeys(a.join('>'), b.join('>')))
+  return components
+}
+
+/**
+ * Canonical cycle per cyclic region. A region is reported once, starting from
+ * its smallest key; membership is available via `stronglyConnectedComponents`
+ * semantics (every node in the region is cyclic), which is what validation uses.
+ */
+export function detectDependencyCycles(nodes: readonly DependencyNode[]): string[][] {
+  const adjacency = knownAdjacency(nodes)
+  const cycles: string[][] = []
+  for (const component of stronglyConnectedComponents(adjacency)) {
+    const [only] = component
+    if (component.length === 1 && only !== undefined) {
+      if ((adjacency.get(only) ?? []).includes(only)) cycles.push([only, only])
+      continue
+    }
+    if (component.length === 0 || only === undefined) continue
+    const members = new Set(component)
+    const restricted = new Map<string, string[]>()
+    for (const member of component) {
+      restricted.set(
+        member,
+        (adjacency.get(member) ?? []).filter((dep) => members.has(dep)),
+      )
+    }
+    const candidates: string[][] = []
+    for (const dep of restricted.get(only) ?? []) {
+      if (dep === only) {
+        candidates.push([only, only])
+        continue
+      }
+      const path = shortestPath(restricted, dep, only)
+      if (path) candidates.push([only, ...path])
+    }
+    if (candidates.length === 0) continue
+    candidates.sort((a, b) => a.length - b.length || compareKeys(a.join('>'), b.join('>')))
+    const [shortest] = candidates
+    if (!shortest) continue
+    cycles.push(canonicalizeCycle(shortest.slice(0, -1)))
+  }
+  return dedupeCycles(cycles)
 }
 
 /**
@@ -200,7 +332,9 @@ export function validateDependencies(
     ...nodes.filter((node) => node.stepKey !== stepKey),
     { stepKey, dependsOn: candidateDeps },
   ]
-  const cycles = detectDependencyCycles(candidateNodes).filter((cycle) => cycle.includes(stepKey))
+  // Reachability-based: a cycle through the candidate is found regardless of
+  // any overlapping region elsewhere (order-independent, no DFS pruning).
+  const cycles = cyclesThroughStep(candidateNodes, stepKey)
 
   const issues: DependencyValidationIssue[] = []
   if (selfDependency) {
@@ -240,20 +374,23 @@ export function validateDependencies(
 
 /**
  * Level-by-level topological sort. A step enters the first wave whose members
- * it does not depend on; keys with a dangling or cyclic dependency are never
- * placed (and reported via `unplaced`).
+ * it does not depend on. A step with a **dangling** dependency can never be
+ * scheduled (it would contradict `readyStepKeys`/`unmet`), so it is reported in
+ * `unplaced` alongside cyclic steps.
  */
 export function computeWaves(nodes: readonly DependencyNode[]): WavePlan {
   const byKey = indexNodes(nodes)
   const depsOf = (key: string): string[] =>
-    declaredDependencies(byKey.get(key)).filter((dep) => dep !== key && byKey.has(dep))
+    declaredDependencies(byKey.get(key)).filter((dep) => dep !== key)
 
   const placed = new Set<string>()
   const waves: string[][] = []
   let remaining = [...byKey.keys()].sort(compareKeys)
 
   while (remaining.length > 0) {
-    const level = remaining.filter((key) => depsOf(key).every((dep) => placed.has(dep)))
+    const level = remaining.filter((key) =>
+      depsOf(key).every((dep) => byKey.has(dep) && placed.has(dep)),
+    )
     if (level.length === 0) break
     for (const key of level) placed.add(key)
     waves.push(level)
@@ -303,15 +440,16 @@ export function danglingDependencies(nodes: readonly DependencyNode[]): Dangling
   return dangling
 }
 
-/** The `status.graph` payload: waves, cycles, ready, unmet, dangling (DESIGN §S1). */
+/** The `status.graph` payload: waves, cycles, ready, unmet, dangling, unplaced. */
 export function buildDependencyGraph(nodes: readonly DependencyNode[]): DependencyGraph {
-  const { waves, cycles } = computeWaves(nodes)
+  const { waves, cycles, unplaced } = computeWaves(nodes)
   return {
     waves,
     cycles,
     ready: readyStepKeys(nodes),
     unmet: unmetDependencies(nodes),
     dangling: danglingDependencies(nodes),
+    unplaced,
   }
 }
 

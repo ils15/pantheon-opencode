@@ -67,12 +67,15 @@ your-project/
 
 `ledger/step-ledger.json` (`version: 1`) records one entry per step:
 `state` is `pending | in_progress | done | blocked | rolled_back`, plus optional
-`dependsOn`, `blockedBy`/`cascadeReason`, `verificationAttempts`, `ownedFiles`,
-`forbiddenFiles`, and `ephemeral` metadata. `pending` means prerequisites are
-still open. A step is *ready* when it is `pending`, declares at least one
-dependency, and every dependency is `done`; `pantheon_step_ledger(action="status")`
-returns that as `graph.ready` with the parallel launch `waves`. A lock file
-(`.pantheon/ledger/.step-ledger.lock`) makes concurrent writers safe — see
+`dependsOn`, `blockedBy`/`cascadeReason`, `verificationAttempts`,
+`verificationFailures`, `ownedFiles`, `forbiddenFiles`, and `ephemeral` metadata.
+`pending` means prerequisites are still open. A step is *ready* when it is
+`pending`, declares at least one dependency, and every dependency is `done`;
+`pantheon_step_ledger(action="status")` returns that as `graph.ready` with the
+parallel launch `waves` and the `unplaced` steps that can never launch. The lock
+file (`.pantheon/ledger/.step-ledger.lock`) carries an owner token so concurrent
+writers are safe, and a corrupt ledger is moved aside as
+`step-ledger.json.corrupt.<ts>` — see
 [Step dependencies](opencode.md#step-dependencies-and-readiness).
 
 With the recommended `opencode plugin add pantheon-opencode` install, agents,

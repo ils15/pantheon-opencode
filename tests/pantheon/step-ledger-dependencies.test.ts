@@ -6,7 +6,15 @@
  */
 import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,12 +22,15 @@ import test from 'node:test'
 import { pathToFileURL } from 'node:url'
 import { getSharedBus } from '../../src/pantheon/bus.ts'
 import {
+  buildDependencyGraph,
   cascadeBlock,
   computeWaves,
   type DependencyNode,
   detectDependencyCycles,
+  isReservedStepKey,
   normalizeDependencies,
   readyStepKeys,
+  validateDependencies,
 } from '../../src/pantheon/step-dependencies.ts'
 import {
   createStepLedgerTool,
@@ -127,6 +138,32 @@ test('S1 pure helpers: normalize, waves, cycles, readiness, cascade', () => {
   )
   assert.deepEqual(cascade[0]?.blockedBy, ['a'])
   assert.equal(cascade[0]?.cascadeReason, 'root rolled back')
+
+  // Minor 1: a dangling dependency makes a step unschedulable, never wave-1.
+  const danglingNodes: DependencyNode[] = [
+    { stepKey: 'd-ok', state: 'done', dependsOn: [] },
+    { stepKey: 'd-orphan', state: 'pending', dependsOn: ['deleted-step'] },
+    { stepKey: 'd-child', state: 'pending', dependsOn: ['d-orphan'] },
+  ]
+  const danglingWaves = computeWaves(danglingNodes)
+  assert.deepEqual(danglingWaves.waves, [['d-ok']])
+  assert.deepEqual(danglingWaves.unplaced, ['d-child', 'd-orphan'])
+  // Minor 2: `unplaced` is reported in status.graph.
+  assert.deepEqual(buildDependencyGraph(danglingNodes).unplaced, ['d-child', 'd-orphan'])
+  assert.deepEqual(buildDependencyGraph(danglingNodes).dangling, [
+    { stepKey: 'd-orphan', missing: ['deleted-step'] },
+  ])
+
+  // Minor 3: an overlapping cyclic region must not mask the candidate's cycle.
+  //   a -> [w, s] (`s` dangling) and w -> a made the old DFS report only a<->w.
+  const overlapping: DependencyNode[] = [
+    { stepKey: 'a', state: 'in_progress', dependsOn: ['w', 's'] },
+    { stepKey: 'w', state: 'pending', dependsOn: ['a'] },
+  ]
+  const sValidation = validateDependencies('s', ['w'], overlapping)
+  assert.equal(sValidation.ok, false)
+  assert.equal(sValidation.issues[0]?.code, 'cycle_detected')
+  assert.deepEqual(sValidation.cycles, [['a', 's', 'w', 'a']])
 })
 
 // ── S1-1 — unknown / self / duplicate dependencies ─────────────────────────
@@ -324,7 +361,14 @@ test('S1-4 execute_step and spawn_ephemeral refuse on unmet or blocked dependenc
     seed(dir, [
       stepEntry('g-a', { state: 'in_progress' }),
       stepEntry('g-b', { state: 'pending', dependsOn: ['g-a'] }),
-      stepEntry('g-c', { state: 'blocked', dependsOn: ['g-a'], blockedBy: ['g-a'] }),
+      stepEntry('g-c', {
+        state: 'blocked',
+        dependsOn: ['g-a'],
+        blockedBy: ['g-a'],
+        cascadeReason: 'Step "g-a" was rolled back; dependent invalidated by cascade',
+      }),
+      // Reflex-escalation block: no cascade, no deps. Must stay retryable (M1).
+      stepEntry('g-retry', { state: 'blocked' }),
     ])
 
     const execRes = await call(
@@ -352,8 +396,19 @@ test('S1-4 execute_step and spawn_ephemeral refuse on unmet or blocked dependenc
     assert.equal(blockedRes.ok, false)
     assert.equal(blockedRes.error, 'step_blocked')
     assert.deepEqual(blockedRes.blockedBy, ['g-a'])
+    assert.match(String(blockedRes.cascadeReason), /rolled back/)
 
-    assert.deepEqual(calls, [], 'a refused launch must not create or prompt a sub-session')
+    assert.equal(calls.length, 0, 'a refused launch must not create or prompt a sub-session')
+
+    // M1: a reflex-escalation `blocked` step (no cascade) is retryable again.
+    const retryRes = await call(
+      tool,
+      { action: 'execute_step', stepKey: 'g-retry', objective: 'retry', agent: 'hermes' },
+      ctx,
+    )
+    assert.ok(calls.includes('create'), 'a reflex-escalated step must be launchable')
+    assert.notEqual(retryRes.error, 'step_blocked')
+    assert.equal(readStepLedger(dir).steps['g-retry']?.state, 'in_progress')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -402,10 +457,20 @@ test('S1-5 rollback refuses done dependents unless cascade:true, which blocks an
     const bDone = await finish('r-b', ['r-a'])
     await finish('r-c', ['r-b'])
 
+    // C2: a refusal must be a no-op — uncommitted work survives, nothing restores.
+    const dirtyFile = join(dir, 'wip.ts')
+    writeFileSync(dirtyFile, 'export const wip = "uncommitted work"\n')
+
     const refused = await call(tool, { action: 'rollback_step', stepKey: 'r-a' }, ctx)
     assert.equal(refused.ok, false)
     assert.equal(refused.error, 'dependents_done')
     assert.deepEqual(refused.dependents, ['r-b', 'r-c'])
+    assert.equal(refused.treeUntouched, true)
+    assert.equal(
+      readFileSync(dirtyFile, 'utf8'),
+      'export const wip = "uncommitted work"\n',
+      'a refused rollback must not destroy uncommitted work',
+    )
     assert.equal(readStepLedger(dir).steps['r-a']?.state, 'done', 'refusal restores nothing')
 
     const cascaded = await call(
@@ -454,16 +519,37 @@ test('S1-6 two concurrent updateStepLedger writers both persist (lock + atomic r
       join(import.meta.dirname, '..', '..', 'src', 'pantheon', 'step-ledger.ts'),
     ).href
     const writerScript = join(dir, 'concurrent-writer.ts')
-    const writerSource = `import { updateStepLedger } from ${JSON.stringify(ledgerUrl)}
+    const writerSource = `import { existsSync, writeFileSync } from 'node:fs'
+import { updateStepLedger } from ${JSON.stringify(ledgerUrl)}
 
-const [targetDir, prefix, iterations] = process.argv.slice(2)
+const [targetDir, prefix, iterations, peer] = process.argv.slice(2)
 const total = Number(iterations)
+// Start barrier (M3): both writers leave the gate at the same instant, so a
+// lucky stagger cannot hide a missing lock.
+const sleeper = new Int32Array(new SharedArrayBuffer(4))
+writeFileSync(\`\${targetDir}/.writer-ready-\${prefix}\`, '1')
+const barrierDeadline = Date.now() + 10_000
+while (!existsSync(\`\${targetDir}/.writer-ready-\${peer}\`)) {
+  if (Date.now() > barrierDeadline) throw new Error('writer barrier timeout')
+  Atomics.wait(sleeper, 0, 0, 1)
+}
 // Widen the read-modify-write window so an unlocked ledger demonstrably loses
 // updates; the lock must serialize these critical sections.
-const sleeper = new Int32Array(new SharedArrayBuffer(4))
 for (let i = 0; i < total; i += 1) {
   updateStepLedger(targetDir, (store) => {
     Atomics.wait(sleeper, 0, 0, 2)
+    const shared = store.steps['shared-counter'] ?? {
+      stepKey: 'shared-counter',
+      objective: 'shared increment counter',
+      agent: 'hermes',
+      state: 'in_progress',
+      mutatedFiles: [],
+      lastMutationAt: null,
+      lastVerifiedAt: null,
+      updatedAt: new Date().toISOString(),
+    }
+    store.steps['shared-counter'] = shared
+    shared.verificationAttempts = (shared.verificationAttempts ?? 0) + 1
     const key = \`\${prefix}-\${i}\`
     store.steps[key] = {
       stepKey: key,
@@ -482,8 +568,22 @@ for (let i = 0; i < total; i += 1) {
 
     const iterations = 12
     await Promise.all([
-      spawnChild(process.execPath, [tsxCli, writerScript, dir, 'writerA', String(iterations)]),
-      spawnChild(process.execPath, [tsxCli, writerScript, dir, 'writerB', String(iterations)]),
+      spawnChild(process.execPath, [
+        tsxCli,
+        writerScript,
+        dir,
+        'writerA',
+        String(iterations),
+        'writerB',
+      ]),
+      spawnChild(process.execPath, [
+        tsxCli,
+        writerScript,
+        dir,
+        'writerB',
+        String(iterations),
+        'writerA',
+      ]),
     ])
 
     const store = readStepLedger(dir)
@@ -496,7 +596,15 @@ for (let i = 0; i < total; i += 1) {
         )
       }
     }
-    assert.equal(written.length, iterations * 2)
+    assert.equal(written.length, iterations * 2 + 1)
+
+    // The decisive assertion (M3): a lost read-modify-write loses *increments*,
+    // which never re-absorb. A lucky stagger cannot satisfy 2N.
+    assert.equal(
+      store.steps['shared-counter']?.verificationAttempts,
+      iterations * 2,
+      'lost increments — last-writer-wins regression',
+    )
 
     const ledgerDir = join(dir, '.pantheon', 'ledger')
     const leftovers = readdirSync(ledgerDir).filter((f) => f.includes('.tmp.'))
@@ -590,6 +698,8 @@ test('S1-7 dedupes dependencies and round-trips the new ledger fields at version
       )
     }
     assert.equal(readStepLedger(dir).steps['f-b']?.verificationAttempts, 2)
+    // Minor 7: failures are persisted separately so S4 can derive retries.
+    assert.equal(readStepLedger(dir).steps['f-b']?.verificationFailures, 2)
 
     // `ephemeral` (D06) and `blockedBy` survive an updateStepLedger round-trip.
     updateStepLedger(dir, (store) => {
@@ -606,6 +716,230 @@ test('S1-7 dedupes dependencies and round-trips the new ledger fields at version
     })
     assert.deepEqual(raw.steps['f-b']?.blockedBy, ['f-a'])
     assert.deepEqual(raw.steps['f-b']?.dependsOn, ['f-a'])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// ── C3 — the cascade cannot be undone by a passing verification ───────────
+
+test('C3 a cascade-blocked dependent stays blocked until unblock_step and its deps are done', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-dep-c3-'))
+  try {
+    initGitRepo(dir)
+    const tool = makeTool(dir)
+    const ctx = { directory: dir }
+
+    const finish = async (key: string, deps?: string[]) => {
+      await call(
+        tool,
+        {
+          action: 'init_step',
+          stepKey: key,
+          objective: key,
+          agent: 'hermes',
+          ...(deps ? { dependsOn: deps } : {}),
+        },
+        ctx,
+      )
+      await call(tool, { action: 'record_mutation', stepKey: key, files: ['app.ts'] }, ctx)
+      await call(
+        tool,
+        { action: 'record_verification', stepKey: key, command: 'npx tsx probe.ts', exitCode: 0 },
+        ctx,
+      )
+      const done = await call(tool, { action: 'complete_step', stepKey: key }, ctx)
+      assert.equal(done.ok, true, `complete_step(${key}): ${String(done.error)}`)
+    }
+
+    await finish('c3-a')
+    await finish('c3-b', ['c3-a'])
+
+    const cascade = await call(
+      tool,
+      { action: 'rollback_step', stepKey: 'c3-a', cascade: true },
+      ctx,
+    )
+    assert.equal(cascade.ok, true)
+    assert.equal(readStepLedger(dir).steps['c3-b']?.state, 'blocked')
+
+    // (a) A passing verification must NOT lift the cascade block.
+    const verified = await call(
+      tool,
+      {
+        action: 'record_verification',
+        stepKey: 'c3-b',
+        command: 'npx tsx probe.ts',
+        exitCode: 0,
+      },
+      ctx,
+    )
+    assert.equal(verified.ok, true)
+    const blockedEntry = readStepLedger(dir).steps['c3-b']
+    assert.equal(blockedEntry?.state, 'blocked', 'verification must not unblock implicitly')
+    assert.deepEqual(blockedEntry?.blockedBy, ['c3-a'])
+    assert.match(String(blockedEntry?.cascadeReason), /cascade/)
+
+    // (b) complete_step refuses while a declared dependency is not done.
+    const refusedComplete = await call(tool, { action: 'complete_step', stepKey: 'c3-b' }, ctx)
+    assert.equal(refusedComplete.ok, false)
+    assert.equal(refusedComplete.error, 'dependencies_unmet')
+    assert.deepEqual(refusedComplete.unmet, ['c3-a'])
+
+    // unblock_step refuses until the prerequisite is done again.
+    const refusedUnblock = await call(tool, { action: 'unblock_step', stepKey: 'c3-b' }, ctx)
+    assert.equal(refusedUnblock.ok, false)
+    assert.equal(refusedUnblock.error, 'dependencies_unmet')
+    assert.deepEqual(refusedUnblock.unmet, ['c3-a'])
+
+    // Re-run the prerequisite, then the explicit unblock is allowed.
+    await finish('c3-a', [])
+    const unblocked = await call(tool, { action: 'unblock_step', stepKey: 'c3-b' }, ctx)
+    assert.equal(unblocked.ok, true)
+    assert.equal((unblocked.step as Json).state, 'in_progress')
+    assert.equal((unblocked.step as Json).blockedBy, undefined)
+    assert.equal((unblocked.step as Json).cascadeReason, undefined)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// ── M2/M4 — lock ownership, stale break, actionable errors ────────────────
+
+test('M2/M4 the lock is owner-checked, breaks stale holders fast, and names itself on failure', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-dep-lock-'))
+  const ledgerDir = join(dir, '.pantheon', 'ledger')
+  const lockPath = join(ledgerDir, '.step-ledger.lock')
+  try {
+    seed(dir, [stepEntry('lock-a')])
+
+    // (a) Release never deletes a successor's lock: swap the token mid-mutation.
+    const foreignToken = '999999:someone-else'
+    updateStepLedger(dir, (store) => {
+      const entry = store.steps['lock-a']
+      assert.ok(entry)
+      entry.objective = 'touched'
+      writeFileSync(lockPath, `${foreignToken}\n`)
+    })
+    assert.equal(
+      readFileSync(lockPath, 'utf8').trim(),
+      foreignToken,
+      'release must not steal the lock',
+    )
+    rmSync(lockPath)
+
+    // (b) Stale lock (dead pid, old mtime) is broken quickly, not after 10 s.
+    writeFileSync(lockPath, '999999:dead-writer\n')
+    utimesSync(lockPath, new Date(Date.now() - 5_000), new Date(Date.now() - 5_000))
+    const startedAt = Date.now()
+    updateStepLedger(dir, (store) => {
+      store.steps['lock-stale'] = stepEntry('lock-stale')
+    })
+    const elapsed = Date.now() - startedAt
+    assert.ok(elapsed < 2_000, `stale break took ${elapsed}ms`)
+    assert.equal(existsSync(lockPath), false, 'lock released after the break')
+    assert.deepEqual(
+      readdirSync(ledgerDir).filter((f) => f.includes('.stale.')),
+      [],
+      'quarantine files are cleaned up',
+    )
+
+    // (c) A lock owned by this process is re-entrant misuse: immediate, actionable.
+    writeFileSync(lockPath, `${process.pid}:self\n`)
+    const selfStart = Date.now()
+    assert.throws(
+      () => updateStepLedger(dir, () => undefined),
+      (err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err)
+        assert.match(message, /re-entrant/)
+        assert.match(message, /.step-ledger\.lock/)
+        return true
+      },
+    )
+    assert.ok(Date.now() - selfStart < 500, 'self-owned lock must fail fast, not after the budget')
+    rmSync(lockPath)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// ── A2 — a corrupt ledger is quarantined, never overwritten ───────────────
+
+test('A2 a corrupt ledger file is moved aside and the mutation fails loudly', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-dep-corrupt-'))
+  const ledgerDir = join(dir, '.pantheon', 'ledger')
+  const ledgerPath = join(ledgerDir, 'step-ledger.json')
+  try {
+    seed(dir, [stepEntry('keep-me', { state: 'done' })])
+    writeFileSync(ledgerPath, '{ this is not json')
+
+    assert.throws(
+      () =>
+        updateStepLedger(dir, (store) => {
+          store.steps['would-wipe'] = stepEntry('would-wipe')
+        }),
+      /corrupt/,
+    )
+
+    const quarantined = readdirSync(ledgerDir).filter((f) =>
+      f.startsWith('step-ledger.json.corrupt.'),
+    )
+    assert.equal(quarantined.length, 1, 'the corrupt file must be preserved')
+    const preserved = quarantined[0]
+    assert.ok(preserved)
+    assert.equal(readFileSync(join(ledgerDir, preserved), 'utf8'), '{ this is not json')
+    assert.equal(existsSync(ledgerPath), false, 'no empty store is written over the corrupt file')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// ── A4 — orphan temp files are garbage-collected ──────────────────────────
+
+test('A4 stale orphan temp files are swept while a live one is preserved', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-dep-tmp-'))
+  const ledgerDir = join(dir, '.pantheon', 'ledger')
+  try {
+    seed(dir, [stepEntry('tmp-a')])
+    const orphan = join(ledgerDir, 'step-ledger.json.tmp.424242')
+    const live = join(ledgerDir, 'step-ledger.json.tmp.424243')
+    writeFileSync(orphan, '{}')
+    writeFileSync(live, '{}')
+    utimesSync(orphan, new Date(Date.now() - 120_000), new Date(Date.now() - 120_000))
+
+    updateStepLedger(dir, (store) => {
+      store.steps['tmp-b'] = stepEntry('tmp-b')
+    })
+
+    assert.equal(existsSync(orphan), false, 'old orphan tmp file must be collected')
+    assert.equal(existsSync(live), true, 'a fresh tmp file may belong to a live writer')
+    rmSync(live)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// ── Minor 4 — reserved step keys cannot pollute the prototype ─────────────
+
+test('minor 4 reserved step keys are rejected and never pollute Object.prototype', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-dep-proto-'))
+  try {
+    assert.equal(isReservedStepKey('__proto__'), true)
+    assert.equal(isReservedStepKey('constructor'), true)
+    assert.equal(isReservedStepKey('safe-step'), false)
+
+    const tool = makeTool(dir)
+    const res = await call(
+      tool,
+      { action: 'init_step', stepKey: '__proto__', objective: 'pollute', agent: 'hermes' },
+      { directory: dir },
+    )
+    assert.equal(res.ok, false)
+    assert.match(String(res.error), /reserved/)
+
+    const polluted = ({} as Record<string, unknown>).polluted
+    assert.equal(polluted, undefined)
+    assert.deepEqual(Object.keys(readStepLedger(dir).steps), [])
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
