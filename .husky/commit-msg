@@ -1,1 +1,43 @@
+#!/usr/bin/env sh
+# Pantheon git hook — commit-msg (TRACKED; core.hooksPath = .husky).
+#
+# This file is the hook git runs directly. It used to be reached only through
+# husky's generated `.husky/_/commit-msg` -> `_/h` shim, and that chain is why
+# every linked worktree committed unguarded: `.husky/_` is generated/untracked,
+# so `git worktree add` never materialises it and git skipped the hook SILENTLY
+# (v1.0 -> 2.3.4). The preamble below reproduces husky's `_/h` behaviour, so no
+# generated directory and no shim is needed:
+#   * HUSKY=2 traces, HUSKY=0 opts out (husky parity);
+#   * husky's init.sh is still sourced when present;
+#   * the checkout's node_modules/.bin goes first on PATH;
+#   * the framework is exec'd and its exit code returned with a clear report.
+# A fresh worktree has no node_modules (untracked by design), so the preflight
+# refuses with the exact fix instead of passing silently.
+
+[ "${HUSKY-}" = "2" ] && set -x
+
+if [ -f "$HOME/.huskyrc" ]; then
+	echo "husky - '~/.huskyrc' is DEPRECATED, please move your code to ~/.config/husky/init.sh"
+fi
+husky_init="${XDG_CONFIG_HOME:-$HOME/.config}/husky/init.sh"
+[ -f "$husky_init" ] && . "$husky_init"
+
+[ "${HUSKY-}" = "0" ] && exit 0
+
+PATH="node_modules/.bin:$PATH"
+export PATH
+
+# Do not fall back to `npx`'s cache or a global install: that would validate the
+# commit with a commitlint from an unrelated tree. Require this checkout's own.
+if [ ! -x node_modules/.bin/commitlint ]; then
+	echo "husky - commit-msg: commitlint is not installed in this checkout (node_modules/.bin/commitlint is missing)." >&2
+	echo "husky - Fix: npm ci    (run in $(pwd); a fresh git worktree has no node_modules)" >&2
+	echo "husky - Refusing to commit unvalidated: a hook that cannot run must fail loudly." >&2
+	exit 127
+fi
+
 npx --no -- commitlint --edit "$1"
+code=$?
+
+[ "$code" -ne 0 ] && echo "husky - commit-msg script failed (code $code)" >&2
+exit "$code"

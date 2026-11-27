@@ -75,6 +75,56 @@ test('worktree-orchestrator enforces sibling .pantheon-worktrees path and manage
   }
 })
 
+test('worktree creation refuses a repo whose core.hooksPath points at files git cannot materialise', async () => {
+  // The v1.0 -> 2.3.4 defect: core.hooksPath lives in the SHARED config, but
+  // `git worktree add` checks out only tracked files. Pointing it at a
+  // generated/untracked directory made git skip every hook SILENTLY in every
+  // worktree. Creation is the last cheap place to fail loudly.
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-wt-hooks-'))
+  try {
+    const repo = join(root, 'hooked-app')
+    mkdirSync(repo, { recursive: true })
+    execFileSync('git', ['init', '-q'], { cwd: repo })
+    execFileSync('git', ['config', 'user.email', 'test@pantheon.dev'], { cwd: repo })
+    execFileSync('git', ['config', 'user.name', 'Pantheon Test'], { cwd: repo })
+    execFileSync('git', ['config', 'core.hooksPath', '.hooks-generated'], { cwd: repo })
+    writeFileSync(join(repo, 'README.md'), '# Hooks\n')
+    execFileSync('git', ['add', 'README.md'], { cwd: repo })
+    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo })
+
+    const def = createPantheonWorktreeDefinition()
+    const ac = new AbortController()
+
+    await assert.rejects(
+      () => def.create({ sourceDirectory: repo, directory: join(repo, '.pantheon', 'lane') }, { signal: ac.signal }),
+      /silently skip its hooks[\s\S]*hooks directory .* does not exist/,
+      'a lane that would commit unguarded must not be created',
+    )
+    const afterFailure = await def.list(repo, { signal: ac.signal })
+    assert.equal(afterFailure.length, 1, 'the broken lane must be removed, not left behind')
+
+    // Same repository with the hooks dir tracked: creation works and the hooks
+    // are present in the new worktree.
+    mkdirSync(join(repo, '.hooks-generated'), { recursive: true })
+    for (const hook of ['commit-msg', 'pre-commit']) {
+      writeFileSync(join(repo, '.hooks-generated', hook), '#!/usr/bin/env sh\nexit 0\n', {
+        mode: 0o755,
+      })
+    }
+    execFileSync('git', ['add', '.hooks-generated'], { cwd: repo })
+    execFileSync('git', ['commit', '-q', '-m', 'chore: track hooks'], { cwd: repo })
+
+    const created = await def.create(
+      { sourceDirectory: repo, directory: join(repo, '.pantheon', 'lane-ok') },
+      { signal: ac.signal },
+    )
+    assert.ok(existsSync(join(created.directory, '.hooks-generated', 'commit-msg')))
+    await def.remove({ directory: created.directory, force: true }, { signal: ac.signal })
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('pantheon_review_verdict emits bus event and routes bounded SessionSyntheticInput to parent session on BLOCK', async () => {
   const syntheticCalls: Array<Record<string, unknown>> = []
   const busVerdicts: string[] = []
