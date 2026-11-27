@@ -8,8 +8,11 @@ import { readBoardMessages } from '../../src/pantheon/board-messages.ts'
 import { type EphemeralWorkerEventPayload, getSharedBus } from '../../src/pantheon/bus.ts'
 import {
   deriveEphemeralRoleSlug,
+  type FileLeaseHook,
+  partitionBranchesForVerifiers,
   resolveEphemeralArchetype,
   spawnEphemeralWorker,
+  verifyEphemeralBranches,
 } from '../../src/pantheon/ephemeral-worker.ts'
 import { createStepLedgerTool, readStepLedger } from '../../src/pantheon/step-ledger.ts'
 
@@ -358,6 +361,235 @@ test('spawnEphemeralWorker preserves worktree edits to pantheon/eph/<stepKey>, w
     assert.match(doneMsg.body, /@themis/)
     assert.match(doneMsg.body, /pantheon\/eph\/preserve-1/)
   } finally {
+    rmSync(parent, { recursive: true, force: true })
+  }
+})
+
+test('partitionBranchesForVerifiers allocates 1 verifier per 2-4 branches', () => {
+  assert.deepEqual(partitionBranchesForVerifiers([]), [])
+  assert.deepEqual(
+    partitionBranchesForVerifiers(['b1']).map((b) => b.length),
+    [1],
+  )
+  assert.deepEqual(
+    partitionBranchesForVerifiers(['b1', 'b2', 'b3', 'b4']).map((b) => b.length),
+    [4],
+  )
+  assert.deepEqual(
+    partitionBranchesForVerifiers(['b1', 'b2', 'b3', 'b4', 'b5']).map((b) => b.length),
+    [3, 2],
+  )
+  assert.deepEqual(
+    partitionBranchesForVerifiers(['b1', 'b2', 'b3', 'b4', 'b5', 'b6', 'b7']).map((b) => b.length),
+    [4, 3],
+  )
+  assert.deepEqual(
+    partitionBranchesForVerifiers(['1', '2', '3', '4', '5', '6', '7', '8', '9']).map(
+      (b) => b.length,
+    ),
+    [3, 3, 3],
+  )
+})
+
+test('verifyEphemeralBranches spawns 1 verifier per 2-4 branches, runs git diff review, and posts [done]/[blocker] to @<workerRole>', async () => {
+  const parent = mkdtempSync(join(tmpdir(), 'pantheon-eph-verify-'))
+  const repoDir = join(parent, 'repo')
+  try {
+    initGitRepo(repoDir)
+    const branchTargets: Array<{ branch: string; stepKey: string; workerRole: string }> = []
+    for (let i = 1; i <= 5; i += 1) {
+      const branch = `pantheon/eph/step-${i}`
+      execFileSync('git', ['checkout', '-q', '-b', branch], { cwd: repoDir })
+      writeFileSync(join(repoDir, `mod-${i}.ts`), `export const m${i} = ${i}\n`)
+      execFileSync('git', ['add', `mod-${i}.ts`], { cwd: repoDir })
+      execFileSync('git', ['commit', '-q', '-m', `feat: step-${i}`], { cwd: repoDir })
+      execFileSync('git', ['checkout', '-q', '-'], { cwd: repoDir })
+      branchTargets.push({ branch, stepKey: `step-${i}`, workerRole: `worker-${i}` })
+    }
+
+    const createdSessions: Array<{ agent?: string; title?: string }> = []
+    const removedSessions: string[] = []
+    let sessionCounter = 0
+
+    const sessionDomain = {
+      create: async (opts?: { agent?: string; title?: string }) => {
+        sessionCounter += 1
+        createdSessions.push({
+          ...(opts?.agent !== undefined ? { agent: opts.agent } : {}),
+          ...(opts?.title !== undefined ? { title: opts.title } : {}),
+        })
+        return { id: `ses-ver-${sessionCounter}` }
+      },
+      prompt: async (input: { sessionID: string; text: string }) => {
+        assert.match(input.text, /EPHEMERAL BRANCH DIFF REVIEW/)
+        assert.match(input.text, /mod-/)
+        return { ok: true }
+      },
+      wait: async () => ({ status: 'completed' }),
+      messages: async (input: { readonly sessionID: string }) => {
+        if (input.sessionID === 'ses-ver-2') {
+          return [
+            { text: 'pantheon/eph/step-4: APPROVE\npantheon/eph/step-5: BLOCK missing tests' },
+          ]
+        }
+        return [
+          {
+            text: 'pantheon/eph/step-1: APPROVE\npantheon/eph/step-2: APPROVE\npantheon/eph/step-3: APPROVE',
+          },
+        ]
+      },
+      remove: async (input: { readonly sessionID: string }) => {
+        removedSessions.push(input.sessionID)
+      },
+    }
+
+    const ledger = createStepLedgerTool(repoDir, sessionDomain)
+    const verifyOut = JSON.parse(
+      (
+        await ledger.execute(
+          {
+            action: 'verify_ephemeral',
+            branches: branchTargets.map((t) => t.branch),
+            verifierAgent: 'themis',
+          },
+          { directory: repoDir },
+        )
+      ).output,
+    ) as {
+      ok: boolean
+      verifierAgent: string
+      verifiersSpawned: number
+      results: Array<{ branch: string; verdict: string; workerRole: string; boardSeq?: number }>
+    }
+
+    assert.equal(verifyOut.ok, false)
+    assert.equal(verifyOut.verifierAgent, 'themis')
+    assert.equal(verifyOut.verifiersSpawned, 2)
+    assert.equal(createdSessions.length, 2)
+    assert.equal(createdSessions[0]?.agent, 'themis')
+    assert.equal(createdSessions[1]?.agent, 'themis')
+    assert.deepEqual(removedSessions, ['ses-ver-1', 'ses-ver-2'])
+    assert.equal(verifyOut.results.length, 5)
+    assert.equal(verifyOut.results[0]?.verdict, 'APPROVE')
+    assert.equal(verifyOut.results[4]?.verdict, 'BLOCK')
+
+    const board = readBoardMessages(repoDir, { since: 0 })
+    assert.equal(board.messages.length, 5)
+    assert.equal(board.messages[0]?.tag, 'done')
+    assert.deepEqual(board.messages[0]?.mentions, ['step-1'])
+    assert.equal(board.messages[4]?.tag, 'blocker')
+    assert.deepEqual(board.messages[4]?.mentions, ['step-5'])
+
+    // Also verify direct call with explicit workerRole objects
+    const directRes = await verifyEphemeralBranches({
+      branches: branchTargets.slice(0, 2),
+      sharedRoot: repoDir,
+    })
+    assert.equal(directRes.ok, true)
+    assert.equal(directRes.verifiersSpawned, 1)
+    assert.equal(directRes.results[0]?.workerRole, 'worker-1')
+  } finally {
+    rmSync(parent, { recursive: true, force: true })
+  }
+})
+
+test('spawnEphemeralWorker integrates globalThis.__pantheonFileLeases, wallClockMs/maxCostUsd, and autoVerify', async () => {
+  const parent = mkdtempSync(join(tmpdir(), 'pantheon-eph-lease-'))
+  const repoDir = join(parent, 'repo')
+  const prevLeases = (globalThis as { __pantheonFileLeases?: FileLeaseHook }).__pantheonFileLeases
+  try {
+    initGitRepo(repoDir)
+    const leaseEvents: string[] = []
+    ;(globalThis as { __pantheonFileLeases?: FileLeaseHook }).__pantheonFileLeases = {
+      acquireFileLease: ({ stepKey, ownedFiles }) => {
+        leaseEvents.push(`acquire:${stepKey}:${ownedFiles.join(',')}`)
+        if (ownedFiles.includes('conflict.ts')) {
+          return { ok: false, error: 'lease held by another worker', conflicts: ['conflict.ts'] }
+        }
+        return { ok: true }
+      },
+      releaseFileLease: ({ stepKey }) => {
+        leaseEvents.push(`release:${stepKey}`)
+      },
+    }
+
+    const conflictRes = await spawnEphemeralWorker({
+      sessionDomain: {
+        create: async () => ({ id: 'ses-never' }),
+        prompt: async () => ({ ok: true }),
+      },
+      cwd: repoDir,
+      stepKey: 'lease-conflict',
+      role: 'lease-worker',
+      objective: 'Should fail fast on lease conflict',
+      ownedFiles: ['conflict.ts'],
+      isolateWorktree: false,
+    })
+    assert.equal(conflictRes.ok, false)
+    assert.match(conflictRes.error ?? '', /lease held by another worker/)
+
+    let capturedPrompt = ''
+    const sessionDomain = {
+      create: async (opts?: { agent?: string }) => ({ id: `ses-${opts?.agent ?? 'w'}` }),
+      prompt: async (input: { sessionID: string; text: string }) => {
+        if (input.sessionID === 'ses-hermes') {
+          capturedPrompt = input.text
+          const wtMatch = /worktree:\s*(\S+)/.exec(input.text)
+          const wt = wtMatch?.[1]
+          assert.ok(wt)
+          writeFileSync(join(wt, 'leased.ts'), 'export const leased = true\n')
+          const ledger = createStepLedgerTool(wt)
+          await ledger.execute(
+            { action: 'record_mutation', stepKey: 'lease-ok', files: ['leased.ts'] },
+            { directory: wt },
+          )
+          await ledger.execute(
+            {
+              action: 'record_verification',
+              stepKey: 'lease-ok',
+              command: 'echo ok',
+              exitCode: 0,
+            },
+            { directory: wt },
+          )
+          await ledger.execute({ action: 'complete_step', stepKey: 'lease-ok' }, { directory: wt })
+        }
+        return { ok: true }
+      },
+      wait: async () => ({ status: 'completed' }),
+      messages: async () => [{ text: 'pantheon/eph/lease-ok: APPROVE' }],
+      remove: async () => {},
+    }
+
+    const okRes = await spawnEphemeralWorker({
+      sessionDomain,
+      cwd: repoDir,
+      stepKey: 'lease-ok',
+      role: 'lease-worker',
+      objective: 'Write leased.ts',
+      ownedFiles: ['leased.ts'],
+      forbiddenFiles: ['secret.ts'],
+      wallClockMs: 10_000,
+      maxCostUsd: 1.5,
+      autoVerify: true,
+    })
+
+    assert.equal(okRes.ok, true)
+    assert.match(capturedPrompt, /ownedFiles: leased\.ts/)
+    assert.match(capturedPrompt, /forbiddenFiles: secret\.ts/)
+    assert.equal(okRes.verification?.ok, true)
+    assert.equal(okRes.verification?.verifierAgent, 'themis')
+    assert.deepEqual(leaseEvents, [
+      'acquire:lease-conflict:conflict.ts',
+      'acquire:lease-ok:leased.ts',
+      'release:lease-ok',
+    ])
+  } finally {
+    if (prevLeases === undefined) {
+      delete (globalThis as { __pantheonFileLeases?: FileLeaseHook }).__pantheonFileLeases
+    } else {
+      ;(globalThis as { __pantheonFileLeases?: FileLeaseHook }).__pantheonFileLeases = prevLeases
+    }
     rmSync(parent, { recursive: true, force: true })
   }
 })

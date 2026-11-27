@@ -20,7 +20,12 @@ import { appendBoardMessage } from './board-messages.ts'
 import { getSharedBus } from './bus.ts'
 import { PANTHEON_AGENTS } from './delegation-policy.ts'
 import { type KnownAgent, RETIRED_AGENT_ALIASES } from './model-agents.ts'
-import { runAtomicStepSubSession, type SubSessionDomainLike } from './step-runner.ts'
+import {
+  DEFAULT_WALL_CLOCK_MS,
+  runAtomicStepSubSession,
+  type StepHaltReason,
+  type SubSessionDomainLike,
+} from './step-runner.ts'
 import { resolveSharedPantheonRoot } from './tool-context.ts'
 import {
   createPantheonWorktreeDefinition,
@@ -103,6 +108,38 @@ export function resolveEphemeralArchetype(roleOrAlias: string): EphemeralArchety
   return undefined
 }
 
+export interface FileLeaseHook {
+  readonly acquireFileLease?: (input: {
+    readonly sharedRoot: string
+    readonly stepKey: string
+    readonly holder: string
+    readonly ownedFiles: readonly string[]
+    readonly forbiddenFiles?: readonly string[]
+  }) =>
+    | Promise<{
+        readonly ok: boolean
+        readonly error?: string
+        readonly conflicts?: readonly string[]
+      }>
+    | { readonly ok: boolean; readonly error?: string; readonly conflicts?: readonly string[] }
+  readonly releaseFileLease?: (input: {
+    readonly sharedRoot: string
+    readonly stepKey: string
+    readonly holder: string
+  }) => Promise<void> | void
+}
+
+function resolveFileLeaseHook(input: SpawnEphemeralWorkerInput): FileLeaseHook | undefined {
+  const globalHook = (globalThis as { __pantheonFileLeases?: FileLeaseHook }).__pantheonFileLeases
+  const acquireFileLease = input.acquireFileLease ?? globalHook?.acquireFileLease
+  const releaseFileLease = input.releaseFileLease ?? globalHook?.releaseFileLease
+  if (!acquireFileLease && !releaseFileLease) return undefined
+  return {
+    ...(acquireFileLease ? { acquireFileLease } : {}),
+    ...(releaseFileLease ? { releaseFileLease } : {}),
+  }
+}
+
 export interface SpawnEphemeralWorkerInput {
   readonly sessionDomain: SubSessionDomainLike
   readonly cwd: string
@@ -119,6 +156,17 @@ export interface SpawnEphemeralWorkerInput {
   readonly goal?: string
   readonly workstream?: string
   readonly maxTurns?: number
+  readonly wallClockMs?: number
+  readonly maxCostUsd?: number
+  readonly ownedFiles?: readonly string[]
+  readonly forbiddenFiles?: readonly string[]
+  readonly autoVerify?: boolean
+  readonly verifierAgent?: string
+  readonly getSessionCostUsd?: (
+    sessionID: string,
+  ) => Promise<number | undefined> | number | undefined
+  readonly acquireFileLease?: FileLeaseHook['acquireFileLease']
+  readonly releaseFileLease?: FileLeaseHook['releaseFileLease']
   readonly to?: readonly string[]
 }
 
@@ -135,10 +183,48 @@ export interface SpawnEphemeralWorkerResult {
   readonly diffSummary?: string
   readonly claimSeq?: number
   readonly finalSeq?: number
+  readonly haltedReason?: StepHaltReason
+  readonly elapsedMs?: number
+  readonly costUsd?: number
+  readonly verification?: VerifyEphemeralBranchesResult
   readonly error?: string
 }
 
+export interface EphemeralBranchReviewTarget {
+  readonly branch: string
+  readonly stepKey?: string
+  readonly workerRole?: string
+}
+
+export interface VerifyEphemeralBranchesInput {
+  readonly branches: ReadonlyArray<string | EphemeralBranchReviewTarget>
+  readonly sharedRoot: string
+  readonly verifierAgent?: string
+  readonly sessionDomain?: SubSessionDomainLike
+  readonly parentSessionID?: string
+  readonly threadId?: string
+  readonly baseRef?: string
+}
+
+export interface VerifyEphemeralBranchItemResult {
+  readonly branch: string
+  readonly stepKey: string
+  readonly workerRole: string
+  readonly verdict: 'APPROVE' | 'BLOCK'
+  readonly diffSummary?: string
+  readonly boardSeq?: number
+  readonly error?: string
+}
+
+export interface VerifyEphemeralBranchesResult {
+  readonly ok: boolean
+  readonly verifierAgent: string
+  readonly verifiersSpawned: number
+  readonly results: readonly VerifyEphemeralBranchItemResult[]
+}
+
 export const DEFAULT_EPHEMERAL_MAX_TURNS = 8
+export const DEFAULT_VERIFIER_AGENT = 'themis'
 const execFileAsync = promisify(execFile)
 
 async function runGit(cwd: string, args: readonly string[]): Promise<string> {
@@ -286,6 +372,8 @@ export async function spawnEphemeralWorker(
   const recipients = rawRecipients.length > 0 ? Array.from(new Set(rawRecipients)) : ['zeus']
 
   const worktreeDriver = createPantheonWorktreeDefinition()
+  const leaseHook = resolveFileLeaseHook(input)
+  let leaseAcquired = false
   let worktreeDir: string | undefined
   let worktreeCreated = false
   let worktreeCleaned = false
@@ -297,9 +385,37 @@ export async function spawnEphemeralWorker(
   let finalSeq: number | undefined
   let runOk = false
   let sessionID: string | undefined
+  let haltedReason: StepHaltReason | undefined
+  let elapsedMs: number | undefined
+  let costUsd: number | undefined
+  let verification: VerifyEphemeralBranchesResult | undefined
   let runError: string | undefined
 
   try {
+    if (input.ownedFiles && input.ownedFiles.length > 0 && leaseHook?.acquireFileLease) {
+      const leaseRes = await leaseHook.acquireFileLease({
+        sharedRoot,
+        stepKey: input.stepKey,
+        holder: role,
+        ownedFiles: input.ownedFiles,
+        ...(input.forbiddenFiles !== undefined ? { forbiddenFiles: input.forbiddenFiles } : {}),
+      })
+      if (!leaseRes.ok) {
+        return {
+          ok: false,
+          workerId,
+          role,
+          baseAgent,
+          stepKey: input.stepKey,
+          worktreeCleaned: false,
+          error:
+            leaseRes.error ??
+            `file lease conflict${leaseRes.conflicts?.length ? `: ${leaseRes.conflicts.join(', ')}` : ''}`,
+        }
+      }
+      leaseAcquired = true
+    }
+
     if (input.isolateWorktree !== false && existsSync(join(sharedRoot, '.git'))) {
       const candidateDir = resolvePantheonWorktreePath(
         sharedRoot,
@@ -372,10 +488,20 @@ export async function spawnEphemeralWorker(
       extraContext: contextLines.join('\n'),
       ...(input.parentSessionID !== undefined ? { parentSessionID: input.parentSessionID } : {}),
       maxTurns: input.maxTurns ?? DEFAULT_EPHEMERAL_MAX_TURNS,
+      wallClockMs: input.wallClockMs ?? DEFAULT_WALL_CLOCK_MS,
+      ...(input.maxCostUsd !== undefined ? { maxCostUsd: input.maxCostUsd } : {}),
+      ...(input.ownedFiles !== undefined ? { ownedFiles: input.ownedFiles } : {}),
+      ...(input.forbiddenFiles !== undefined ? { forbiddenFiles: input.forbiddenFiles } : {}),
+      ...(input.getSessionCostUsd !== undefined
+        ? { getSessionCostUsd: input.getSessionCostUsd }
+        : {}),
     })
 
     sessionID = runRes.sessionID
     runOk = runRes.ok
+    haltedReason = runRes.haltedReason
+    elapsedMs = runRes.elapsedMs
+    costUsd = runRes.costUsd
     if (!runRes.ok && runRes.error) {
       runError = runRes.error
     }
@@ -462,6 +588,18 @@ export async function spawnEphemeralWorker(
       /* best-effort board finalization */
     }
 
+    if (leaseAcquired && leaseHook?.releaseFileLease) {
+      try {
+        await leaseHook.releaseFileLease({
+          sharedRoot,
+          stepKey: input.stepKey,
+          holder: role,
+        })
+      } catch {
+        /* best-effort lease release */
+      }
+    }
+
     if (worktreeCleaned) {
       bus.emit('ephemeral:worker', {
         workerId,
@@ -473,6 +611,17 @@ export async function spawnEphemeralWorker(
         ...(worktreeDir !== undefined ? { worktreeDir } : {}),
         ...(finalSeq !== undefined ? { seq: finalSeq } : {}),
         timestamp: Date.now(),
+      })
+    }
+
+    if (input.autoVerify === true && runOk && preservedBranch) {
+      verification = await verifyEphemeralBranches({
+        sessionDomain: input.sessionDomain,
+        branches: [{ branch: preservedBranch, stepKey: input.stepKey, workerRole: role }],
+        sharedRoot,
+        verifierAgent: input.verifierAgent ?? DEFAULT_VERIFIER_AGENT,
+        ...(input.parentSessionID !== undefined ? { parentSessionID: input.parentSessionID } : {}),
+        threadId,
       })
     }
   }
@@ -490,6 +639,268 @@ export async function spawnEphemeralWorker(
     ...(diffSummary !== undefined ? { diffSummary } : {}),
     ...(claimSeq !== undefined ? { claimSeq } : {}),
     ...(finalSeq !== undefined ? { finalSeq } : {}),
+    ...(haltedReason !== undefined ? { haltedReason } : {}),
+    ...(elapsedMs !== undefined ? { elapsedMs } : {}),
+    ...(costUsd !== undefined ? { costUsd } : {}),
+    ...(verification !== undefined ? { verification } : {}),
     ...(runError !== undefined ? { error: runError } : {}),
+  }
+}
+
+function normalizeBranchTarget(entry: string | EphemeralBranchReviewTarget): {
+  readonly branch: string
+  readonly stepKey: string
+  readonly workerRole: string
+} {
+  const branch = (typeof entry === 'string' ? entry : entry.branch).trim()
+  const rawStep =
+    typeof entry !== 'string' && entry.stepKey?.trim()
+      ? entry.stepKey.trim()
+      : branch.startsWith('pantheon/eph/')
+        ? branch.slice('pantheon/eph/'.length)
+        : branch
+  const stepKey = rawStep || 'unknown-step'
+  const workerRole =
+    typeof entry !== 'string' && entry.workerRole?.trim()
+      ? entry.workerRole.trim().replace(/^@/, '').toLowerCase()
+      : deriveEphemeralRoleSlug(stepKey)
+  return { branch, stepKey, workerRole }
+}
+
+/**
+ * Partition worker branches across verifiers at a 1:2–4 ratio
+ * (1 verifier per 2–4 branches; a single branch still gets 1 verifier).
+ */
+export function partitionBranchesForVerifiers<T>(items: readonly T[]): T[][] {
+  const n = items.length
+  if (n === 0) return []
+  if (n === 1) return [[...items]]
+  const numVerifiers = Math.ceil(n / 4)
+  const baseSize = Math.floor(n / numVerifiers)
+  const remainder = n % numVerifiers
+  const batches: T[][] = []
+  let offset = 0
+  for (let i = 0; i < numVerifiers; i += 1) {
+    const size = baseSize + (i < remainder ? 1 : 0)
+    batches.push(items.slice(offset, offset + size))
+    offset += size
+  }
+  return batches
+}
+
+function parseVerifierVerdictFromMessages(
+  rawMessages: unknown,
+  stepKey: string,
+  branch: string,
+): 'APPROVE' | 'BLOCK' {
+  if (!Array.isArray(rawMessages)) return 'APPROVE'
+  let globalBlock = false
+  for (let i = rawMessages.length - 1; i >= 0; i -= 1) {
+    const item = rawMessages[i]
+    if (!item || typeof item !== 'object') continue
+    const rec = item as Record<string, unknown>
+    const texts: string[] = []
+    if (typeof rec.text === 'string') texts.push(rec.text)
+    if (Array.isArray(rec.parts)) {
+      for (const part of rec.parts) {
+        if (
+          part &&
+          typeof part === 'object' &&
+          typeof (part as { text?: unknown }).text === 'string'
+        ) {
+          texts.push((part as { text: string }).text)
+        }
+      }
+    }
+    const combined = texts.join('\n')
+    if (!combined) continue
+    // Check per-branch line/verdict if present
+    for (const line of combined.split('\n')) {
+      if (
+        (line.includes(stepKey) || line.includes(branch)) &&
+        /\b(BLOCK|BLOCK_INTENT)\b|\[blocker\]/i.test(line)
+      ) {
+        return 'BLOCK'
+      }
+      if (
+        (line.includes(stepKey) || line.includes(branch)) &&
+        /\b(APPROVE|PASS|PASS_WITH_NOTES)\b|\[done\]/i.test(line)
+      ) {
+        return 'APPROVE'
+      }
+    }
+    if (/\b(BLOCK|BLOCK_INTENT)\b|\[blocker\]/.test(combined)) {
+      globalBlock = true
+    }
+  }
+  return globalBlock ? 'BLOCK' : 'APPROVE'
+}
+
+/**
+ * Allocate 1 verifier (`themis` by default) per 2–4 `pantheon/eph/<stepKey>`
+ * worker branches, collect `git diff` patches, optionally run verifier
+ * sub-sessions, and post `[done]` / `[blocker]` back to `@<workerRole>`.
+ */
+export async function verifyEphemeralBranches(
+  input: VerifyEphemeralBranchesInput,
+): Promise<VerifyEphemeralBranchesResult> {
+  const sharedRoot = resolveSharedPantheonRoot(input.sharedRoot)
+  const verifierAgent =
+    typeof input.verifierAgent === 'string' && input.verifierAgent.trim()
+      ? input.verifierAgent.trim().replace(/^@/, '').toLowerCase()
+      : DEFAULT_VERIFIER_AGENT
+  const baseRef = input.baseRef?.trim() || 'HEAD'
+
+  const targets = input.branches.map(normalizeBranchTarget).filter((t) => t.branch.length > 0)
+
+  if (targets.length === 0) {
+    return { ok: true, verifierAgent, verifiersSpawned: 0, results: [] }
+  }
+
+  const batches = partitionBranchesForVerifiers(targets)
+  const results: VerifyEphemeralBranchItemResult[] = []
+
+  for (let batchIdx = 0; batchIdx < batches.length; batchIdx += 1) {
+    const batch = batches[batchIdx]
+    const diffs: Array<{
+      target: (typeof targets)[number]
+      diffSummary?: string
+      patch: string
+      gitError?: string
+    }> = []
+
+    for (const target of batch) {
+      try {
+        const stat = (
+          await runGit(sharedRoot, ['diff', '--stat', `${baseRef}..${target.branch}`])
+        ).trim()
+        const patch = (await runGit(sharedRoot, ['diff', `${baseRef}..${target.branch}`])).slice(
+          0,
+          12_000,
+        )
+        diffs.push({
+          target,
+          ...(stat
+            ? {
+                diffSummary: stat
+                  .split('\n')
+                  .map((l) => l.trim())
+                  .join(' | '),
+              }
+            : {}),
+          patch,
+        })
+      } catch (err: unknown) {
+        diffs.push({
+          target,
+          patch: '',
+          gitError: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+
+    let rawMessages: unknown
+    let batchError: string | undefined
+
+    if (
+      typeof input.sessionDomain?.create === 'function' &&
+      typeof input.sessionDomain?.prompt === 'function'
+    ) {
+      let verifierSessionId: string | undefined
+      try {
+        const created = await input.sessionDomain.create({
+          title: `Verify ephemeral batch ${batchIdx + 1}/${batches.length} (${batch.length} branches)`,
+          agent: verifierAgent,
+          ...(input.parentSessionID ? { parentID: input.parentSessionID } : {}),
+        })
+        verifierSessionId = typeof created?.id === 'string' ? created.id : undefined
+        if (verifierSessionId) {
+          const promptSections = [
+            `[EPHEMERAL BRANCH DIFF REVIEW — BATCH ${batchIdx + 1}/${batches.length}]`,
+            `verifierAgent: ${verifierAgent}`,
+            `branches: ${batch.map((b) => `${b.branch} (@${b.workerRole})`).join(', ')}`,
+            '',
+            'Review each branch diff below. For each branch, emit a verdict line:',
+            '<branch>: APPROVE | BLOCK <reason>',
+            '',
+            ...diffs.map(
+              (d) =>
+                `--- ${d.target.branch} (step: ${d.target.stepKey}, worker: @${d.target.workerRole}) ---\n` +
+                (d.gitError
+                  ? `GIT_DIFF_ERROR: ${d.gitError}`
+                  : `${d.diffSummary ?? 'no stat'}\n${d.patch || '(empty diff)'}`),
+            ),
+          ]
+          await input.sessionDomain.prompt({
+            sessionID: verifierSessionId,
+            text: promptSections.join('\n'),
+            agents: [{ name: verifierAgent }],
+            resume: true,
+          })
+          if (typeof input.sessionDomain.wait === 'function') {
+            await input.sessionDomain.wait({ sessionID: verifierSessionId })
+          }
+          if (typeof input.sessionDomain.messages === 'function') {
+            rawMessages = await input.sessionDomain.messages({ sessionID: verifierSessionId })
+          }
+        } else {
+          batchError = 'verifier session.create returned no session id'
+        }
+      } catch (err: unknown) {
+        batchError = err instanceof Error ? err.message : String(err)
+      } finally {
+        if (verifierSessionId && typeof input.sessionDomain.remove === 'function') {
+          try {
+            await input.sessionDomain.remove({ sessionID: verifierSessionId })
+          } catch {
+            /* best-effort cleanup */
+          }
+        }
+      }
+    }
+
+    for (const item of diffs) {
+      const { target, diffSummary: itemDiffSummary, gitError } = item
+      const itemError = gitError ?? batchError
+      const verdict: 'APPROVE' | 'BLOCK' = itemError
+        ? 'BLOCK'
+        : parseVerifierVerdictFromMessages(rawMessages, target.stepKey, target.branch)
+
+      let boardSeq: number | undefined
+      try {
+        const msg = await appendBoardMessage(sharedRoot, {
+          channel: 'swarm',
+          threadId: input.threadId?.trim() || target.stepKey,
+          stepKey: target.stepKey,
+          from: verifierAgent,
+          to: [target.workerRole],
+          tag: verdict === 'APPROVE' ? 'done' : 'blocker',
+          body:
+            verdict === 'APPROVE'
+              ? `[done] @${target.workerRole} Verified ${target.branch} (${verifierAgent}): APPROVE${itemDiffSummary ? ` (${itemDiffSummary})` : ''}`
+              : `[blocker] @${target.workerRole} Verification failed for ${target.branch} (${verifierAgent}): ${itemError ?? 'BLOCK'}`,
+        })
+        boardSeq = msg.seq
+      } catch {
+        /* best-effort board post */
+      }
+
+      results.push({
+        branch: target.branch,
+        stepKey: target.stepKey,
+        workerRole: target.workerRole,
+        verdict,
+        ...(itemDiffSummary !== undefined ? { diffSummary: itemDiffSummary } : {}),
+        ...(boardSeq !== undefined ? { boardSeq } : {}),
+        ...(itemError !== undefined ? { error: itemError } : {}),
+      })
+    }
+  }
+
+  return {
+    ok: results.every((r) => r.verdict === 'APPROVE'),
+    verifierAgent,
+    verifiersSpawned: batches.length,
+    results,
   }
 }

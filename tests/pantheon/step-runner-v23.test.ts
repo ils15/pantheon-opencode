@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { createStepLedgerTool } from '../../src/pantheon/step-ledger.ts'
 import {
+  buildAtomicStepPrompt,
   forkStepContext,
   runAtomicStepSubSession,
   validateStepFinishPayload,
@@ -138,4 +139,90 @@ test('forkStepContext uses native sessionDomain.fork when available and falls ba
   assert.equal(fallbackFork.mode, 'fallback_seed')
   assert.equal(fallbackFork.sessionID, 'ses-forked-fallback')
   assert.match(seededPrompt, /Position summary from #1/)
+})
+
+test('buildAtomicStepPrompt renders ownedFiles and forbiddenFiles boundaries', () => {
+  const prompt = buildAtomicStepPrompt({
+    stepKey: 'scope-1',
+    objective: 'Update auth helper',
+    agent: 'hermes',
+    ownedFiles: ['src/auth.ts', 'tests/auth.test.ts'],
+    forbiddenFiles: ['src/billing.ts'],
+  })
+  assert.match(prompt, /ownedFiles: src\/auth\.ts, tests\/auth\.test\.ts/)
+  assert.match(prompt, /forbiddenFiles: src\/billing\.ts/)
+  assert.match(prompt, /ONLY mutate files within ownedFiles/)
+  assert.match(prompt, /NEVER modify or touch forbiddenFiles/)
+})
+
+test('runAtomicStepSubSession halts cleanly with wall_clock_exceeded when wallClockMs is exceeded', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-wallclock-'))
+  try {
+    initGitRepo(dir)
+    let promptCalls = 0
+    const sessionDomain = {
+      create: async () => ({ id: 'ses-wc-1' }),
+      prompt: async () => {
+        promptCalls += 1
+        await new Promise((r) => setTimeout(r, 25))
+        return { ok: true }
+      },
+      wait: async () => ({ status: 'running' }),
+      remove: async () => {},
+    }
+
+    const res = await runAtomicStepSubSession({
+      sessionDomain,
+      cwd: dir,
+      stepKey: 'wc-1',
+      objective: 'Slow step',
+      agent: 'hermes',
+      maxTurns: 5,
+      wallClockMs: 10,
+    })
+
+    assert.equal(res.ok, false)
+    assert.equal(res.haltedReason, 'wall_clock_exceeded')
+    assert.equal(promptCalls, 1)
+    assert.ok(typeof res.elapsedMs === 'number' && res.elapsedMs >= 10)
+    assert.match(res.error ?? '', /wall-clock timeout exceeded/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('runAtomicStepSubSession halts cleanly with max_cost_exceeded when cumulative cost exceeds maxCostUsd', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-cost-'))
+  try {
+    initGitRepo(dir)
+    let turn = 0
+    const sessionDomain = {
+      create: async () => ({ id: 'ses-cost-1' }),
+      prompt: async () => {
+        turn += 1
+        return { ok: true }
+      },
+      wait: async () => ({ status: 'running' }),
+      messages: async () => Array.from({ length: turn }, () => ({ info: { cost: 0.35 } })),
+      remove: async () => {},
+    }
+
+    const res = await runAtomicStepSubSession({
+      sessionDomain,
+      cwd: dir,
+      stepKey: 'cost-1',
+      objective: 'Expensive step',
+      agent: 'hermes',
+      maxTurns: 5,
+      maxCostUsd: 0.5,
+    })
+
+    assert.equal(res.ok, false)
+    assert.equal(res.haltedReason, 'max_cost_exceeded')
+    assert.equal(res.turnsUsed, 2)
+    assert.ok(typeof res.costUsd === 'number' && res.costUsd > 0.5)
+    assert.match(res.error ?? '', /max cost exceeded/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
