@@ -1,7 +1,7 @@
 {
   "name": "pantheon-opencode",
-  "version": "2.3.4",
-  "description": "Multi-agent orchestration for OpenCode \u2014 8 canonical agents + on-demand ephemeral workers, TDD, Themis review gates.",
+  "version": "2.3.4-beta.1",
+  "description": "Multi-agent orchestration for OpenCode — 8 canonical agents + on-demand ephemeral workers, TDD, Themis review gates.",
   "type": "module",
   "workspaces": [
     "src/plugins/tui"
@@ -35,7 +35,7 @@
     "start": "OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true opencode",
     "prepack": "npm run build:plugin && npm run check:decision-router && npm run check:roster && npm run version:check",
     "prepublishOnly": "node scripts/validate-routing.mjs && npm run build:plugin && npm run check:decision-router && npm run check:roster",
-    "postpublish": "node -e \"console.log('\u2705 Published pantheon-opencode v' + require('./package.json').version + ' to npm')\"",
+    "postpublish": "node -e \"console.log('✅ Published pantheon-opencode v' + require('./package.json').version + ' to npm')\"",
     "version:status": "node scripts/versioning.mjs status",
     "version:apply": "node scripts/versioning.mjs apply",
     "version:check": "node scripts/version-check.mjs",

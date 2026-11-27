@@ -5,8 +5,8 @@ abstract: >-
   Pantheon v2.1.6 is an OpenCode plugin and installer coordinating 14
   specialized agents with high-speed direct dispatch, native subagents,
   and progressive skill disclosure for OpenCode 2.x.
-version: 2.3.4
-url: https://github.com/ils15/pantheon-opencode/releases/tag/v2.3.4
+version: 2.3.4-beta.1
+url: https://github.com/ils15/pantheon-opencode/releases/tag/v2.3.4-beta.1
 doi: 10.5281/zenodo.22650136
 repository-code: https://github.com/ils15/pantheon-opencode
 license: MIT
