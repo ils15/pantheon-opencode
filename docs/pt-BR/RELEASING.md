@@ -88,3 +88,7 @@ Quando você decidir cortar uma versão nova:
 4. **Verificar Build & Lint:** Rode `npm run lint` e `npm test`.
 5. **Comitar e Criar Tag:** Comite o changelog e crie a tag git correspondente (`git tag vX.Y.Z`).
 6. **Disparar Release:** Faça `git push origin main --tags`. O workflow de release do GitHub Actions (`release.yml`) executará a publicação no npm e gerará as notas no GitHub Releases.
+
+### Propagação no registro npm
+
+O `npm publish` retorna antes de o registro servir o documento da nova versão. Por isso o workflow aguarda `pantheon-opencode@X.Y.Z` ficar resolvível (intervalo de 5 s, teto de ~10 min) antes de reconciliar as `dist-tags`, e repete `dist-tag add`/`rm` em `E401`/`E404`/`E409` transitórios. Um registro lento deixa de parecer um token npm inválido.

@@ -361,6 +361,14 @@ without recovery inputs runs the stable release path:
 A global concurrency group (`release`, no cancel-in-progress) serializes
 runs so beta and stable paths can never double-publish.
 
+### npm registry propagation
+
+`npm publish` returns before the registry serves the new version document.
+The workflow therefore waits for `pantheon-opencode@X.Y.Z` to resolve
+(5 s interval, ~10 min ceiling) before reconciling `dist-tags`, and retries
+`dist-tag add`/`rm` on transient `E401`/`E404`/`E409`. A slow registry no
+longer looks like a broken npm token.
+
 ---
 
 ## Package and evidence contract
