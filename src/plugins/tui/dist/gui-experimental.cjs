@@ -486,7 +486,7 @@ var gui_default = _opencode_plugin_gui.Plugin.define({
 		};
 		const openCockpit = () => {
 			const session = ctx.sessions.current();
-			if (session) ctx.layout.open(`${ctx.id}:pantheon-cockpit`, session, { focus: true });
+			if (session) ctx.layout.open(`${ctx.id}:pantheon-cockpit`, session, { tab: "open" });
 			else ctx.dialogs.open((dialog) => (() => {
 				var _el$55 = _tmpl$14(), _el$58 = _el$55.firstChild.firstChild.nextSibling;
 				_el$58.$$click = () => dialog.close();
@@ -504,7 +504,7 @@ var gui_default = _opencode_plugin_gui.Plugin.define({
 			list: () => [cockpitTab],
 			render: (props) => (0, solid_js_web.createComponent)(PantheonCockpitView, {
 				ctx,
-				directory: () => props.session()?.location?.directory ?? ""
+				directory: () => props.session?.directory ?? props.session?.location?.directory ?? ""
 			})
 		}));
 		ctx.add(_opencode_plugin_gui.ComposerPill, () => ({

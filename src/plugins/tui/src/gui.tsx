@@ -314,7 +314,7 @@ const [sharedSnapshot, setSharedSnapshot] = createSignal<GuiSnapshot>({
   artifactsCount: 0,
 })
 
-function PantheonCockpitView(props: { ctx: SetupContext; directory: () => string }) {
+function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => string }) {
   const [subTab, setSubTab] = createSignal<GuiSubTab>('topology')
   const [topoView, setTopoView] = createSignal<'dag' | 'gantt'>('dag')
   const [scrubberSeq, setScrubberSeq] = createSignal<number | null>(null)
@@ -807,7 +807,7 @@ export default Plugin.define({
     const openCockpit = () => {
       const session = ctx.sessions.current()
       if (session) {
-        ctx.layout.open(`${ctx.id}:pantheon-cockpit`, session, { focus: true })
+        ctx.layout.open(`${ctx.id}:pantheon-cockpit`, session, { tab: 'open' })
       } else {
         ctx.dialogs.open((dialog) => (
           <div style={{ padding: '12px' }}>
@@ -831,13 +831,13 @@ export default Plugin.define({
 
     ctx.add(Panel, () => ({
       id: 'cockpit',
-      region: 'side',
+      region: 'side' as const,
       wide: true,
       list: () => [cockpitTab],
       render: (props) => (
         <PantheonCockpitView
           ctx={ctx}
-          directory={() => props.session()?.location?.directory ?? ''}
+          directory={() => props.session?.directory ?? props.session?.location?.directory ?? ''}
         />
       ),
     }))

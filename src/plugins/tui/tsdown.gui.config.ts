@@ -32,7 +32,13 @@ export default defineConfig({
   dts: false,
   target: 'node26.3.0',
   deps: {
-    neverBundle: (id) => GUI_EXTERNALS.has(id) || isBuiltin(id),
+    neverBundle: (id) =>
+      GUI_EXTERNALS.has(id) ||
+      isBuiltin(id) ||
+      id.startsWith('@opencode/plugin/') ||
+      id === '@opencode/client' ||
+      id.startsWith('@opencode/client/') ||
+      id.startsWith('@opencode/schema/'),
   },
   plugins: [
     solid({
