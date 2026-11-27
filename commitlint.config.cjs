@@ -48,6 +48,7 @@ module.exports = {
         'routing',
         'instructions',
         'ledger',
+        'strategy',
         'mcp',
         'beta',
         'zeus',
