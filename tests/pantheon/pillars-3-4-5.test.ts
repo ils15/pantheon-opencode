@@ -96,7 +96,11 @@ test('worktree creation refuses a repo whose core.hooksPath points at files git 
     const ac = new AbortController()
 
     await assert.rejects(
-      () => def.create({ sourceDirectory: repo, directory: join(repo, '.pantheon', 'lane') }, { signal: ac.signal }),
+      () =>
+        def.create(
+          { sourceDirectory: repo, directory: join(repo, '.pantheon', 'lane') },
+          { signal: ac.signal },
+        ),
       /silently skip its hooks[\s\S]*hooks directory .* does not exist/,
       'a lane that would commit unguarded must not be created',
     )
