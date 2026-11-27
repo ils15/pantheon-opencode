@@ -92,3 +92,11 @@ Quando você decidir cortar uma versão nova:
 ### Propagação no registro npm
 
 O `npm publish` retorna antes de o registro servir o documento da nova versão. Por isso o workflow aguarda `pantheon-opencode@X.Y.Z` ficar resolvível (intervalo de 5 s, teto de ~10 min) antes de reconciliar as `dist-tags`, e repete `dist-tag add`/`rm` em `E401`/`E404`/`E409` transitórios. Um registro lento deixa de parecer um token npm inválido.
+
+### Lane de hotfix de release
+
+Quando o workflow de release falhar **depois** de a tag e o GitHub Release já existirem:
+
+1. Antes de diagnosticar falha de autenticação, trate a publicação como possivelmente assíncrona: faça polling de `npm view pantheon-opencode@<ver> version` por ~10 min (ver [Propagação no registro npm](#propagao-no-registro-npm)).
+2. Só investigue credenciais se a versão continuar ausente após essa janela, confirmando antes o estado pré-execução (`git tag`, GitHub Release, versão no npm).
+3. Corrija por dispatch (recovery beta ou patch seguinte); nunca mova/recrie tags, nunca `npm unpublish`.

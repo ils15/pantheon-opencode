@@ -608,6 +608,24 @@ releases, and the npm version) directly against the live registries.
 
 ---
 
+## Release hotfix lane
+
+Applies when the release workflow goes red **after** the tag and GitHub Release
+already exist.
+
+1. Treat the publish as possibly asynchronous before diagnosing auth: poll
+   `npm view pantheon-opencode@<ver> version` (plus `dist-tags`) for up to
+   ~10 min. A version that appears late is propagation wait, not a broken
+   token — see [npm registry propagation](#npm-registry-propagation).
+2. Only if the version is still absent after that window, investigate
+   credentials; confirm pre-run state first (see the recovery section above).
+3. Repair by dispatch, not by hand: the beta recovery path, or a forward patch
+   release. Never move or recreate a tag; never `npm unpublish` (see
+   [npm Policy](#npm-policy)).
+4. Anchor the hotfix PR to evidence: failing run ID, tag, and released SHA.
+
+---
+
 ## npm Policy
 
 **Deprecate, never unpublish.** A published package version is permanent —
