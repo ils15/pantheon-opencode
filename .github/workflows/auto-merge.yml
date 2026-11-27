@@ -55,6 +55,14 @@ jobs:
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    # This job never checks out the repository, so `gh` cannot infer the
+    # repository from the working directory. Without GH_REPO, `gh pr view`
+    # shells out to git, dies with "fatal: not a git repository", and `set -e`
+    # aborts the step BEFORE any author/base/draft/SHA assertion runs (run
+    # 46078813374). `gh api` calls below already name repos/… explicitly;
+    # GH_REPO covers the path-relative pr calls (view/checks/merge).
+    env:
+      GH_REPO: ${{ github.repository }}
     steps:
       - name: Resolve the pull request that produced this CI run
         id: resolve
