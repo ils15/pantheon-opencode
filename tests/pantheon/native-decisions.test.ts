@@ -25,7 +25,15 @@ const modelCatalog = [
 const packageManifest = JSON.parse(
   readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
 ) as { devDependencies?: Record<string, string> }
-assert.equal(packageManifest.devDependencies?.['@opencode/plugin'], '2.2.5')
+// Tripwire: the native Decisions scaffolding is written against one measured
+// host build, and `OpenCodeV225DecisionApi` (src/pantheon/native-decisions.ts)
+// is the type-level half of the same claim. A dependency bump that moves this
+// must re-measure the host surface, not just edit the literal: `npm run
+// typecheck` proves `Context['experimental']['generate'].decisions` survived,
+// and the field notes in src/pantheon/decision-points/ name the build each
+// measured behavior came from. `@opencode/plugin@2.4.1` keeps the method and
+// its schema; the 2.2.5 measurements remain the last recorded field evidence.
+assert.equal(packageManifest.devDependencies?.['@opencode/plugin'], '2.4.1')
 
 const event = {
   sessionID: 'ses_current',
