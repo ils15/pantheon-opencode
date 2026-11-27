@@ -6,9 +6,21 @@
 # Policy: ANY secret finding blocks the commit. There is no exception
 # configured here; bypassing hooks with --no-verify is a security violation.
 #
-# Install (one-time, per clone):
-#   pip install pre-commit
-#   npm run hooks:install   # -> pre-commit install
+# Install (one-time, per machine):
+#   python3 -m pip install --user pre-commit   # framework runtime only
+#   npm run hooks:install                      # -> scripts/verify-git-hooks.mjs --apply
+#
+# `pre-commit install` is deliberately NOT used: `core.hooksPath` is set to the
+# TRACKED `.husky` directory, and pre-commit 4.x refuses to install while it is
+# set ("Cowardly refusing to install hooks with `core.hooksPath` set"). The
+# tracked `.husky/pre-commit` IS the integration — it execs `pre_commit run`.
+#
+# Why tracked and not husky's `.husky/_`: hooksPath lives in the SHARED
+# .git/config, so every worktree inherits the pointer, but `git worktree add`
+# materialises only tracked files. A generated/untracked hooks dir therefore
+# does not exist in a worktree and git skips every hook SILENTLY (v1.0 -> 2.3.4).
+# tests/hooks-worktree.test.mjs is the tripwire; the hook fails loudly when a
+# fresh worktree has no node_modules — fix with `npm ci` inside that worktree.
 #
 # Update hooks: npm run hooks:update  # -> pre-commit autoupdate
 

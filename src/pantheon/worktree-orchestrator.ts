@@ -8,7 +8,7 @@
  */
 
 import { execFile } from 'node:child_process'
-import { existsSync, mkdirSync, realpathSync } from 'node:fs'
+import { accessSync, constants, existsSync, mkdirSync, realpathSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { resolveSharedPantheonRoot, resolveToolCwd } from './tool-context.ts'
@@ -72,6 +72,61 @@ function isInsideOrDotPantheon(sourceDirectory: string, candidate: string): bool
   )
 }
 
+/*
+ * Hooks git is expected to run. A repository opts in by setting
+ * `core.hooksPath`; that value lives in the SHARED .git/config, so linked
+ * worktrees inherit the pointer while `git worktree add` materialises only
+ * TRACKED files. When the pointer names a generated/untracked directory, git
+ * skips every hook SILENTLY — commitlint and the pre-commit guards never ran in
+ * any Pantheon worktree from v1.0 to 2.3.4. Creation is the last cheap moment
+ * to fail loudly, so assert it there.
+ */
+const REQUIRED_WORKTREE_HOOKS = ['commit-msg', 'pre-commit'] as const
+
+async function assertWorktreeHooks(
+  source: string,
+  targetDir: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  let configured = ''
+  try {
+    configured = (await runGit(source, ['config', '--get', 'core.hooksPath'], signal)).trim()
+  } catch (err: unknown) {
+    if (isAbortError(err)) throw err
+    // Exit 1 simply means the repository does not opt into git hooks.
+    return
+  }
+  if (!configured) return
+
+  const hooksDir = resolve(
+    targetDir,
+    (await runGit(targetDir, ['rev-parse', '--git-path', 'hooks'], signal)).trim(),
+  )
+  const problems: string[] = []
+  if (!existsSync(hooksDir)) {
+    problems.push(`hooks directory ${hooksDir} does not exist`)
+  } else {
+    for (const hook of REQUIRED_WORKTREE_HOOKS) {
+      const file = join(hooksDir, hook)
+      if (!existsSync(file)) {
+        problems.push(`${hook} is missing from ${hooksDir}`)
+        continue
+      }
+      try {
+        accessSync(file, constants.X_OK)
+      } catch {
+        problems.push(`${hook} is not executable`)
+      }
+    }
+  }
+  if (problems.length === 0) return
+  throw new Error(
+    `Refusing to create ${targetDir}: git would silently skip its hooks (${problems.join('; ')}). ` +
+      `core.hooksPath=${configured} comes from the shared .git/config, but a fresh worktree only ` +
+      `contains tracked files. Fix the source checkout (npm run prepare) and create the worktree again.`,
+  )
+}
+
 async function runGit(cwd: string, args: readonly string[], signal?: AbortSignal): Promise<string> {
   if (signal?.aborted) {
     const abortErr = new Error('Worktree operation aborted')
@@ -120,6 +175,20 @@ export function createPantheonWorktreeDefinition(): {
       const args = ['worktree', 'add', '--detach', targetDir]
       if (input.branch) args.push(input.branch)
       await runGit(source, args, context.signal)
+      try {
+        await assertWorktreeHooks(source, targetDir, context.signal)
+      } catch (err: unknown) {
+        if (isAbortError(err)) throw err
+        // Never leave a lane behind that would commit unguarded.
+        if (existsSync(targetDir)) {
+          try {
+            await runGit(source, ['worktree', 'remove', '--force', targetDir], context.signal)
+          } catch {
+            // Preserve the assertion error: it is the actionable one.
+          }
+        }
+        throw err
+      }
       return { directory: existsSync(targetDir) ? realpathSync(targetDir) : targetDir }
     },
     remove: async (input, context) => {
