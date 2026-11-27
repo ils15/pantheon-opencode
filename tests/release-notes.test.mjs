@@ -355,6 +355,9 @@ test('CLI normal mode exits 0 and prints the final emoji sections (lastTag..HEAD
       parsed.every(
         (entry) =>
           !entry ||
+          // The `release` scope is maintainer-internal and never rendered, so
+          // it does not contradict an empty stdout.
+          entry.scope === 'release' ||
           (entry.refs.length === 0 &&
             !['feat', 'perf', 'docs', 'fix', 'security'].includes(entry.type)),
       ),

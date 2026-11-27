@@ -233,6 +233,35 @@ test('only the stable channel creates a GitHub Release', () => {
   assert.doesNotMatch(release, /Recovery requires the existing GitHub Release/)
 })
 
+test('dist-tag reconciliation waits for npm registry visibility before mutating tags', () => {
+  const publish = release.indexOf('Publish immutable artifact to npm')
+  const wait = release.indexOf('Wait for npm registry visibility')
+  const reconcile = release.indexOf('Reconcile and assert npm dist-tags')
+  assert.ok(publish >= 0 && wait > publish && reconcile > wait)
+
+  // The wait is skipped exactly when the publish step is skipped.
+  const step = release.slice(wait, reconcile)
+  assert.match(step, /if: steps\.idem\.outputs\.npm_exists != 'true'/)
+  assert.match(step, /TARGET_VER="\$\{VERSION#v\}"/)
+  assert.match(step, /ATTEMPTS=120/)
+  assert.match(step, /INTERVAL=5/)
+  assert.match(step, /::error::.*was still not resolvable/)
+  assert.match(step, /exit 1/)
+
+  // Dist-tag writes go through the bounded retry, not directly to npm.
+  const reconcileStep = release.slice(reconcile)
+  assert.match(
+    reconcileStep,
+    /dist_tag_write npm dist-tag add "pantheon-opencode@\$\{TARGET_VER\}"/,
+  )
+  assert.match(reconcileStep, /dist_tag_write npm dist-tag rm pantheon-opencode/)
+  assert.doesNotMatch(reconcileStep, /^\s+npm dist-tag (?:add|rm) /m)
+  assert.match(reconcileStep, /\*E401\*\|\*E404\*\|\*E409\*/)
+  assert.match(reconcileStep, /version_present/)
+  assert.match(reconcileStep, /while \[ "\$attempt" -le 5 \]/)
+  assert.match(reconcileStep, /::error::npm \$\* failed/)
+})
+
 test('recovery inputs, hostile refs, and tag objects are rejected', () => {
   // The workflow itself must reject recovery_pr_number for the modern format
   // (guard is present in both the pre-checkout and pre-mutation validators).
