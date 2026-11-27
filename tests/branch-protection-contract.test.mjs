@@ -96,6 +96,49 @@ test('CodeQL has a push trigger on main so main-head checks can report', () => {
   }
 })
 
+test('CodeQL concurrency is event-scoped so schedule cannot cancel a required main check', () => {
+  const codeql = workflows.get('codeql.yml')
+  assert.ok(codeql, 'codeql.yml must exist')
+  assert.match(
+    codeql,
+    /group: \$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}-\$\{\{ github\.event_name \}\}/,
+    'schedule/dispatch/push share refs/heads/main; without event_name a cron run can cancel the required push check',
+  )
+  assert.match(
+    codeql,
+    /cancel-in-progress: true/,
+    'consecutive pushes must still cancel each other',
+  )
+})
+
+/** Requirement-list lines that must never present `CodeQL` as a check name. */
+const REQUIRED_CHECK_LINE = /required|must pass|status check|checks\b|bloque|obrigat/i
+
+function phantomRequiredMentions(text) {
+  return text
+    .split('\n')
+    .filter((line) => /`CodeQL`|"CodeQL"/.test(line) && REQUIRED_CHECK_LINE.test(line))
+}
+
+test('the backticked-CodeQL discriminator flags requirement lists and spares prose', () => {
+  const shouldFail = [
+    'Every merge must pass all 10 CI checks (`validate`, `CodeQL`).',
+    'Todos os checks de CI (`validate`, `CodeQL`, etc.).',
+    'All required checks green (`validate`, `CodeQL`).',
+  ]
+  const shouldPass = [
+    'a bare `CodeQL` context never reports on this repository.',
+    'GitHub default setup reports a single `CodeQL` check.',
+    'O contexto `CodeQL` não reporta neste repositório.',
+  ]
+  for (const line of shouldFail) {
+    assert.equal(phantomRequiredMentions(line).length, 1, `must flag: ${line}`)
+  }
+  for (const line of shouldPass) {
+    assert.equal(phantomRequiredMentions(line).length, 0, `must not flag: ${line}`)
+  }
+})
+
 test('no doc registers a bare CodeQL required context', () => {
   const docsDir = fileURLToPath(new URL('../docs/', import.meta.url))
   const docs = readdirSync(docsDir, { recursive: true }).filter((entry) => entry.endsWith('.md'))
@@ -107,6 +150,11 @@ test('no doc registers a bare CodeQL required context', () => {
       text,
       /"CodeQL"/,
       `docs/${rel} must not register "CodeQL" as a required context; it never reports`,
+    )
+    assert.deepEqual(
+      phantomRequiredMentions(text),
+      [],
+      `docs/${rel} must not list \`CodeQL\` as a required check name`,
     )
   }
 

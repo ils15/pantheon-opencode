@@ -103,6 +103,11 @@ test('CI rebuilds the roster and fails on any diff, not on a lossy --check', () 
     'the step must diff the rebuilt files: --check trims whitespace and misses formatter rewrites',
   )
   assert.doesNotMatch(step, /continue-on-error:\s*true/, 'drift must fail the job')
+  assert.match(
+    step,
+    /ls-files --others --exclude-standard -- src\/agents/,
+    'the step must reject unexpected untracked files under src/agents',
+  )
 
   const stepIndex = ci.indexOf('- name: Generated artifacts are in sync')
   assert.ok(
@@ -124,6 +129,11 @@ test('CI rebuilds the plugin bundle and fails on any diff', () => {
     'the step must diff the rebuilt bundle so a stale or concurrently-mutated bundle fails CI',
   )
   assert.doesNotMatch(step, /continue-on-error:\s*true/, 'a stale bundle must fail the job')
+  assert.match(
+    step,
+    /ls-files --others --exclude-standard -- src\/plugin/,
+    'the step must reject unexpected untracked files under src/plugin',
+  )
 })
 
 test('pre-commit rebuilds both generators, backs up unstaged drift, and reports both', () => {
@@ -158,5 +168,23 @@ test('pre-commit rebuilds both generators, backs up unstaged drift, and reports 
     script,
     /process\.exit\(failed \? 1 : 0\)/,
     'the hook must evaluate every generator before exiting non-zero',
+  )
+  assert.match(
+    script,
+    /existsSync/,
+    'a deleted generated file must be handled instead of crashing lstat',
+  )
+  assert.match(script, /deleted|missing/i, 'a deleted generated file must be reported as drift')
+  assert.match(script, /BACKUP_MAX_AGE_MS|7 \* 24/, 'old backups must be pruned')
+  assert.match(script, /rmSync/, 'old backup directories must be removable')
+  assert.match(
+    script,
+    /unexpected untracked/,
+    'untracked strays under generated dirs must fail the hook',
+  )
+  assert.match(
+    script,
+    /working tree was rewritten/,
+    'unstaged normalization must be announced explicitly, not silently',
   )
 })

@@ -13,7 +13,12 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # `schedule` and `workflow_dispatch` resolve github.ref to refs/heads/main —
+  # the same group as the push run. Without event_name, a cron/dispatch start
+  # could cancel the in-flight push analysis for main's head, leaving a
+  # CANCELLED required `Analyze (…)` check. Key on the event; pushes still
+  # cancel previous pushes through cancel-in-progress.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:

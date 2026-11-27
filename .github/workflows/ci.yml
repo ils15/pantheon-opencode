@@ -229,6 +229,12 @@ jobs:
         run: |
           npm run build:roster
           git diff --exit-code src/agents
+          untracked="$(git ls-files --others --exclude-standard -- src/agents)"
+          if [ -n "$untracked" ]; then
+            echo "::error::unexpected untracked files under src/agents:"
+            printf '%s\n' "$untracked"
+            exit 1
+          fi
 
       # The plugin bundle is written by `build:plugin`, which `prepack` also
       # runs. Assert the committed bundle is what the current sources build,
@@ -237,6 +243,12 @@ jobs:
         run: |
           npm run build:plugin
           git diff --exit-code src/plugin
+          untracked="$(git ls-files --others --exclude-standard -- src/plugin)"
+          if [ -n "$untracked" ]; then
+            echo "::error::unexpected untracked files under src/plugin:"
+            printf '%s\n' "$untracked"
+            exit 1
+          fi
 
       - name: Verify tarball/package evidence
         run: npm run package:evidence -- --output-dir="$RUNNER_TEMP/package-evidence" --target-sha="$(git rev-parse HEAD)"

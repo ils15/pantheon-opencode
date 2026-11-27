@@ -42,7 +42,7 @@ flowchart TD
 ```
 
 ### Core Principles:
-1. **`main` is Always Tested & Deployable:** Code in `main` is never broken. Every merge must pass all 10 CI checks (`validate`, `test-suite`, `plugin-ts-coverage`, `security-scan`, `commitlint`, `CodeQL`, etc.).
+1. **`main` is Always Tested & Deployable:** Code in `main` is never broken. Every merge must pass all 10 CI checks (`validate`, `test-suite`, `plugin-ts-coverage`, `security-scan`, `commitlint`, `Analyze (actions)`, `Analyze (javascript-typescript)`, etc.).
 2. **Merges Do NOT Trigger Package Releases:** Merging a PR into `main` automatically triggers documentation updates on GitHub Pages (`latest`), but **never publishes to npm** or creates release tags.
 3. **Buffering in `[Unreleased]`:** Completed features accumulate in the `## [Unreleased]` section of `CHANGELOG.md` until the maintainer decides the milestone is complete.
 4. **Explicit Release Cutting:** A release is only triggered when the maintainer runs the release script (`node scripts/versioning.mjs apply [patch|minor|major]`), which promotes `[Unreleased]` to the new version header, synchronizes manifests, and creates the release tag.
@@ -175,7 +175,8 @@ workflow-owned (see below).
 
 5. Wait for CI. The PR must pass `validate` (version manifests, engine,
    packaging, sandbox), `test-suite`, `plugin-ts-coverage`, `commitlint`,
-   `security-scan`, and `CodeQL` before merging. `ci.yml` also runs on pushes
+   `security-scan`, `Analyze (actions)`, and `Analyze (javascript-typescript)`
+   before merging. `ci.yml` also runs on pushes
    to `main`, so the merged SHA carries its own CI evidence.
 
 > No tag is created locally. Merging an ordinary PR does **not** release. To
@@ -749,7 +750,7 @@ Before cutting a release, verify:
       `pyproject.toml` == [`src/plugins/tui/package.json`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui/package.json)
 - [ ] All required checks green on the bump PR **and on the push run for the
       merged `main` SHA** (`validate`, `test-suite`, `plugin-ts-coverage`,
-      `commitlint`, `security-scan`, `CodeQL`)
+      `commitlint`, `security-scan`, `Analyze (actions)`, `Analyze (javascript-typescript)`)
 - [ ] The six release gates are expected to PASS for the frozen `TARGET_SHA`;
       the dispatch's `validate` job is the authority (it re-runs all six)
 - [ ] `npm run release:dry-run` passes (status + pack)
