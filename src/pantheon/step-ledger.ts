@@ -22,7 +22,7 @@ import { createExecutionReceipt } from './execution-receipt.ts'
 import { captureGitCheckpoint, restoreGitCheckpoint } from './git-checkpoint.ts'
 import { runAtomicStepSubSession, type SubSessionDomainLike } from './step-runner.ts'
 import { ThemisReflexController } from './themis-reflex.ts'
-import { resolveToolCwd } from './tool-context.ts'
+import { resolveSharedPantheonRoot, resolveToolCwd } from './tool-context.ts'
 import type { PantheonToolDef, PantheonToolResult } from './tools.ts'
 
 export type StepState = 'pending' | 'in_progress' | 'done' | 'blocked' | 'rolled_back'
@@ -64,7 +64,8 @@ function assertSafeStepKey(stepKey: unknown): string {
 }
 
 function resolveLedgerPath(workspaceDir: string): string {
-  const dir = join(workspaceDir, '.pantheon', 'ledger')
+  const sharedRoot = resolveSharedPantheonRoot(workspaceDir)
+  const dir = join(sharedRoot, '.pantheon', 'ledger')
   mkdirSync(dir, { recursive: true })
   const canonicalDir = realpathSync(dir)
   const filePath = resolve(canonicalDir, 'step-ledger.json')
@@ -188,8 +189,15 @@ export function createStepLedgerTool(
         maxTurns: {
           type: 'integer',
           minimum: 1,
-          maximum: 10,
-          description: 'Max continuation turns for execute_step/spawn_ephemeral (default 1)',
+          maximum: 20,
+          description:
+            'Max continuation turns for execute_step/spawn_ephemeral (default 1 for execute_step, 8 for spawn_ephemeral)',
+        },
+        to: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Optional recipient handles for spawn_ephemeral final [done]/[blocker] handoff (default ["zeus"], e.g. ["themis"])',
         },
         extraContext: {
           type: 'string',
@@ -316,6 +324,9 @@ export function createStepLedgerTool(
             ...(typeof input.maxTurns === 'number' && Number.isInteger(input.maxTurns)
               ? { maxTurns: input.maxTurns }
               : {}),
+            ...(Array.isArray(input.to)
+              ? { to: input.to.filter((entry): entry is string => typeof entry === 'string') }
+              : {}),
           })
           return jsonResult(runOut)
         }
@@ -357,6 +368,9 @@ export function createStepLedgerTool(
             ...(typeof input.extraContext === 'string' ? { extraContext: input.extraContext } : {}),
             ...(typeof input.maxTurns === 'number' && Number.isInteger(input.maxTurns)
               ? { maxTurns: input.maxTurns }
+              : {}),
+            ...(Array.isArray(input.to)
+              ? { to: input.to.filter((entry): entry is string => typeof entry === 'string') }
               : {}),
           })
           return jsonResult(ephOut)

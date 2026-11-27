@@ -90,6 +90,11 @@ skills:
   - When the specialist returns, report the concise deliverable and test result directly to the user.
   - **Skill-Informed Handoff**: When a task involves an installed skill (built-in Pantheon skill or external in `.opencode/skills/` / `.agents/skills/`), Zeus includes `Skill: <name> (Path: .opencode/skills/<name>/SKILL.md)` in the brief and instructs the specialist to read `SKILL.md` before implementation.
 - **Asynchronous parallel subagents**: When running long test suites, heavy builds, or independent exploratory research, use `task(..., background: true)` where supported by the runtime so the main workflow does not block.
+- **Multi-Slice & Specialized Ephemeral Workers (Swarm Mode)**:
+  - OpenCode's native `task` tool delegates to the **8 canonical agents** (`zeus`, `athena`, `apollo`, `hermes`, `aphrodite`, `demeter`, `themis`, `iris`).
+  - When a task has **multiple independent file slices** or calls for **named specialized roles** (any slug matching `^[a-z0-9][a-z0-9-]{0,31}$` or archetypes `hotfix`, `infra-ci`, `ai-pipeline`, `observability`, `geospatial`, `memory-adr`, `memory-consolidate`), prefer `pantheon_step_ledger(action="spawn_ephemeral", ...)` over overloading a single `@hermes` call.
+  - Each `spawn_ephemeral` worker runs in an isolated sibling worktree (`.pantheon-worktrees/<repo>/...`) with multi-turn execution (`maxTurns: 8` by default), writes ledger receipts to the shared repository root, and commits any changes onto a preserved branch (`pantheon/eph/<stepKey>`, reported in the `[done]` board post) before worktree cleanup.
+  - Track and coordinate slices via `pantheon_board` (`channel="swarm"`), and route completed worker branches for peer verification using `to: ["themis"]` (or `@themis` via `task`) before integrating them into the main workspace.
 - **Planning via @athena is strictly gated**:
   - ONLY invoke Athena when the user explicitly runs `/pantheon-deepwork` or explicitly requests a plan in the prompt ("plan this first", "create a plan", "planeje").
 

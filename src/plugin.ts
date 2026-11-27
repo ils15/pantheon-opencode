@@ -103,6 +103,7 @@ import {
   createV2BoundedReadTool,
   type V2BoundedReadOriginRegistry,
 } from './pantheon/bounded-read.ts'
+import { getSharedBus } from './pantheon/bus.ts'
 import { wireCockpitBusRecorder } from './pantheon/cockpit-events.ts'
 import { buildCompactionContext } from './pantheon/compaction-context.ts'
 import {
@@ -2442,6 +2443,48 @@ export function resetV2IdleEnforcerForTests(): void {
   idleTodoEnforcer = undefined
 }
 
+/** Extract agent/call metadata when a V2 tool hook fires for `task` or `subagent`. */
+function extractSubagentLifecycleInfo(
+  event: unknown,
+):
+  | { tool: string; agent: string; sessionID?: string; callID?: string; description?: string }
+  | undefined {
+  if (event === null || typeof event !== 'object') return undefined
+  const record = event as {
+    tool?: unknown
+    input?: unknown
+    sessionID?: unknown
+    callID?: unknown
+  }
+  const tool = typeof record.tool === 'string' ? record.tool.trim().toLowerCase() : ''
+  if (tool !== 'task' && tool !== 'subagent') return undefined
+  const input =
+    record.input !== null && typeof record.input === 'object'
+      ? (record.input as Record<string, unknown>)
+      : {}
+  const rawAgent =
+    typeof input.agent === 'string'
+      ? input.agent
+      : typeof input.subagent_type === 'string'
+        ? input.subagent_type
+        : 'subagent'
+  const agent = rawAgent.trim().toLowerCase() || 'subagent'
+  const sessionID =
+    typeof record.sessionID === 'string' && record.sessionID ? record.sessionID : undefined
+  const callID = typeof record.callID === 'string' && record.callID ? record.callID : undefined
+  const description =
+    typeof input.description === 'string' && input.description.trim()
+      ? input.description.trim().slice(0, 120)
+      : undefined
+  return {
+    tool,
+    agent,
+    ...(sessionID ? { sessionID } : {}),
+    ...(callID ? { callID } : {}),
+    ...(description ? { description } : {}),
+  }
+}
+
 /**
  * Register tool execution hooks via V2 ctx.tool.hook.
  *
@@ -2734,6 +2777,13 @@ async function registerV2ToolHooks(
         // and the secret scan: a denied call must not leave a start record with
         // no matching stop. The formatter/stop halves run in `execute.after`.
         await shellHooks.before(event)
+        const subagentInfo = extractSubagentLifecycleInfo(event)
+        if (subagentInfo !== undefined) {
+          getSharedBus().emit('subagent:start', {
+            ...subagentInfo,
+            timestamp: Date.now(),
+          })
+        }
       } finally {
         // BENCH instrumentation — observation only; runs on the deny paths too.
         logBenchHookTiming('before', event, benchStartedAt)
@@ -2811,6 +2861,15 @@ async function registerV2ToolHooks(
         // reason V1 awaits it: the log record should exist before the tool
         // result is surfaced. Failures are swallowed inside the module.
         await shellHooks.after(event)
+        const subagentInfo = extractSubagentLifecycleInfo(event)
+        if (subagentInfo !== undefined) {
+          const afterRecord = (event ?? {}) as { error?: unknown }
+          getSharedBus().emit('subagent:stop', {
+            ...subagentInfo,
+            status: afterRecord.error ? 'error' : 'completed',
+            timestamp: Date.now(),
+          })
+        }
       } finally {
         // BENCH instrumentation — observation only; the awaited call means the
         // duration covers the whole parity chain, not just its dispatch.

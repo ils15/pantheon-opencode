@@ -14,6 +14,7 @@ import {
   type StepTaskType,
   writeStepLedger,
 } from './step-ledger.ts'
+import { resolveSharedPantheonRoot } from './tool-context.ts'
 
 /** Structural subset of OpenCode 2.x `ctx.session` (`SessionDomain`) aligned with `@opencode/client`. */
 export interface SubSessionDomainLike {
@@ -44,6 +45,7 @@ export interface StepFinishPayload {
 export interface AtomicStepRunInput {
   readonly sessionDomain: SubSessionDomainLike
   readonly cwd: string
+  readonly ledgerRoot?: string
   readonly stepKey: string
   readonly objective: string
   readonly agent: string
@@ -264,6 +266,7 @@ export async function runAtomicStepSubSession(
   input: AtomicStepRunInput,
 ): Promise<AtomicStepRunResult> {
   const { sessionDomain, cwd, stepKey, objective, agent } = input
+  const ledgerRoot = input.ledgerRoot?.trim() ? input.ledgerRoot : resolveSharedPantheonRoot(cwd)
   const reuseId =
     typeof input.reuseSessionID === 'string' && input.reuseSessionID.trim() !== ''
       ? input.reuseSessionID.trim()
@@ -278,7 +281,7 @@ export async function runAtomicStepSubSession(
   }
 
   // Ensure ledger entry + Git checkpoint baseline exist cleanly before sub-session starts
-  const store = readStepLedger(cwd)
+  const store = readStepLedger(ledgerRoot)
   if (!store.steps[stepKey]) {
     const ckpt = await captureGitCheckpoint(cwd, stepKey)
     store.steps[stepKey] = {
@@ -293,12 +296,12 @@ export async function runAtomicStepSubSession(
       lastVerifiedAt: null,
       updatedAt: new Date().toISOString(),
     }
-    writeStepLedger(cwd, store)
+    writeStepLedger(ledgerRoot, store)
   }
 
   const maxTurns =
     typeof input.maxTurns === 'number' && Number.isInteger(input.maxTurns)
-      ? Math.max(1, Math.min(10, input.maxTurns))
+      ? Math.max(1, Math.min(20, input.maxTurns))
       : 1
 
   let createdId: string | undefined = reuseId
@@ -344,7 +347,7 @@ export async function runAtomicStepSubSession(
       if (typeof sessionDomain.wait === 'function') {
         await sessionDomain.wait({ sessionID: activeSessionId })
       }
-      const snapshot = readStepLedger(cwd).steps[stepKey]
+      const snapshot = readStepLedger(ledgerRoot).steps[stepKey]
       if (
         snapshot?.state === 'done' ||
         snapshot?.state === 'blocked' ||
@@ -364,7 +367,7 @@ export async function runAtomicStepSubSession(
       }
     }
 
-    const latest = readStepLedger(cwd).steps[stepKey]
+    const latest = readStepLedger(ledgerRoot).steps[stepKey]
     const payloadMissingError =
       input.requireFinishPayload === true && finishPayload === undefined
         ? 'missing valid step finish payload'
