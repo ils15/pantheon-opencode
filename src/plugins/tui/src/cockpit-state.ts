@@ -138,6 +138,8 @@ export interface CockpitStepEntry {
   readonly mutatedCount: number
   readonly receiptId?: string
   readonly hasBaselineTree: boolean
+  readonly dependsOn?: readonly string[]
+  readonly blockedBy?: readonly string[]
   readonly updatedAt: string
 }
 
@@ -253,6 +255,17 @@ export function renderWorkMapLines(counts: {
   ]
 }
 
+function loadStepDependencyField(
+  step: Record<string, unknown>,
+  field: 'dependsOn' | 'blockedBy',
+): { dependsOn?: string[] } | { blockedBy?: string[] } {
+  const raw = step[field]
+  if (!Array.isArray(raw)) return {}
+  const keys = raw.filter((value): value is string => typeof value === 'string' && value.length > 0)
+  if (keys.length === 0) return {}
+  return field === 'dependsOn' ? { dependsOn: keys } : { blockedBy: keys }
+}
+
 function loadStepEntries(workspaceDir: string): CockpitStepEntry[] {
   const ledgerPath = join(workspaceDir, '.pantheon', 'ledger', 'step-ledger.json')
   if (!existsSync(ledgerPath)) return []
@@ -271,6 +284,8 @@ function loadStepEntries(workspaceDir: string): CockpitStepEntry[] {
         mutatedCount: Array.isArray(s.mutatedFiles) ? s.mutatedFiles.length : 0,
         ...(typeof s.receiptId === 'string' ? { receiptId: s.receiptId } : {}),
         hasBaselineTree: typeof s.baselineTree === 'string' && s.baselineTree.length === 40,
+        ...loadStepDependencyField(s, 'dependsOn'),
+        ...loadStepDependencyField(s, 'blockedBy'),
         updatedAt: String(s.updatedAt ?? ''),
       }))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))

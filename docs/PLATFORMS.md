@@ -65,6 +65,16 @@ your-project/
     └── reports/
 ```
 
+`ledger/step-ledger.json` (`version: 1`) records one entry per step:
+`state` is `pending | in_progress | done | blocked | rolled_back`, plus optional
+`dependsOn`, `blockedBy`/`cascadeReason`, `verificationAttempts`, `ownedFiles`,
+`forbiddenFiles`, and `ephemeral` metadata. `pending` means prerequisites are
+still open. A step is *ready* when it is `pending`, declares at least one
+dependency, and every dependency is `done`; `pantheon_step_ledger(action="status")`
+returns that as `graph.ready` with the parallel launch `waves`. A lock file
+(`.pantheon/ledger/.step-ledger.lock`) makes concurrent writers safe — see
+[Step dependencies](opencode.md#step-dependencies-and-readiness).
+
 With the recommended `opencode plugin add pantheon-opencode` install, agents,
 skills, commands, and the TUI bundle are loaded directly from OpenCode's npm
 plugin cache—no redundant copies in `~/.config/opencode/agents/` or

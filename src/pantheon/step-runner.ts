@@ -12,7 +12,7 @@ import {
   readStepLedger,
   type StepState,
   type StepTaskType,
-  writeStepLedger,
+  updateStepLedger,
 } from './step-ledger.ts'
 import { resolveSharedPantheonRoot } from './tool-context.ts'
 
@@ -380,22 +380,24 @@ export async function runAtomicStepSubSession(
   }
 
   // Ensure ledger entry + Git checkpoint baseline exist cleanly before sub-session starts
-  const store = readStepLedger(ledgerRoot)
-  if (!store.steps[stepKey]) {
+  if (!readStepLedger(ledgerRoot).steps[stepKey]) {
     const ckpt = await captureGitCheckpoint(cwd, stepKey)
-    store.steps[stepKey] = {
-      stepKey,
-      objective,
-      agent,
-      state: 'in_progress',
-      ...(input.taskType ? { taskType: input.taskType } : {}),
-      ...(ckpt.ok && ckpt.treeHash ? { baselineTree: ckpt.treeHash } : {}),
-      mutatedFiles: [],
-      lastMutationAt: null,
-      lastVerifiedAt: null,
-      updatedAt: new Date().toISOString(),
-    }
-    writeStepLedger(ledgerRoot, store)
+    updateStepLedger(ledgerRoot, (store) => {
+      // Re-check under the lock: a concurrent writer may have created it already.
+      if (store.steps[stepKey]) return
+      store.steps[stepKey] = {
+        stepKey,
+        objective,
+        agent,
+        state: 'in_progress',
+        ...(input.taskType ? { taskType: input.taskType } : {}),
+        ...(ckpt.ok && ckpt.treeHash ? { baselineTree: ckpt.treeHash } : {}),
+        mutatedFiles: [],
+        lastMutationAt: null,
+        lastVerifiedAt: null,
+        updatedAt: new Date().toISOString(),
+      }
+    })
   }
 
   const maxTurns =

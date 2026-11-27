@@ -14,8 +14,20 @@
  * @module pantheon/step-ledger
  */
 
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
-import { join, resolve, sep } from 'node:path'
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs'
+import { dirname, join, resolve, sep } from 'node:path'
 import { getSharedBus } from './bus.ts'
 import {
   deriveEphemeralRoleSlug,
@@ -24,6 +36,16 @@ import {
 } from './ephemeral-worker.ts'
 import { createExecutionReceipt } from './execution-receipt.ts'
 import { captureGitCheckpoint, restoreGitCheckpoint } from './git-checkpoint.ts'
+import {
+  buildDependencyGraph,
+  cascadeBlock,
+  type DependencyNode,
+  type DependencyValidationResult,
+  normalizeDependencies,
+  readyStepKeys,
+  unmetDependencies,
+  validateDependencies,
+} from './step-dependencies.ts'
 import { runAtomicStepSubSession, type SubSessionDomainLike } from './step-runner.ts'
 import { ThemisReflexController } from './themis-reflex.ts'
 import { resolveSharedPantheonRoot, resolveToolCwd } from './tool-context.ts'
@@ -31,6 +53,20 @@ import type { PantheonToolDef, PantheonToolResult } from './tools.ts'
 
 export type StepState = 'pending' | 'in_progress' | 'done' | 'blocked' | 'rolled_back'
 export type StepTaskType = 'feature' | 'bugfix' | 'refactor' | 'chore'
+
+/**
+ * Ephemeral worker metadata (D06: it lives on the ledger entry, never a sidecar).
+ * S3 populates the merge fields; S1 only defines and round-trips the shape.
+ */
+export interface EphemeralStepMetadata {
+  branch?: string
+  baseHead?: string
+  verdict?: string
+  mergeTree?: string
+  mergedAt?: string
+  role?: string
+  worktreeDir?: string
+}
 
 export interface StepLedgerEntry {
   stepKey: string
@@ -48,7 +84,20 @@ export interface StepLedgerEntry {
   lastVerifiedAt: number | null
   verificationCommand?: string
   verificationExitCode?: number
+  /** Number of `record_verification` calls (success and failure) for this step. */
+  verificationAttempts?: number
   receiptId?: string
+  /** Prerequisite step keys; independent steps of the same wave launch in parallel. */
+  dependsOn?: string[]
+  /** Immediate prerequisites that justify a mechanical `blocked` state. */
+  blockedBy?: string[]
+  /** Explicit, never-silent reason a cascade invalidation blocked this step. */
+  cascadeReason?: string
+  /** Owned file paths/globs (lease boundary + worker prompt contract). */
+  ownedFiles?: string[]
+  /** File paths/globs the worker must never modify. */
+  forbiddenFiles?: string[]
+  ephemeral?: EphemeralStepMetadata
   updatedAt: string
 }
 
@@ -80,11 +129,8 @@ function resolveLedgerPath(workspaceDir: string): string {
   return filePath
 }
 
-export function readStepLedger(workspaceDir: string): StepLedgerStore {
-  const filePath = resolveLedgerPath(workspaceDir)
-  if (!existsSync(filePath)) {
-    return { version: 1, steps: {} }
-  }
+function readLedgerFileAtPath(filePath: string): StepLedgerStore {
+  if (!existsSync(filePath)) return { version: 1, steps: {} }
   try {
     const parsed = JSON.parse(readFileSync(filePath, 'utf8')) as Partial<StepLedgerStore>
     if (parsed && typeof parsed.steps === 'object' && parsed.steps !== null) {
@@ -96,9 +142,123 @@ export function readStepLedger(workspaceDir: string): StepLedgerStore {
   return { version: 1, steps: {} }
 }
 
+export function readStepLedger(workspaceDir: string): StepLedgerStore {
+  return readLedgerFileAtPath(resolveLedgerPath(workspaceDir))
+}
+
+/** Seconds a lock file may live before it is considered abandoned by a dead writer. */
+const LOCK_STALE_MS = 10_000
+const LOCK_RETRIES = 20
+const LOCK_RETRY_MS = 25
+
+const sleepBuffer = new Int32Array(new SharedArrayBuffer(4))
+
+function sleepMs(ms: number): void {
+  Atomics.wait(sleepBuffer, 0, 0, ms)
+}
+
+function resolveLockPath(ledgerPath: string): string {
+  return join(dirname(ledgerPath), '.step-ledger.lock')
+}
+
+/**
+ * Acquire the ledger write lock (`open(..., 'wx')`). Bounded retry (20 x 25 ms)
+ * with a stale-lock break when the holder died mid-write (mtime > 10 s).
+ */
+function acquireLedgerLock(lockPath: string): void {
+  for (let attempt = 0; attempt <= LOCK_RETRIES; attempt += 1) {
+    try {
+      const fd = openSync(lockPath, 'wx')
+      try {
+        writeSync(fd, `${process.pid}\n`)
+      } finally {
+        closeSync(fd)
+      }
+      return
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException | undefined)?.code
+      if (code !== 'EEXIST') throw err
+      try {
+        if (Date.now() - statSync(lockPath).mtimeMs > LOCK_STALE_MS) {
+          unlinkSync(lockPath)
+          continue
+        }
+      } catch {
+        /* lock vanished between open and stat — retry immediately */
+        continue
+      }
+      if (attempt === LOCK_RETRIES) {
+        throw new Error(`step-ledger lock timeout after ${LOCK_RETRIES * LOCK_RETRY_MS}ms`)
+      }
+      sleepMs(LOCK_RETRY_MS)
+    }
+  }
+}
+
+function releaseLedgerLock(lockPath: string): void {
+  try {
+    unlinkSync(lockPath)
+  } catch {
+    /* already released or never created */
+  }
+}
+
+/** Write the store via a per-process temp file + `renameSync` (atomic on POSIX). */
+function writeLedgerFileAtomic(filePath: string, store: StepLedgerStore): void {
+  const tmpPath = `${filePath}.tmp.${process.pid}`
+  try {
+    writeFileSync(tmpPath, `${JSON.stringify(store, null, 2)}\n`, 'utf8')
+    renameSync(tmpPath, filePath)
+  } catch (err) {
+    try {
+      if (existsSync(tmpPath)) unlinkSync(tmpPath)
+    } catch {
+      /* best-effort cleanup */
+    }
+    throw err
+  }
+}
+
+/**
+ * Read → mutate → write the ledger under an exclusive lock.
+ *
+ * Every mutating action (and `step-runner.ts`'s auto-create path) must go
+ * through this helper: parallel waves otherwise race with last-writer-wins and
+ * silently drop step entries. Keep the mutator synchronous — it runs while the
+ * lock is held.
+ */
+export function updateStepLedger<T>(
+  workspaceDir: string,
+  mutator: (store: StepLedgerStore) => T,
+): T {
+  const filePath = resolveLedgerPath(workspaceDir)
+  const lockPath = resolveLockPath(filePath)
+  acquireLedgerLock(lockPath)
+  try {
+    const store = readLedgerFileAtPath(filePath)
+    const result = mutator(store)
+    store.version = 1
+    writeLedgerFileAtomic(filePath, store)
+    return result
+  } finally {
+    releaseLedgerLock(lockPath)
+  }
+}
+
+/**
+ * Compatibility export. Route writes through `updateStepLedger` when you need a
+ * read-modify-write; this is locked and atomic but still overwrites the whole
+ * store with the caller's snapshot.
+ */
 export function writeStepLedger(workspaceDir: string, store: StepLedgerStore): void {
   const filePath = resolveLedgerPath(workspaceDir)
-  writeFileSync(filePath, `${JSON.stringify(store, null, 2)}\n`, 'utf8')
+  const lockPath = resolveLockPath(filePath)
+  acquireLedgerLock(lockPath)
+  try {
+    writeLedgerFileAtomic(filePath, { version: 1, steps: store.steps })
+  } finally {
+    releaseLedgerLock(lockPath)
+  }
 }
 
 /**
@@ -126,6 +286,105 @@ export function canTransitionStepToDone(step: StepLedgerEntry): {
 
 function jsonResult(payload: unknown): PantheonToolResult {
   return { output: JSON.stringify(payload) }
+}
+
+type LaunchGate =
+  | { readonly ok: true }
+  | {
+      readonly ok: false
+      readonly error: 'step_blocked'
+      readonly blockedBy: string[]
+      readonly cascadeReason?: string
+    }
+  | { readonly ok: false; readonly error: 'dependencies_unmet'; readonly unmet: string[] }
+
+/**
+ * Mechanical launch gate for `execute_step` / `spawn_ephemeral`.
+ * A blocked step wins over a merely unmet one: the caller must see why it was
+ * invalidated rather than a generic dependency message.
+ */
+function evaluateLaunchGate(
+  entry: StepLedgerEntry | undefined,
+  store: StepLedgerStore,
+): LaunchGate {
+  if (!entry) return { ok: true }
+  if (entry.state === 'blocked') {
+    return {
+      ok: false,
+      error: 'step_blocked',
+      blockedBy: [...(entry.blockedBy ?? [])],
+      ...(entry.cascadeReason ? { cascadeReason: entry.cascadeReason } : {}),
+    }
+  }
+  const unmet = (entry.dependsOn ?? []).filter((dep) => store.steps[dep]?.state !== 'done')
+  if (unmet.length > 0) return { ok: false, error: 'dependencies_unmet', unmet }
+  return { ok: true }
+}
+
+function dependencyFailurePayload(
+  stepKey: string,
+  result: DependencyValidationResult,
+): Record<string, unknown> {
+  const issue = result.issues[0]
+  const error = issue?.code ?? 'dependency_not_found'
+  return {
+    ok: false,
+    stepKey,
+    error,
+    message: issue?.message ?? `Invalid dependencies for "${stepKey}"`,
+    ...(error === 'dependency_not_found' ? { dependencies: result.unknown } : {}),
+    ...(error === 'self_dependency' ? { dependencies: [stepKey] } : {}),
+    ...(error === 'cycle_detected' ? { cycles: result.cycles, path: result.cycles[0] } : {}),
+    issues: result.issues,
+  }
+}
+
+/** Apply a rollback cascade, stamping every invalidated dependent with its reason. */
+function applyCascade(
+  store: StepLedgerStore,
+  rootStepKey: string,
+  reason: string,
+  nowIso: string,
+): Array<{ stepKey: string; receiptId?: string; previousState?: StepState }> {
+  const targets = cascadeBlock(Object.values(store.steps), rootStepKey, reason)
+  const invalidated: Array<{ stepKey: string; receiptId?: string; previousState?: StepState }> = []
+  for (const target of targets) {
+    const entry = store.steps[target.stepKey]
+    if (!entry) continue
+    invalidated.push({
+      stepKey: target.stepKey,
+      ...(entry.receiptId ? { receiptId: entry.receiptId } : {}),
+      ...(entry.state ? { previousState: entry.state } : {}),
+    })
+    entry.state = 'blocked'
+    entry.blockedBy = [...target.blockedBy]
+    entry.cascadeReason = target.cascadeReason
+    entry.updatedAt = nowIso
+  }
+  return invalidated
+}
+
+function emitBlocked(stepKey: string, entry: StepLedgerEntry | undefined): void {
+  if (!entry) return
+  getSharedBus().emit('step:blocked', {
+    stepKey,
+    blockedBy: [...(entry.blockedBy ?? [])],
+    reason: entry.cascadeReason ?? 'blocked',
+    ...(entry.cascadeReason ? { cascadeReason: entry.cascadeReason } : {}),
+    timestamp: Date.now(),
+  })
+}
+
+/** A ready `pending` step becomes `in_progress` the moment it is launched. */
+function markStepInProgress(cwd: string, stepKey: string, nowIso: string): void {
+  updateStepLedger(cwd, (ledger) => {
+    const entry = ledger.steps[stepKey]
+    if (entry?.state !== 'pending') return
+    entry.state = 'in_progress'
+    entry.updatedAt = nowIso
+    delete entry.blockedBy
+    delete entry.cascadeReason
+  })
 }
 
 export function createStepLedgerTool(
@@ -265,6 +524,17 @@ export function createStepLedgerTool(
         command: { type: 'string', description: 'Executed verification or reproduction command' },
         exitCode: { type: 'number', description: 'Exit code of the command' },
         durationMs: { type: 'number', description: 'Duration of verification command in ms' },
+        dependsOn: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Prerequisite step keys for init_step. Unknown, self, or cyclic dependencies are rejected.',
+        },
+        cascade: {
+          type: 'boolean',
+          description:
+            'rollback_step: also invalidate transitive dependents (blocked with blockedBy + cascadeReason)',
+        },
       },
     },
     output: {},
@@ -272,18 +542,29 @@ export function createStepLedgerTool(
       try {
         const action = typeof input.action === 'string' ? input.action : 'status'
         const cwd = resolveToolCwd(context, fallbackDir)
-        const store = readStepLedger(cwd)
         const now = Date.now()
         const nowIso = new Date(now).toISOString()
 
         if (action === 'status') {
+          const store = readStepLedger(cwd)
+          const nodes = Object.values(store.steps) as DependencyNode[]
           if (typeof input.stepKey === 'string' && input.stepKey.trim()) {
             const key = assertSafeStepKey(input.stepKey.trim())
             const step = store.steps[key]
             if (!step) return jsonResult({ ok: false, error: 'step_not_found', stepKey: key })
-            return jsonResult({ ok: true, step, gate: canTransitionStepToDone(step) })
+            return jsonResult({
+              ok: true,
+              step,
+              gate: canTransitionStepToDone(step),
+              ready: readyStepKeys(nodes).includes(key),
+              unmet: unmetDependencies(nodes)[key] ?? [],
+            })
           }
-          return jsonResult({ ok: true, steps: Object.values(store.steps) })
+          return jsonResult({
+            ok: true,
+            steps: nodes,
+            graph: buildDependencyGraph(nodes),
+          })
         }
 
         if (action === 'verify_ephemeral') {
@@ -331,21 +612,7 @@ export function createStepLedgerTool(
             rawTaskType === 'chore'
               ? rawTaskType
               : undefined
-          const ckpt = await captureGitCheckpoint(cwd, key)
-          const entry: StepLedgerEntry = {
-            stepKey: key,
-            objective,
-            agent,
-            state: 'in_progress',
-            ...(taskType ? { taskType } : {}),
-            ...(ckpt.ok && ckpt.treeHash ? { baselineTree: ckpt.treeHash } : {}),
-            mutatedFiles: [],
-            lastMutationAt: null,
-            lastVerifiedAt: null,
-            updatedAt: nowIso,
-          }
-          store.steps[key] = entry
-          writeStepLedger(cwd, store)
+          const requestedDeps = normalizeDependencies(input.dependsOn)
           const ownedFiles = Array.isArray(input.ownedFiles)
             ? input.ownedFiles.filter(
                 (f): f is string => typeof f === 'string' && f.trim().length > 0,
@@ -356,6 +623,49 @@ export function createStepLedgerTool(
                 (f): f is string => typeof f === 'string' && f.trim().length > 0,
               )
             : []
+
+          // Fast reject before touching git; re-validated under the ledger lock.
+          const precheck = validateDependencies(
+            key,
+            requestedDeps,
+            Object.values(readStepLedger(cwd).steps) as DependencyNode[],
+          )
+          if (!precheck.ok) return jsonResult(dependencyFailurePayload(key, precheck))
+
+          const ckpt = await captureGitCheckpoint(cwd, key)
+          const outcome = updateStepLedger(cwd, (ledger) => {
+            const validation = validateDependencies(
+              key,
+              requestedDeps,
+              Object.values(ledger.steps) as DependencyNode[],
+            )
+            if (!validation.ok) {
+              return { ok: false as const, failure: dependencyFailurePayload(key, validation) }
+            }
+            const deps = validation.dependencies
+            const unmetDeps = deps.filter((dep) => ledger.steps[dep]?.state !== 'done')
+            const state: StepState =
+              deps.length > 0 && unmetDeps.length > 0 ? 'pending' : 'in_progress'
+            const entry: StepLedgerEntry = {
+              stepKey: key,
+              objective,
+              agent,
+              state,
+              ...(taskType ? { taskType } : {}),
+              ...(ckpt.ok && ckpt.treeHash ? { baselineTree: ckpt.treeHash } : {}),
+              ...(deps.length > 0 ? { dependsOn: deps } : {}),
+              ...(ownedFiles.length > 0 ? { ownedFiles } : {}),
+              ...(forbiddenFiles.length > 0 ? { forbiddenFiles } : {}),
+              mutatedFiles: [],
+              lastMutationAt: null,
+              lastVerifiedAt: null,
+              updatedAt: nowIso,
+            }
+            ledger.steps[key] = entry
+            return { ok: true as const, entry, unmetDeps }
+          })
+          if (!outcome.ok) return jsonResult(outcome.failure)
+
           const callerSid =
             typeof (context as { sessionID?: unknown } | undefined)?.sessionID === 'string'
               ? (context as { sessionID: string }).sessionID
@@ -386,22 +696,30 @@ export function createStepLedgerTool(
               cwd,
             })
           }
-          return jsonResult({ ok: true, step: entry })
+          return jsonResult({
+            ok: true,
+            step: outcome.entry,
+            ...(outcome.entry.state === 'pending' ? { unmet: outcome.unmetDeps } : {}),
+          })
         }
 
         if (action === 'execute_step') {
           if (!sessionDomain) {
             return jsonResult({ ok: false, error: 'host session domain unavailable' })
           }
+          const launchStore = readStepLedger(cwd)
+          const launchGate = evaluateLaunchGate(launchStore.steps[key], launchStore)
+          if (!launchGate.ok) return jsonResult({ ...launchGate, stepKey: key })
           const objective =
             typeof input.objective === 'string' && input.objective.trim()
               ? input.objective.trim()
-              : (store.steps[key]?.objective ?? '')
+              : (launchStore.steps[key]?.objective ?? '')
           if (!objective) return jsonResult({ ok: false, error: 'objective is required' })
+          markStepInProgress(cwd, key, nowIso)
           const agent =
             typeof input.agent === 'string' && input.agent.trim()
               ? input.agent.trim().replace(/^@/, '')
-              : (store.steps[key]?.agent ?? 'hermes')
+              : (launchStore.steps[key]?.agent ?? 'hermes')
           const rawTaskType = input.taskType
           const taskType: StepTaskType | undefined =
             rawTaskType === 'feature' ||
@@ -409,7 +727,7 @@ export function createStepLedgerTool(
             rawTaskType === 'refactor' ||
             rawTaskType === 'chore'
               ? rawTaskType
-              : store.steps[key]?.taskType
+              : launchStore.steps[key]?.taskType
           const parentSid =
             typeof (context as { sessionID?: unknown } | undefined)?.sessionID === 'string'
               ? ((context as { sessionID?: string }).sessionID ?? undefined)
@@ -463,11 +781,15 @@ export function createStepLedgerTool(
           if (!sessionDomain) {
             return jsonResult({ ok: false, error: 'host session domain unavailable' })
           }
+          const launchStore = readStepLedger(cwd)
+          const launchGate = evaluateLaunchGate(launchStore.steps[key], launchStore)
+          if (!launchGate.ok) return jsonResult({ ...launchGate, stepKey: key })
           const objective =
             typeof input.objective === 'string' && input.objective.trim()
               ? input.objective.trim()
-              : (store.steps[key]?.objective ?? '')
+              : (launchStore.steps[key]?.objective ?? '')
           if (!objective) return jsonResult({ ok: false, error: 'objective is required' })
+          markStepInProgress(cwd, key, nowIso)
           const role =
             typeof input.role === 'string' && input.role.trim()
               ? input.role.trim()
@@ -528,11 +850,6 @@ export function createStepLedgerTool(
           return jsonResult(ephOut)
         }
 
-        const step = store.steps[key]
-        if (!step) {
-          return jsonResult({ ok: false, error: `Step "${key}" is not initialized` })
-        }
-
         if (action === 'record_reproduction') {
           const command = typeof input.command === 'string' ? input.command.trim() : ''
           const exitCode = typeof input.exitCode === 'number' ? input.exitCode : 1
@@ -541,28 +858,94 @@ export function createStepLedgerTool(
             return jsonResult({
               ok: false,
               error: 'Bugfix reproduction must demonstrate a failing test/probe (exitCode !== 0)',
-              step,
             })
           }
-          step.reproductionCommand = command
-          step.reproductionExitCode = exitCode
-          step.reproductionRecordedAt = now
-          step.updatedAt = nowIso
-          writeStepLedger(cwd, store)
-          return jsonResult({ ok: true, reproduced: true, step })
+          const outcome = updateStepLedger(cwd, (ledger) => {
+            const entry = ledger.steps[key]
+            if (!entry) return { kind: 'missing' as const }
+            entry.reproductionCommand = command
+            entry.reproductionExitCode = exitCode
+            entry.reproductionRecordedAt = now
+            entry.updatedAt = nowIso
+            return { kind: 'ok' as const, step: entry }
+          })
+          if (outcome.kind === 'missing') {
+            return jsonResult({ ok: false, error: `Step "${key}" is not initialized` })
+          }
+          return jsonResult({ ok: true, reproduced: true, step: outcome.step })
         }
 
         if (action === 'rollback_step') {
+          const preStore = readStepLedger(cwd)
+          const step = preStore.steps[key]
+          if (!step) {
+            return jsonResult({ ok: false, error: `Step "${key}" is not initialized` })
+          }
           if (!step.baselineTree) {
             return jsonResult({ ok: false, error: `Step "${key}" has no Git baselineTree`, step })
           }
-          const rb = await restoreGitCheckpoint(cwd, step.baselineTree)
-          if (rb.ok) {
-            step.state = 'rolled_back'
-            step.rolledBackAt = nowIso
-            step.updatedAt = nowIso
-            writeStepLedger(cwd, store)
+          const cascade = input.cascade === true
+          const doneDependents = cascadeBlock(
+            Object.values(preStore.steps) as DependencyNode[],
+            key,
+            'manual_rollback_step',
+          ).filter((target) => preStore.steps[target.stepKey]?.state === 'done')
+          if (doneDependents.length > 0 && !cascade) {
+            return jsonResult({
+              ok: false,
+              error: 'dependents_done',
+              dependents: doneDependents.map((target) => target.stepKey),
+              hint: 'Re-run rollback_step with cascade:true to invalidate dependents explicitly.',
+              step,
+            })
           }
+
+          const rb = await restoreGitCheckpoint(cwd, step.baselineTree)
+          const cascadeReason = `Step "${key}" was rolled back; dependent invalidated by cascade`
+          const outcome = updateStepLedger(cwd, (ledger) => {
+            const entry = ledger.steps[key]
+            if (!entry) return { kind: 'missing' as const }
+            // Defensive re-check under the lock: a dependent could have completed
+            // between the pre-read and the restore above.
+            const lateDone = cascadeBlock(
+              Object.values(ledger.steps) as DependencyNode[],
+              key,
+              'manual_rollback_step',
+            )
+              .filter((target) => ledger.steps[target.stepKey]?.state === 'done')
+              .map((target) => target.stepKey)
+            if (lateDone.length > 0 && !cascade) {
+              return { kind: 'dependents_done' as const, dependents: lateDone }
+            }
+            if (rb.ok) {
+              entry.state = 'rolled_back'
+              entry.rolledBackAt = nowIso
+            } else {
+              entry.state = 'blocked'
+            }
+            delete entry.blockedBy
+            delete entry.cascadeReason
+            entry.updatedAt = nowIso
+            const invalidated = cascade ? applyCascade(ledger, key, cascadeReason, nowIso) : []
+            return {
+              kind: 'rolled' as const,
+              step: entry,
+              invalidated,
+              blocked: invalidated.map((item) => item.stepKey),
+            }
+          })
+          if (outcome.kind === 'missing') {
+            return jsonResult({ ok: false, error: `Step "${key}" is not initialized` })
+          }
+          if (outcome.kind === 'dependents_done') {
+            return jsonResult({
+              ok: false,
+              error: 'dependents_done',
+              dependents: outcome.dependents,
+              step,
+            })
+          }
+
           const callerSidRb =
             typeof (context as { sessionID?: unknown } | undefined)?.sessionID === 'string'
               ? (context as { sessionID: string }).sessionID
@@ -587,18 +970,33 @@ export function createStepLedgerTool(
             success: rb.ok,
             timestamp: Date.now(),
           })
-          return jsonResult({ ok: rb.ok, restoredTree: step.baselineTree, error: rb.reason, step })
+          const latest = readStepLedger(cwd)
+          for (const blockedKey of outcome.blocked)
+            emitBlocked(blockedKey, latest.steps[blockedKey])
+          return jsonResult({
+            ok: rb.ok,
+            restoredTree: step.baselineTree,
+            error: rb.reason,
+            step: outcome.step,
+            ...(cascade ? { invalidated: outcome.invalidated } : {}),
+          })
         }
 
         if (action === 'record_mutation') {
           const files = Array.isArray(input.files) ? input.files.map(String) : []
-          const merged = Array.from(new Set([...step.mutatedFiles, ...files]))
-          step.mutatedFiles = merged
-          step.lastMutationAt = now
-          if (step.state === 'done') step.state = 'in_progress'
-          step.updatedAt = nowIso
-          writeStepLedger(cwd, store)
-          return jsonResult({ ok: true, step })
+          const outcome = updateStepLedger(cwd, (ledger) => {
+            const entry = ledger.steps[key]
+            if (!entry) return { kind: 'missing' as const }
+            entry.mutatedFiles = Array.from(new Set([...entry.mutatedFiles, ...files]))
+            entry.lastMutationAt = now
+            if (entry.state === 'done') entry.state = 'in_progress'
+            entry.updatedAt = nowIso
+            return { kind: 'ok' as const, step: entry }
+          })
+          if (outcome.kind === 'missing') {
+            return jsonResult({ ok: false, error: `Step "${key}" is not initialized` })
+          }
+          return jsonResult({ ok: true, step: outcome.step })
         }
 
         if (action === 'record_verification') {
@@ -607,67 +1005,153 @@ export function createStepLedgerTool(
           const durationMs = typeof input.durationMs === 'number' ? input.durationMs : 0
           if (!command) return jsonResult({ ok: false, error: 'command is required' })
 
-          step.verificationCommand = command
-          step.verificationExitCode = exitCode
-          step.lastVerifiedAt = now
-          step.updatedAt = nowIso
+          const outcome = updateStepLedger(cwd, (ledger) => {
+            const entry = ledger.steps[key]
+            if (!entry) return { kind: 'missing' as const }
+            entry.verificationCommand = command
+            entry.verificationExitCode = exitCode
+            entry.lastVerifiedAt = now
+            entry.verificationAttempts = (entry.verificationAttempts ?? 0) + 1
+            entry.updatedAt = nowIso
 
-          if (exitCode === 0) {
-            stepReflex.evaluate(key, step.agent, [])
-            const receipt = createExecutionReceipt({
-              taskID: key,
-              agent: step.agent,
-              files: step.mutatedFiles.map((f) => ({ path: f, content: `${key}:${f}:${now}` })),
-              testSlice: { command, exitCode: 0, durationMs },
-            })
-            step.receiptId = receipt.receiptId
-            writeStepLedger(cwd, store)
-            return jsonResult({ ok: true, verified: true, receiptId: receipt.receiptId, step })
-          }
-
-          const reflex = stepReflex.evaluate(key, step.agent, [
-            {
-              file: step.mutatedFiles[0] ?? key,
-              error: `Verification command "${command}" failed with exit code ${exitCode}`,
-            },
-          ])
-          let rollbackResult: { restoredTree?: string; ok?: boolean } | undefined
-          if (reflex.action === 'escalate') {
-            step.state = 'blocked'
-            if (input.autoRollback !== false && step.baselineTree) {
-              const rb = await restoreGitCheckpoint(cwd, step.baselineTree)
-              rollbackResult = { restoredTree: step.baselineTree, ok: rb.ok }
-              if (rb.ok) {
-                step.state = 'rolled_back'
-                step.rolledBackAt = nowIso
-              }
-              getSharedBus().emit('step:rollback', {
-                stepKey: key,
-                reason: reflex.reason,
-                restoredTree: step.baselineTree,
-                success: rb.ok,
-                timestamp: Date.now(),
+            if (exitCode === 0) {
+              stepReflex.evaluate(key, entry.agent, [])
+              const receipt = createExecutionReceipt({
+                taskID: key,
+                agent: entry.agent,
+                files: entry.mutatedFiles.map((f) => ({ path: f, content: `${key}:${f}:${now}` })),
+                testSlice: { command, exitCode: 0, durationMs },
               })
+              entry.receiptId = receipt.receiptId
+              delete entry.blockedBy
+              delete entry.cascadeReason
+              return { kind: 'verified' as const, receiptId: receipt.receiptId, step: entry }
             }
+
+            const reflex = stepReflex.evaluate(key, entry.agent, [
+              {
+                file: entry.mutatedFiles[0] ?? key,
+                error: `Verification command "${command}" failed with exit code ${exitCode}`,
+              },
+            ])
+            if (reflex.action === 'escalate') {
+              entry.state = 'blocked'
+              return {
+                kind: 'escalate' as const,
+                reflex,
+                step: entry,
+                baselineTree: entry.baselineTree,
+              }
+            }
+            return { kind: 'failed' as const, reflex, step: entry }
+          })
+          if (outcome.kind === 'missing') {
+            return jsonResult({ ok: false, error: `Step "${key}" is not initialized` })
           }
-          writeStepLedger(cwd, store)
+          if (outcome.kind === 'verified') {
+            return jsonResult({
+              ok: true,
+              verified: true,
+              receiptId: outcome.receiptId,
+              step: outcome.step,
+            })
+          }
+          if (outcome.kind === 'failed') {
+            return jsonResult({
+              ok: false,
+              verified: false,
+              reflex: outcome.reflex,
+              step: outcome.step,
+            })
+          }
+
+          // Reflex escalation: bounded retries are exhausted. Cascade the
+          // invalidation like an explicit rollback so dependents never keep a
+          // stale "ready" state.
+          const cascadeReason = `Step "${key}" exhausted reflexive retries; dependent invalidated by cascade`
+          let rollbackResult: { restoredTree?: string; ok?: boolean } | undefined
+          let blocked: string[] = []
+          if (input.autoRollback !== false && outcome.baselineTree) {
+            const rb = await restoreGitCheckpoint(cwd, outcome.baselineTree)
+            rollbackResult = { restoredTree: outcome.baselineTree, ok: rb.ok }
+            const patched = updateStepLedger(cwd, (ledger) => {
+              const entry = ledger.steps[key]
+              if (!entry) return { step: undefined, blocked: [] as string[] }
+              if (rb.ok) {
+                entry.state = 'rolled_back'
+                entry.rolledBackAt = nowIso
+              } else {
+                entry.state = 'blocked'
+              }
+              entry.updatedAt = nowIso
+              const invalidated = applyCascade(ledger, key, cascadeReason, nowIso)
+              return { step: entry, blocked: invalidated.map((item) => item.stepKey) }
+            })
+            blocked = patched.blocked
+            getSharedBus().emit('step:rollback', {
+              stepKey: key,
+              reason: outcome.reflex.reason,
+              restoredTree: outcome.baselineTree,
+              success: rb.ok,
+              timestamp: Date.now(),
+            })
+            const latest = readStepLedger(cwd)
+            for (const blockedKey of blocked) emitBlocked(blockedKey, latest.steps[blockedKey])
+            return jsonResult({
+              ok: false,
+              verified: false,
+              reflex: outcome.reflex,
+              ...(rollbackResult ? { rollback: rollbackResult } : {}),
+              step: patched.step ?? outcome.step,
+              ...(blocked.length > 0 ? { blocked } : {}),
+            })
+          }
+
+          const patched = updateStepLedger(cwd, (ledger) => {
+            const entry = ledger.steps[key]
+            if (!entry) return { step: undefined, blocked: [] as string[] }
+            entry.state = 'blocked'
+            entry.updatedAt = nowIso
+            const invalidated = applyCascade(ledger, key, cascadeReason, nowIso)
+            return { step: entry, blocked: invalidated.map((item) => item.stepKey) }
+          })
+          const latest = readStepLedger(cwd)
+          for (const blockedKey of patched.blocked) {
+            emitBlocked(blockedKey, latest.steps[blockedKey])
+          }
           return jsonResult({
             ok: false,
             verified: false,
-            reflex,
-            ...(rollbackResult ? { rollback: rollbackResult } : {}),
-            step,
+            reflex: outcome.reflex,
+            step: patched.step ?? outcome.step,
+            ...(patched.blocked.length > 0 ? { blocked: patched.blocked } : {}),
           })
         }
 
         if (action === 'complete_step') {
-          const gate = canTransitionStepToDone(step)
-          if (!gate.allowed) {
-            return jsonResult({ ok: false, error: gate.reason, step })
+          const outcome = updateStepLedger(cwd, (ledger) => {
+            const entry = ledger.steps[key]
+            if (!entry) return { kind: 'missing' as const }
+            const gate = canTransitionStepToDone(entry)
+            if (!gate.allowed) return { kind: 'refused' as const, reason: gate.reason, step: entry }
+            const readyBefore = new Set(
+              readyStepKeys(Object.values(ledger.steps) as DependencyNode[]),
+            )
+            entry.state = 'done'
+            entry.updatedAt = nowIso
+            delete entry.blockedBy
+            delete entry.cascadeReason
+            const readyAfter = readyStepKeys(Object.values(ledger.steps) as DependencyNode[])
+            const unlocked = readyAfter.filter((dep) => dep !== key && !readyBefore.has(dep))
+            return { kind: 'done' as const, step: entry, unlocked }
+          })
+          if (outcome.kind === 'missing') {
+            return jsonResult({ ok: false, error: `Step "${key}" is not initialized` })
           }
-          step.state = 'done'
-          step.updatedAt = nowIso
-          writeStepLedger(cwd, store)
+          if (outcome.kind === 'refused') {
+            return jsonResult({ ok: false, error: outcome.reason, step: outcome.step })
+          }
+
           const callerSidDone =
             typeof (context as { sessionID?: unknown } | undefined)?.sessionID === 'string'
               ? (context as { sessionID: string }).sessionID
@@ -683,9 +1167,26 @@ export function createStepLedgerTool(
             }
           ).__pantheonFileLeases?.releaseFileLease
           if (callerSidDone && releaseHookDone) {
-            await releaseHookDone({ sessionID: callerSidDone, holder: step.agent })
+            await releaseHookDone({ sessionID: callerSidDone, holder: outcome.step.agent })
           }
-          return jsonResult({ ok: true, status: 'done', receiptId: step.receiptId, step })
+          const latest = readStepLedger(cwd)
+          for (const dependent of outcome.unlocked) {
+            const dependentEntry = latest.steps[dependent]
+            if (!dependentEntry) continue
+            getSharedBus().emit('step:unlocked', {
+              stepKey: dependent,
+              unlockedBy: key,
+              dependsOn: [...(dependentEntry.dependsOn ?? [])],
+              timestamp: Date.now(),
+            })
+          }
+          return jsonResult({
+            ok: true,
+            status: 'done',
+            receiptId: outcome.step.receiptId,
+            step: outcome.step,
+            ...(outcome.unlocked.length > 0 ? { unlocked: outcome.unlocked } : {}),
+          })
         }
 
         return jsonResult({ ok: false, error: `Unsupported action: ${action}` })

@@ -36,7 +36,8 @@ with zero external Python dependency, automatically available in any workspace v
   plus comment-aware AST matching/rewriting (`$VAR` / `$$$ARGS`) confined to workspace bounds.
 - **Mechanical gates, atomic steps & agent forge:** `pantheon_step_ledger` (`init_step`,
   `record_reproduction`, `record_mutation`, `record_verification`, `rollback_step`,
-  `complete_step`, `status` with isolated temp-index git checkpoints and bugfix `RED` gates),
+  `complete_step`, `status` with isolated temp-index git checkpoints and bugfix `RED` gates,
+  plus `dependsOn` prerequisites — see [Step dependencies](#step-dependencies-and-readiness)),
   `pantheon_review_verdict` (typed `@themis` verdict + bounded `ctx.session.synthetic` remediation),
   `pantheon_deepwork`, `pantheon_agent_forge` (including `detect_stack`), and `pantheon_skill_search`.
 - **Editing, LSP diagnostics, telemetry & routing:** `hashline_edit` (workspace-confined
@@ -48,6 +49,45 @@ with zero external Python dependency, automatically available in any workspace v
 - **Host-conditional tools:** `vision_describe` when the host exposes its model catalog,
   and `pantheon_bounded_read` when the host exposes its permission and session APIs
   (root Zeus sessions only).
+
+## Step dependencies and readiness
+
+A step may declare prerequisites with `dependsOn`:
+
+```json
+{
+  "action": "init_step",
+  "stepKey": "b-tests",
+  "objective": "Add the ledger dependency tests",
+  "agent": "hermes",
+  "dependsOn": ["a-schema"]
+}
+```
+
+- **Validation is mechanical.** Unknown keys (`dependency_not_found`, naming every
+  offending key), self-dependencies (`self_dependency`), and cycles
+  (`cycle_detected` with the canonical path, e.g. `a -> c -> b -> a`) are refused;
+  duplicates are deduped. A dangling dependency is never silently dropped.
+- **States.** `init_step` stores `pending` when any dependency is not `done`, and
+  `in_progress` otherwise — so steps without `dependsOn` behave exactly as before.
+  A `pending` step becomes `in_progress` when `execute_step`/`spawn_ephemeral`
+  launches it.
+- **Readiness.** `ready(k) = state(k) === 'pending' && dependsOn(k).length > 0 &&
+  every dependency is done`. Completing the last dependency emits `step:unlocked`
+  for each newly-ready dependent, and `status` returns
+  `graph: { waves, cycles, ready, unmet, dangling }` — `waves` are the parallel
+  launch levels (`[[a], [b, c]]` for two independent branches).
+- **Refusals.** `execute_step`/`spawn_ephemeral` refuse with `dependencies_unmet`
+  (`unmet: [...]`) or `step_blocked` (`blockedBy`) and create no sub-session.
+- **Rollback cascade.** `rollback_step` refuses (`dependents_done`) while a
+  transitive dependent is `done`. `cascade: true` blocks dependents with
+  `blockedBy` + an explicit `cascadeReason`, emits `step:blocked`, and returns the
+  invalidated `receiptId`s. The reflex-escalation path applies the same cascade.
+- **Concurrency.** The ledger is a single JSON file, so every mutation goes through
+  `updateStepLedger`: lock file `.pantheon/ledger/.step-ledger.lock`
+  (`open(..., 'wx')`, 20 × 25 ms retry, stale-break after 10 s) plus a
+  per-process `*.tmp.<pid>` file and `renameSync`. Parallel waves never overwrite
+  each other's entries.
 
 ## Per-agent MCP permissions
 
