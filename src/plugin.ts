@@ -2455,6 +2455,7 @@ function extractSubagentLifecycleInfo(
     input?: unknown
     sessionID?: unknown
     callID?: unknown
+    id?: unknown
   }
   const tool = typeof record.tool === 'string' ? record.tool.trim().toLowerCase() : ''
   if (tool !== 'task' && tool !== 'subagent') return undefined
@@ -2471,7 +2472,12 @@ function extractSubagentLifecycleInfo(
   const agent = rawAgent.trim().toLowerCase() || 'subagent'
   const sessionID =
     typeof record.sessionID === 'string' && record.sessionID ? record.sessionID : undefined
-  const callID = typeof record.callID === 'string' && record.callID ? record.callID : undefined
+  const callID =
+    typeof record.callID === 'string' && record.callID
+      ? record.callID
+      : typeof record.id === 'string' && record.id
+        ? record.id
+        : undefined
   const description =
     typeof input.description === 'string' && input.description.trim()
       ? input.description.trim().slice(0, 120)

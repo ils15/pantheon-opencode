@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { createComponent, createElement, createTextNode, effect, insert, insertNode, memo, mergeProps, setProp, spread } from "@opentui/solid";
 import { execFile } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -7,7 +8,9 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { Plugin } from "@opencode/plugin/tui";
 import { ErrorBoundary, For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount } from "solid-js";
 import { fileURLToPath } from "node:url";
-import { DatabaseSync } from "node:sqlite";
+//#region \0rolldown/runtime.js
+var __require = /* #__PURE__ */ (() => createRequire(import.meta.url))();
+//#endregion
 //#region src/mermaid-ascii.ts
 function cleanLabel(raw) {
 	return raw.replace(/<br\s*\/?>/gi, " / ").replace(/^["'`]|["'`]$/g, "").replace(/\s+/g, " ").trim();
@@ -4804,6 +4807,10 @@ function buildJ1Tab(env, disabledByOverride, languagePref) {
 * Always migrates unmigrated legacy context/memory/goals BEFORE deleting obsolete stores,
 * and NEVER touches user-created custom agents or custom user skills.
 */
+function createSqliteDb(dbPath, options) {
+	const { DatabaseSync } = (typeof __require === "function" ? __require : createRequire(import.meta.url))("node:sqlite");
+	return options ? new DatabaseSync(dbPath, options) : new DatabaseSync(dbPath);
+}
 const SAFE_SEGMENT_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
 const CANONICAL_AGENT_MD_FILES = Object.freeze([
 	"aphrodite.md",
@@ -5435,7 +5442,7 @@ function collectScopeAudit(scope, baseRoot, configRoot, options) {
 	}
 	const canonicalMemDb = join(pantheonDir, "memory", "memory.db");
 	if (existsSync(canonicalMemDb)) try {
-		const db = new DatabaseSync(canonicalMemDb, { readOnly: true });
+		const db = createSqliteDb(canonicalMemDb, { readOnly: true });
 		const hasLegacyVec = [
 			"memories_vec",
 			"vec_memories",
@@ -5548,7 +5555,7 @@ function collectScopeAudit(scope, baseRoot, configRoot, options) {
 }
 function ensureCanonicalMemoryDb(dbPath) {
 	mkdirSync(dirname(dbPath), { recursive: true });
-	const db = new DatabaseSync(dbPath);
+	const db = createSqliteDb(dbPath);
 	db.exec(`
     PRAGMA busy_timeout = 3000;
     PRAGMA journal_mode = WAL;
@@ -5588,7 +5595,7 @@ function migrateScopeBeforeDelete(baseRoot) {
 	const flatMemDbPath = join(pantheonDir, "memory.db");
 	const canonicalMemPath = join(pantheonDir, "memory", "memory.db");
 	if (existsSync(flatMemDbPath)) try {
-		const src = new DatabaseSync(flatMemDbPath, { readOnly: true });
+		const src = createSqliteDb(flatMemDbPath, { readOnly: true });
 		const dst = ensureCanonicalMemoryDb(canonicalMemPath);
 		if (tableExists(src, "memories")) {
 			const rows = src.prepare("SELECT namespace, key, value, created_at FROM memories").all();
@@ -5633,7 +5640,7 @@ function migrateScopeBeforeDelete(baseRoot) {
 		const dbPath = join(persDir, dbName);
 		if (!existsSync(dbPath)) continue;
 		try {
-			const db = new DatabaseSync(dbPath, { readOnly: true });
+			const db = createSqliteDb(dbPath, { readOnly: true });
 			for (const tbl of [
 				"kv",
 				"kv_store",

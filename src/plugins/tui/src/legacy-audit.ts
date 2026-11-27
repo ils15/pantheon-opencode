@@ -25,8 +25,15 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs'
+import { createRequire } from 'node:module'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
+import type { DatabaseSync as DatabaseSyncType } from 'node:sqlite'
+
+function createSqliteDb(dbPath: string, options?: { readOnly?: boolean }): DatabaseSyncType {
+  const req = typeof require === 'function' ? require : createRequire(import.meta.url)
+  const { DatabaseSync } = req('node:sqlite') as typeof import('node:sqlite')
+  return options ? new DatabaseSync(dbPath, options) : new DatabaseSync(dbPath)
+}
 
 export type LegacyScope = 'global' | 'project'
 export type LegacyCategory =
@@ -774,7 +781,7 @@ function isConfinedWithin(rootDir: string, targetPath: string): boolean {
   }
 }
 
-function countTableRows(db: DatabaseSync, tableName: string): number {
+function countTableRows(db: DatabaseSyncType, tableName: string): number {
   try {
     const row = db
       .prepare(`SELECT count(*) AS cnt FROM "${tableName.replace(/"/g, '""')}"`)
@@ -785,7 +792,7 @@ function countTableRows(db: DatabaseSync, tableName: string): number {
   }
 }
 
-function tableExists(db: DatabaseSync, name: string): boolean {
+function tableExists(db: DatabaseSyncType, name: string): boolean {
   try {
     const row = db
       .prepare("SELECT name FROM sqlite_master WHERE type IN ('table','view') AND name = ?")
@@ -918,7 +925,7 @@ function collectScopeAudit(
   const canonicalMemDb = join(pantheonDir, 'memory', 'memory.db')
   if (existsSync(canonicalMemDb)) {
     try {
-      const db = new DatabaseSync(canonicalMemDb, { readOnly: true })
+      const db = createSqliteDb(canonicalMemDb, { readOnly: true })
       const legacyVecTables = [
         'memories_vec',
         'vec_memories',
@@ -1162,9 +1169,9 @@ function collectScopeAudit(
   return { items, unmigratedStores }
 }
 
-function ensureCanonicalMemoryDb(dbPath: string): DatabaseSync {
+function ensureCanonicalMemoryDb(dbPath: string): DatabaseSyncType {
   mkdirSync(dirname(dbPath), { recursive: true })
-  const db = new DatabaseSync(dbPath)
+  const db = createSqliteDb(dbPath)
   db.exec(`
     PRAGMA busy_timeout = 3000;
     PRAGMA journal_mode = WAL;
@@ -1208,7 +1215,7 @@ function migrateScopeBeforeDelete(baseRoot: string): number {
   const canonicalMemPath = join(pantheonDir, 'memory', 'memory.db')
   if (existsSync(flatMemDbPath)) {
     try {
-      const src = new DatabaseSync(flatMemDbPath, { readOnly: true })
+      const src = createSqliteDb(flatMemDbPath, { readOnly: true })
       const dst = ensureCanonicalMemoryDb(canonicalMemPath)
       if (tableExists(src, 'memories')) {
         const rows = src
@@ -1275,7 +1282,7 @@ function migrateScopeBeforeDelete(baseRoot: string): number {
     const dbPath = join(persDir, dbName)
     if (!existsSync(dbPath)) continue
     try {
-      const db = new DatabaseSync(dbPath, { readOnly: true })
+      const db = createSqliteDb(dbPath, { readOnly: true })
       for (const tbl of ['kv', 'kv_store', 'context', 'checkpoints', 'sessions']) {
         if (!tableExists(db, tbl) || countTableRows(db, tbl) === 0) continue
         const cols = db.prepare(`PRAGMA table_info(${tbl})`).all() as Array<{ name: string }>
