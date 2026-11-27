@@ -115,6 +115,7 @@ import {
   writeActivePreset,
   writeConfiguredVisionModel,
 } from './preset-state'
+import { resolveLanguage } from './settings-i18n'
 import {
   ACCENT_COLORS_CYCLE,
   applyTuiRow,
@@ -1549,6 +1550,14 @@ const [activeDirectory, setActiveDirectory] = createSignal('')
 const [uiError, setUiError] = createSignal<string | null>(null)
 const [uiNotice, setUiNotice] = createSignal<string | null>(null)
 
+function guiLang(): 'pt-BR' | 'en' {
+  return resolveLanguage(sharedSnapshot().tuiPrefs.layout?.language)
+}
+
+function tr(en: string, pt: string): string {
+  return guiLang() === 'pt-BR' ? pt : en
+}
+
 function resolveActiveDirectory(ctx: SetupContext<any>, explicit?: () => string): string {
   const direct = explicit?.().trim()
   if (direct) return direct
@@ -1689,7 +1698,7 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
         </div>
         <div style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
           <span style={{ opacity: 0.8 }}>
-            {`${sharedSnapshot().activeJobs.filter((j) => j.status === 'running').length} active · $${totalCost().toFixed(2)}`}
+            {`${sharedSnapshot().activeJobs.filter((j) => j.status === 'running').length} ${tr('active', 'ativos')} · $${totalCost().toFixed(2)}`}
           </span>
           <button
             type="button"
@@ -1703,7 +1712,7 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
               cursor: 'pointer',
             }}
           >
-            Refresh
+            {tr('Refresh', 'Atualizar')}
           </button>
         </div>
       </div>
@@ -1747,10 +1756,13 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
       >
         {(
           [
-            ['topology', 'Topology & Timeline'],
-            ['board', `Agora Board (${sharedSnapshot().messages.length})`],
-            ['ephemeral', `Ephemeral & Bots (${sharedSnapshot().activeJobs.length})`],
-            ['settings', 'Settings & Cost'],
+            ['topology', tr('Topology & Timeline', 'Topologia & Linha do Tempo')],
+            ['board', `${tr('Agora Board', 'Board Agora')} (${sharedSnapshot().messages.length})`],
+            [
+              'ephemeral',
+              `${tr('Ephemeral & Bots', 'Efêmeros & Bots')} (${sharedSnapshot().activeJobs.length})`,
+            ],
+            ['settings', tr('Settings & Cost', 'Configurações & Custo')],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -1795,8 +1807,8 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
               />
               <span style={{ opacity: 0.75 }}>
                 {scrubberSeq() === null
-                  ? `#${maxSeq()} · Live`
-                  : `#${scrubberSeq()} / ${maxSeq()} · Replay`}
+                  ? `#${maxSeq()} · ${tr('Live', 'Ao vivo')}`
+                  : `#${scrubberSeq()} / ${maxSeq()} · ${tr('Replay', 'Replay')}`}
               </span>
             </div>
             <div style={{ display: 'flex', gap: '6px' }}>
@@ -1812,7 +1824,7 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
                   cursor: 'pointer',
                 }}
               >
-                DAG Pillars
+                {tr('DAG Pillars', 'Pilares DAG')}
               </button>
               <button
                 type="button"
@@ -1826,7 +1838,7 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
                   cursor: 'pointer',
                 }}
               >
-                Timeline
+                {tr('Timeline', 'Linha do Tempo')}
               </button>
             </div>
           </div>
@@ -1863,7 +1875,7 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
             }
           >
             <svg viewBox="0 0 640 200" style={{ width: '100%', height: '200px' }}>
-              <title>Olympus Topology DAG</title>
+              <title>{tr('Olympus Topology DAG', 'Topologia Olympus (DAG)')}</title>
               <rect
                 x="245"
                 y="10"
@@ -1882,7 +1894,7 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
                 font-size="12"
                 font-weight="600"
               >
-                zeus (root)
+                {tr('zeus (root)', 'zeus (raiz)')}
               </text>
               <For each={uniqueAgents().filter((a) => a !== 'zeus')}>
                 {(agent, idx) => {
@@ -1925,7 +1937,7 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
           <div style={{ display: 'flex', gap: '6px' }}>
             <input
               type="text"
-              placeholder="Channel"
+              placeholder={tr('Channel', 'Canal')}
               value={draftChannel()}
               onInput={(e) => setDraftChannel(e.currentTarget.value)}
               style={{
@@ -1939,7 +1951,10 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
             />
             <input
               type="text"
-              placeholder="Post message to Agora Board (@agent)..."
+              placeholder={tr(
+                'Post message to Agora Board (@agent)...',
+                'Enviar mensagem ao Board Agora (@agente)...',
+              )}
               value={draftMsg()}
               onInput={(e) => setDraftMsg(e.currentTarget.value)}
               onKeyDown={(e) => {
@@ -1967,12 +1982,19 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
                 cursor: 'pointer',
               }}
             >
-              Send
+              {tr('Send', 'Enviar')}
             </button>
           </div>
           <For
             each={[...visibleMessages()].reverse().slice(0, 20)}
-            fallback={<div style={{ opacity: 0.6 }}>No board messages recorded yet.</div>}
+            fallback={
+              <div style={{ opacity: 0.6 }}>
+                {tr(
+                  'No board messages recorded yet.',
+                  'Nenhuma mensagem registrada no board ainda.',
+                )}
+              </div>
+            }
           >
             {(msg) => (
               <div
@@ -2000,7 +2022,12 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
             each={sharedSnapshot().activeJobs}
             fallback={
               <Show when={subagentEvents().length === 0}>
-                <div style={{ opacity: 0.6 }}>No active background jobs or subagent runs.</div>
+                <div style={{ opacity: 0.6 }}>
+                  {tr(
+                    'No active background jobs or subagent runs.',
+                    'Nenhum job em segundo plano ou subagente ativo.',
+                  )}
+                </div>
               </Show>
             }
           >
@@ -2121,14 +2148,26 @@ function PantheonSettingsControls(props: {
       )
       const res = JSON.parse(raw) as { ok?: boolean; error?: string }
       if (res.ok === false) {
-        setUiError(res.error ?? 'Failed to save settings')
+        setUiError(res.error ?? tr('Failed to save settings', 'Falha ao salvar configurações'))
         return
       }
       setUiError(null)
+      if (patch.tuiPref && typeof patch.tuiPref === 'object') {
+        const { id, value } = patch.tuiPref as { id: string; value: string }
+        setSharedSnapshot((prev) => {
+          const copy = JSON.parse(JSON.stringify(prev)) as GuiSnapshot
+          applyTuiRow(copy.tuiPrefs, id, value)
+          return copy
+        })
+      }
       if (notice) setUiNotice(notice)
       await props.onSaved()
     } catch (err) {
-      setUiError(err instanceof Error ? err.message : 'Settings IPC unavailable')
+      setUiError(
+        err instanceof Error
+          ? err.message
+          : tr('Settings IPC unavailable', 'IPC de configurações indisponível'),
+      )
     }
   }
 
@@ -2136,7 +2175,12 @@ function PantheonSettingsControls(props: {
     if (busyAction()) return
     if (action === 'legacy-purge' && !confirmPurge()) {
       setConfirmPurge(true)
-      setUiNotice('Armed: click "Confirm Purge" again to erase local .pantheon stores')
+      setUiNotice(
+        tr(
+          'Armed: click "Confirm Purge" again to erase local .pantheon stores',
+          'Armado: clique em "Confirmar Limpeza Total" novamente para apagar os dados locais de .pantheon',
+        ),
+      )
       return
     }
     setConfirmPurge(false)
@@ -2151,14 +2195,18 @@ function PantheonSettingsControls(props: {
       )
       const res = JSON.parse(raw) as { ok?: boolean; error?: string; message?: string }
       if (res.ok === false) {
-        setUiError(res.error ?? 'Action failed')
+        setUiError(res.error ?? tr('Action failed', 'Falha na ação'))
       } else {
         setUiError(null)
         if (res.message) setUiNotice(res.message)
       }
       await props.onSaved()
     } catch (err) {
-      setUiError(err instanceof Error ? err.message : 'Action IPC unavailable')
+      setUiError(
+        err instanceof Error
+          ? err.message
+          : tr('Action IPC unavailable', 'IPC de ação indisponível'),
+      )
     } finally {
       setBusyAction(null)
     }
@@ -2185,7 +2233,7 @@ function PantheonSettingsControls(props: {
           color: current ? '#4ade80' : '#f87171',
         }}
       >
-        {current ? 'enabled' : 'disabled'}
+        {current ? tr('enabled', 'ativado') : tr('disabled', 'desativado')}
       </button>
     </div>
   )
@@ -2253,14 +2301,14 @@ function PantheonSettingsControls(props: {
       <div style={{ display: 'flex', 'flex-wrap': 'wrap', gap: '4px' }}>
         {(
           [
-            ['overview', 'Overview & Cost'],
-            ['gates', 'Gates'],
-            ['preset', 'Presets & Models'],
-            ['decision', 'Decision (Jev)'],
-            ['autonomy', 'Autonomy & J1'],
-            ['tui', 'TUI & Layout'],
-            ['updates', 'Updates & Cleanup'],
-            ['doctor', 'Doctor & About'],
+            ['overview', tr('Overview & Cost', 'Visão Geral & Custo')],
+            ['gates', tr('Gates', 'Portões (Gates)')],
+            ['preset', tr('Presets & Models', 'Presets & Modelos')],
+            ['decision', tr('Decision (Jev)', 'Decisão (Jev)')],
+            ['autonomy', tr('Autonomy & J1', 'Autonomia & J1')],
+            ['tui', tr('TUI & Layout', 'TUI & Layout')],
+            ['updates', tr('Updates & Cleanup', 'Atualizações & Limpeza')],
+            ['doctor', tr('Doctor & About', 'Doctor & Sobre')],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -2279,9 +2327,11 @@ function PantheonSettingsControls(props: {
       {/* 1. Overview & Cost */}
       <Show when={section() === 'overview'}>
         <div style={cardStyle}>
-          <div style={{ 'font-weight': 600 }}>OpenCode Spend (Today / 30d)</div>
+          <div style={{ 'font-weight': 600 }}>
+            {tr('OpenCode Spend (Today / 30d)', 'Gastos OpenCode (Hoje / 30d)')}
+          </div>
           <div style={rowStyle}>
-            <span>Total Cost</span>
+            <span>{tr('Total Cost', 'Custo Total')}</span>
             <span style={{ 'font-family': 'monospace', 'font-weight': 600 }}>
               {`$${sharedSnapshot().todayCostUSD.toFixed(2)} / $${sharedSnapshot().monthCostUSD.toFixed(2)}`}
             </span>
@@ -2296,13 +2346,15 @@ function PantheonSettingsControls(props: {
                 'padding-top': '6px',
               }}
             >
-              <span style={{ opacity: 0.75, 'font-size': '11px' }}>30d Model Breakdown</span>
+              <span style={{ opacity: 0.75, 'font-size': '11px' }}>
+                {tr('30d Model Breakdown', 'Detalhamento por Modelo (30d)')}
+              </span>
               <For each={sharedSnapshot().modelSpend}>
                 {(m) => (
                   <div style={{ ...rowStyle, 'font-size': '11px', 'font-family': 'monospace' }}>
                     <span style={{ opacity: 0.9 }}>{`${m.providerID}/${m.modelID}`}</span>
                     <span style={{ opacity: 0.75 }}>
-                      {`${(m.tokens / 1000).toFixed(1)}k tok · ${m.estimatedUsd !== undefined ? `$${m.estimatedUsd.toFixed(2)}` : 'unpriced'}`}
+                      {`${(m.tokens / 1000).toFixed(1)}k tok · ${m.estimatedUsd !== undefined ? `$${m.estimatedUsd.toFixed(2)}` : tr('unpriced', 'sem preço')}`}
                     </span>
                   </div>
                 )}
@@ -2313,7 +2365,7 @@ function PantheonSettingsControls(props: {
 
         <div style={cardStyle}>
           <div style={rowStyle}>
-            <span>Auto-Permissions Gate</span>
+            <span>{tr('Auto-Permissions Gate', 'Portão Auto-Permissões')}</span>
             <div style={{ display: 'flex', gap: '4px' }}>
               {(['shadow', 'enforce', 'off'] as const).map((mode) => (
                 <button
@@ -2327,7 +2379,7 @@ function PantheonSettingsControls(props: {
             </div>
           </div>
           <div style={rowStyle}>
-            <span>Cockpit Auto-Open</span>
+            <span>{tr('Cockpit Auto-Open', 'Abrir Cockpit Automaticamente')}</span>
             <button
               type="button"
               onClick={() => void savePatch({ cockpitAutoOpen: !sharedSnapshot().cockpitAutoOpen })}
@@ -2336,11 +2388,13 @@ function PantheonSettingsControls(props: {
                 color: sharedSnapshot().cockpitAutoOpen ? '#4ade80' : '#f87171',
               }}
             >
-              {sharedSnapshot().cockpitAutoOpen ? 'enabled' : 'disabled'}
+              {sharedSnapshot().cockpitAutoOpen
+                ? tr('enabled', 'ativado')
+                : tr('disabled', 'desativado')}
             </button>
           </div>
           <div style={rowStyle}>
-            <span>Show Todo Block in Cockpit</span>
+            <span>{tr('Show Todo Block in Cockpit', 'Mostrar Bloco Todo no Cockpit')}</span>
             <button
               type="button"
               onClick={() => void savePatch({ cockpitShowTodo: !sharedSnapshot().cockpitShowTodo })}
@@ -2349,13 +2403,15 @@ function PantheonSettingsControls(props: {
                 color: sharedSnapshot().cockpitShowTodo ? '#4ade80' : '#f87171',
               }}
             >
-              {sharedSnapshot().cockpitShowTodo ? 'enabled' : 'disabled'}
+              {sharedSnapshot().cockpitShowTodo
+                ? tr('enabled', 'ativado')
+                : tr('disabled', 'desativado')}
             </button>
           </div>
         </div>
 
         <div style={{ opacity: 0.75, 'font-size': '11px' }}>
-          {`Preset: ${sharedSnapshot().presetProjectOverride ?? sharedSnapshot().activePreset} · Decision: ${sharedSnapshot().decisionEnabled ? sharedSnapshot().decisionMode : 'off'} · Overrides: ${sharedSnapshot().overridesCount} · Plans: ${sharedSnapshot().artifactsCount} · Jobs: ${sharedSnapshot().activeJobs.length}`}
+          {`Preset: ${sharedSnapshot().presetProjectOverride ?? sharedSnapshot().activePreset} · ${tr('Decision', 'Decisão')}: ${sharedSnapshot().decisionEnabled ? sharedSnapshot().decisionMode : tr('off', 'desligado')} · ${tr('Overrides', 'Substituições')}: ${sharedSnapshot().overridesCount} · ${tr('Plans', 'Planos')}: ${sharedSnapshot().artifactsCount} · Jobs: ${sharedSnapshot().activeJobs.length}`}
         </div>
       </Show>
 
@@ -2363,7 +2419,9 @@ function PantheonSettingsControls(props: {
       <Show when={section() === 'gates'}>
         <div style={cardStyle}>
           <div style={rowStyle}>
-            <span style={{ 'font-weight': 600 }}>Overrides Scope</span>
+            <span style={{ 'font-weight': 600 }}>
+              {tr('Overrides Scope', 'Escopo de Substituições')}
+            </span>
             <div style={{ display: 'flex', gap: '4px' }}>
               {(['project', 'global'] as const).map((sc) => (
                 <button
@@ -2371,14 +2429,19 @@ function PantheonSettingsControls(props: {
                   onClick={() => setGateScope(sc)}
                   style={pillButtonStyle(gateScope() === sc)}
                 >
-                  {sc === 'project' ? 'project (.pantheon)' : 'global (~/.config)'}
+                  {sc === 'project'
+                    ? tr('project (.pantheon)', 'projeto (.pantheon)')
+                    : tr('global (~/.config)', 'global (~/.config)')}
                 </button>
               ))}
             </div>
           </div>
           <Show when={gateScope() === 'global' && sharedSnapshot().corruptGlobalOverrides}>
             <span style={{ color: '#fca5a5', 'font-size': '11px' }}>
-              Global overrides file is unreadable — repair with `doctor --fix` before editing.
+              {tr(
+                'Global overrides file is unreadable — repair with `doctor --fix` before editing.',
+                'Arquivo global de substituições ilegível — repare com `doctor --fix` antes de editar.',
+              )}
             </span>
           </Show>
         </div>
@@ -2386,7 +2449,9 @@ function PantheonSettingsControls(props: {
         {(['install', 'runtime'] as const).map((kind) => (
           <div style={cardStyle}>
             <div style={{ 'font-weight': 600 }}>
-              {kind === 'install' ? 'Install Skills' : 'Runtime Gates'}
+              {kind === 'install'
+                ? tr('Install Skills', 'Skills Instaladas')
+                : tr('Runtime Gates', 'Portões de Execução')}
             </div>
             <For each={scopedBehaviors().filter((b) => b.kind === kind)}>
               {(beh) => {
@@ -2397,7 +2462,9 @@ function PantheonSettingsControls(props: {
                       <span>
                         {beh.title}
                         <Show when={beh.projectOverride}>
-                          <span style={{ opacity: 0.65, 'font-size': '10px' }}> (project)</span>
+                          <span style={{ opacity: 0.65, 'font-size': '10px' }}>
+                            {tr(' (project)', ' (projeto)')}
+                          </span>
                         </Show>
                       </span>
                       <span style={{ opacity: 0.65, 'font-size': '10px' }}>{beh.description}</span>
@@ -2421,7 +2488,7 @@ function PantheonSettingsControls(props: {
                         color: beh.enabled ? '#4ade80' : '#f87171',
                       }}
                     >
-                      {beh.enabled ? 'enabled' : 'disabled'}
+                      {beh.enabled ? tr('enabled', 'ativado') : tr('disabled', 'desativado')}
                     </button>
                   </div>
                 )
@@ -2435,10 +2502,12 @@ function PantheonSettingsControls(props: {
       <Show when={section() === 'preset'}>
         <div style={cardStyle}>
           <div style={rowStyle}>
-            <span style={{ 'font-weight': 600 }}>Model Preset (Global)</span>
+            <span style={{ 'font-weight': 600 }}>
+              {tr('Model Preset (Global)', 'Preset de Modelo (Global)')}
+            </span>
             <span style={{ opacity: 0.7, 'font-family': 'monospace', 'font-size': '11px' }}>
               {sharedSnapshot().presetProjectOverride
-                ? `project wins: ${sharedSnapshot().presetProjectOverride}`
+                ? `${tr('project wins', 'projeto prevalece')}: ${sharedSnapshot().presetProjectOverride}`
                 : sharedSnapshot().activePreset}
             </span>
           </div>
@@ -2446,7 +2515,12 @@ function PantheonSettingsControls(props: {
             {[PRESET_NONE, ...PRESET_NAMES].map((preset) => (
               <button
                 type="button"
-                onClick={() => void savePatch({ preset }, `Global preset set to ${preset}`)}
+                onClick={() =>
+                  void savePatch(
+                    { preset },
+                    tr(`Global preset set to ${preset}`, `Preset global definido para ${preset}`),
+                  )
+                }
                 style={pillButtonStyle(sharedSnapshot().activePreset === preset)}
               >
                 {preset}
@@ -2457,7 +2531,9 @@ function PantheonSettingsControls(props: {
 
         <div style={cardStyle}>
           <div style={rowStyle}>
-            <span style={{ 'font-weight': 600 }}>Vision Model (vision_describe)</span>
+            <span style={{ 'font-weight': 600 }}>
+              {tr('Vision Model (vision_describe)', 'Modelo de Visão (vision_describe)')}
+            </span>
             <span style={{ opacity: 0.7, 'font-family': 'monospace', 'font-size': '11px' }}>
               {sharedSnapshot().visionModel}
             </span>
@@ -2466,7 +2542,12 @@ function PantheonSettingsControls(props: {
             {VISION_MODEL_OPTIONS.map((vm) => (
               <button
                 type="button"
-                onClick={() => void savePatch({ visionModel: vm }, `Vision model set to ${vm}`)}
+                onClick={() =>
+                  void savePatch(
+                    { visionModel: vm },
+                    tr(`Vision model set to ${vm}`, `Modelo de visão definido para ${vm}`),
+                  )
+                }
                 style={pillButtonStyle(sharedSnapshot().visionModel === vm)}
               >
                 {vm}
@@ -2477,7 +2558,10 @@ function PantheonSettingsControls(props: {
 
         <div style={cardStyle}>
           <div style={{ 'font-weight': 600 }}>
-            Per-Agent Model Overrides (.pantheon/active-preset.json)
+            {tr(
+              'Per-Agent Model Overrides (.pantheon/active-preset.json)',
+              'Modelos por Agente (.pantheon/active-preset.json)',
+            )}
           </div>
           <For each={sharedSnapshot().agentModels}>
             {(item) => (
@@ -2488,7 +2572,9 @@ function PantheonSettingsControls(props: {
                   </span>
                   <div style={{ display: 'flex', 'align-items': 'center', gap: '6px' }}>
                     <span style={{ opacity: 0.8, 'font-family': 'monospace', 'font-size': '11px' }}>
-                      {item.model ? `${item.model} (${item.variant})` : 'preset default'}
+                      {item.model
+                        ? `${item.model} (${item.variant})`
+                        : tr('preset default', 'padrão do preset')}
                     </span>
                     <button
                       type="button"
@@ -2503,7 +2589,9 @@ function PantheonSettingsControls(props: {
                       }}
                       style={pillButtonStyle(editingAgent() === item.agent)}
                     >
-                      {editingAgent() === item.agent ? 'Cancel' : 'Edit'}
+                      {editingAgent() === item.agent
+                        ? tr('Cancel', 'Cancelar')
+                        : tr('Edit', 'Editar')}
                     </button>
                   </div>
                 </div>
@@ -2511,7 +2599,10 @@ function PantheonSettingsControls(props: {
                   <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
                     <input
                       type="text"
-                      placeholder="provider/model-id (empty = clear)"
+                      placeholder={tr(
+                        'provider/model-id (empty = clear)',
+                        'provedor/id-modelo (vazio = limpar)',
+                      )}
                       value={agentModelInput()}
                       onInput={(e) => setAgentModelInput(e.currentTarget.value)}
                       style={{
@@ -2551,12 +2642,12 @@ function PantheonSettingsControls(props: {
                         setEditingAgent(null)
                         void savePatch(
                           { agentModel: { agent, model, variant } },
-                          `Updated ${agent} model override`,
+                          tr(`Updated ${agent} model override`, `Modelo de ${agent} atualizado`),
                         )
                       }}
                       style={pillButtonStyle(true)}
                     >
-                      Save
+                      {tr('Save', 'Salvar')}
                     </button>
                   </div>
                 </Show>
@@ -2569,14 +2660,19 @@ function PantheonSettingsControls(props: {
       {/* 4. Decision Router (Jev) */}
       <Show when={section() === 'decision'}>
         <div style={cardStyle}>
-          <div style={{ 'font-weight': 600 }}>Decision Assistant (Jev)</div>
+          <div style={{ 'font-weight': 600 }}>
+            {tr('Decision Assistant (Jev)', 'Assistente de Decisão (Jev)')}
+          </div>
           <Show when={sharedSnapshot().decisionCorrupt}>
             <span style={{ color: '#fca5a5', 'font-size': '11px' }}>
-              decision-router.json is corrupt — repair via `decision-router setup-model`.
+              {tr(
+                'decision-router.json is corrupt — repair via `decision-router setup-model`.',
+                'decision-router.json está corrompido — repare via `decision-router setup-model`.',
+              )}
             </span>
           </Show>
           <div style={rowStyle}>
-            <span>Jev Assistant</span>
+            <span>{tr('Jev Assistant', 'Assistente Jev')}</span>
             <button
               type="button"
               onClick={() => void savePatch({ decisionEnabled: !sharedSnapshot().decisionEnabled })}
@@ -2585,11 +2681,13 @@ function PantheonSettingsControls(props: {
                 color: sharedSnapshot().decisionEnabled ? '#111' : 'inherit',
               }}
             >
-              {sharedSnapshot().decisionEnabled ? 'enabled' : 'disabled'}
+              {sharedSnapshot().decisionEnabled
+                ? tr('enabled', 'ativado')
+                : tr('disabled', 'desativado')}
             </button>
           </div>
           <div style={rowStyle}>
-            <span>Operation Mode</span>
+            <span>{tr('Operation Mode', 'Modo de Operação')}</span>
             <div style={{ display: 'flex', gap: '4px' }}>
               {DECISION_SELECTION_CYCLE.map((mode) => (
                 <button
@@ -2604,10 +2702,10 @@ function PantheonSettingsControls(props: {
           </div>
           <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
             <div style={rowStyle}>
-              <span>Decision Model Target</span>
+              <span>{tr('Decision Model Target', 'Modelo de Decisão Alvo')}</span>
               <span style={{ opacity: 0.7, 'font-family': 'monospace', 'font-size': '11px' }}>
                 {sharedSnapshot().decisionMode === 'local'
-                  ? 'local (on-device)'
+                  ? tr('local (on-device)', 'local (no dispositivo)')
                   : sharedSnapshot().decisionTarget}
               </span>
             </div>
@@ -2624,7 +2722,7 @@ function PantheonSettingsControls(props: {
             </div>
           </div>
           <div style={rowStyle}>
-            <span>Cloud API Egress Consent</span>
+            <span>{tr('Cloud API Egress Consent', 'Consentimento de API na Nuvem (Egress)')}</span>
             <button
               type="button"
               onClick={() => void savePatch({ decisionConsent: !sharedSnapshot().decisionConsent })}
@@ -2633,12 +2731,14 @@ function PantheonSettingsControls(props: {
                 color: sharedSnapshot().decisionConsent ? '#4ade80' : '#f87171',
               }}
             >
-              {sharedSnapshot().decisionConsent ? 'granted' : 'not granted'}
+              {sharedSnapshot().decisionConsent
+                ? tr('granted', 'permitido')
+                : tr('not granted', 'não permitido')}
             </button>
           </div>
           <Show when={sharedSnapshot().decisionCandidates.length > 0}>
             <div style={{ opacity: 0.75, 'font-size': '11px', 'font-family': 'monospace' }}>
-              {`Candidates: ${sharedSnapshot()
+              {`${tr('Candidates', 'Candidatos')}: ${sharedSnapshot()
                 .decisionCandidates.map((c) => `${c.provider}/${c.model}`)
                 .join(', ')}`}
             </div>
@@ -2646,7 +2746,9 @@ function PantheonSettingsControls(props: {
         </div>
 
         <div style={cardStyle}>
-          <div style={{ 'font-weight': 600 }}>Provider Credentials (Status Only)</div>
+          <div style={{ 'font-weight': 600 }}>
+            {tr('Provider Credentials (Status Only)', 'Credenciais de Provedores (Apenas Status)')}
+          </div>
           <For each={sharedSnapshot().credentials}>
             {(cred) => (
               <div style={rowStyle}>
@@ -2675,15 +2777,17 @@ function PantheonSettingsControls(props: {
       <Show when={section() === 'autonomy'}>
         <div style={cardStyle}>
           <div style={rowStyle}>
-            <span style={{ 'font-weight': 600 }}>Auto-Continue Loop (goal_loop)</span>
+            <span style={{ 'font-weight': 600 }}>
+              {tr('Auto-Continue Loop (goal_loop)', 'Loop de Continuação Automática (goal_loop)')}
+            </span>
             <Show when={sharedSnapshot().goalLoopRestartPending}>
               <span style={{ color: '#f59e0b', 'font-size': '11px' }}>
-                Restart OpenCode to apply
+                {tr('Restart OpenCode to apply', 'Reinicie o OpenCode para aplicar')}
               </span>
             </Show>
           </div>
           <div style={rowStyle}>
-            <span>Enabled</span>
+            <span>{tr('Enabled', 'Ativado')}</span>
             <button
               type="button"
               onClick={() =>
@@ -2694,11 +2798,13 @@ function PantheonSettingsControls(props: {
                 color: sharedSnapshot().goalLoop.enabled ? '#4ade80' : '#f87171',
               }}
             >
-              {sharedSnapshot().goalLoop.enabled ? 'enabled' : 'disabled'}
+              {sharedSnapshot().goalLoop.enabled
+                ? tr('enabled', 'ativado')
+                : tr('disabled', 'desativado')}
             </button>
           </div>
           <div style={rowStyle}>
-            <span>Max Continuations</span>
+            <span>{tr('Max Continuations', 'Limite de Continuações')}</span>
             <div style={{ display: 'flex', gap: '4px' }}>
               {MAX_CONTINUATIONS_CYCLE.map((val) => (
                 <button
@@ -2714,7 +2820,7 @@ function PantheonSettingsControls(props: {
             </div>
           </div>
           <div style={rowStyle}>
-            <span>Cooldown (ms)</span>
+            <span>{tr('Cooldown (ms)', 'Intervalo (ms)')}</span>
             <div style={{ display: 'flex', gap: '4px' }}>
               {COOLDOWN_MS_CYCLE.map((val) => (
                 <button
@@ -2730,9 +2836,11 @@ function PantheonSettingsControls(props: {
         </div>
 
         <div style={cardStyle}>
-          <div style={{ 'font-weight': 600 }}>Decision Budgets (Jev)</div>
+          <div style={{ 'font-weight': 600 }}>
+            {tr('Decision Budgets (Jev)', 'Orçamentos de Decisão (Jev)')}
+          </div>
           <div style={rowStyle}>
-            <span>Monthly Cap (USD)</span>
+            <span>{tr('Monthly Cap (USD)', 'Teto Mensal (USD)')}</span>
             <div style={{ display: 'flex', 'flex-wrap': 'wrap', gap: '4px' }}>
               {MONTHLY_USD_CYCLE.map((val) => (
                 <button
@@ -2746,7 +2854,7 @@ function PantheonSettingsControls(props: {
             </div>
           </div>
           <div style={rowStyle}>
-            <span>Per-Decision Cap</span>
+            <span>{tr('Per-Decision Cap', 'Teto por Decisão')}</span>
             <div style={{ display: 'flex', 'flex-wrap': 'wrap', gap: '4px' }}>
               {PER_DECISION_USD_CYCLE.map((val) => (
                 <button
@@ -2764,27 +2872,29 @@ function PantheonSettingsControls(props: {
         </div>
 
         <div style={cardStyle}>
-          <div style={{ 'font-weight': 600 }}>J1 Safety Risk Gate (Startup Env)</div>
+          <div style={{ 'font-weight': 600 }}>
+            {tr('J1 Safety Risk Gate (Startup Env)', 'Portão de Risco J1 (Startup Env)')}
+          </div>
           <div style={rowStyle}>
-            <span>Operation Mode</span>
+            <span>{tr('Operation Mode', 'Modo de Operação')}</span>
             <span style={{ 'font-family': 'monospace' }}>{sharedSnapshot().j1Mode}</span>
           </div>
           <div style={rowStyle}>
-            <span>Enforce Threshold</span>
+            <span>{tr('Enforce Threshold', 'Limite de Bloqueio')}</span>
             <span style={{ 'font-family': 'monospace' }}>{sharedSnapshot().j1Threshold}</span>
           </div>
           <div style={rowStyle}>
-            <span>Gate Status</span>
+            <span>{tr('Gate Status', 'Status do Portão')}</span>
             <span style={{ 'font-family': 'monospace' }}>
               {sharedSnapshot().j1DisabledByOverride
-                ? 'disabled via overrides'
+                ? tr('disabled via overrides', 'desativado via substituições')
                 : sharedSnapshot().j1Mode === 'off'
-                  ? 'off (env unset)'
-                  : 'active'}
+                  ? tr('off (env unset)', 'desligado (env não definida)')
+                  : tr('active', 'ativo')}
             </span>
           </div>
           <span style={{ opacity: 0.65, 'font-size': '10px' }}>
-            {`${J1_FLAG_ENV} / ${J1_THRESHOLD_ENV} · read once at startup`}
+            {`${J1_FLAG_ENV} / ${J1_THRESHOLD_ENV} · ${tr('read once at startup', 'lido uma vez na inicialização')}`}
           </span>
         </div>
       </Show>
@@ -2792,155 +2902,169 @@ function PantheonSettingsControls(props: {
       {/* 6. TUI & Layout Preferences */}
       <Show when={section() === 'tui'}>
         <div style={cardStyle}>
-          <div style={{ 'font-weight': 600 }}>Preset & Layout</div>
+          <div style={{ 'font-weight': 600 }}>{tr('Preset & Layout', 'Predefinição & Layout')}</div>
           {renderTuiCycle(
             'tui.layout.preset',
-            'Layout Preset',
+            tr('Layout Preset', 'Predefinição de Layout'),
             tui().layout.preset,
             LAYOUT_PRESETS_CYCLE,
           )}
           {renderTuiCycle(
             'tui.layout.separator',
-            'Separator',
+            tr('Separator', 'Separador'),
             tui().layout.separator,
             SEPARATOR_STYLES_CYCLE,
           )}
           {renderTuiCycle(
             'tui.layout.settingsView',
-            'Settings Surface',
+            tr('Settings Surface', 'Superfície de Configurações'),
             tui().layout.settingsView ?? 'docked',
             SETTINGS_VIEW_MODES,
           )}
           {renderTuiCycle(
             'tui.layout.language',
-            'Language / Idioma',
+            tr('Language / Idioma', 'Idioma / Language'),
             tui().layout.language ?? 'auto',
             LANGUAGE_CYCLE,
           )}
         </div>
 
         <div style={cardStyle}>
-          <div style={{ 'font-weight': 600 }}>Colors & Theme</div>
+          <div style={{ 'font-weight': 600 }}>{tr('Colors & Theme', 'Cores & Tema')}</div>
           {renderTuiCycle(
             'tui.theme.mode',
-            'Theme Mode',
+            tr('Theme Mode', 'Modo do Tema'),
             tui().theme?.mode ?? 'auto',
             THEME_MODES_CYCLE,
           )}
           {renderTuiCycle(
             'tui.theme.accent',
-            'Accent Color',
+            tr('Accent Color', 'Cor de Destaque'),
             tui().theme?.accent ?? 'host',
             ACCENT_COLORS_CYCLE,
           )}
         </div>
 
         <div style={cardStyle}>
-          <div style={{ 'font-weight': 600 }}>Bars & Gauges</div>
+          <div style={{ 'font-weight': 600 }}>{tr('Bars & Gauges', 'Barras & Medidores')}</div>
           {renderTuiCycle(
             'tui.sidebar.context.barShape',
-            'Bar Shape',
+            tr('Bar Shape', 'Formato da Barra'),
             tui().sidebar.context.barShape,
             BAR_SHAPES_CYCLE,
           )}
           {renderTuiCycle(
             'tui.sidebar.context.barWidth',
-            'Bar Width',
+            tr('Bar Width', 'Largura da Barra'),
             tui().sidebar.context.barWidth,
             BAR_WIDTHS_CYCLE,
           )}
           {renderTuiCycle(
             'tui.sidebar.context.gauge',
-            'Gauge Style',
+            tr('Gauge Style', 'Estilo do Medidor'),
             tui().sidebar.context.gauge,
             GAUGE_STYLES,
           )}
           {renderTuiToggle(
             'tui.sidebar.context.evenMark',
-            'Even-Use Mark (50%)',
+            tr('Even-Use Mark (50%)', 'Marca Central (50%)'),
             tui().sidebar.context.evenMark,
           )}
         </div>
 
         <div style={cardStyle}>
-          <div style={{ 'font-weight': 600 }}>Sidebar Header, Blocks & Footers</div>
+          <div style={{ 'font-weight': 600 }}>
+            {tr('Sidebar Header, Blocks & Footers', 'Cabeçalho, Blocos & Rodapés da Barra Lateral')}
+          </div>
           {renderTuiToggle(
             'tui.sidebar.header.version',
-            'Header: Version',
+            tr('Header: Version', 'Cabeçalho: Versão'),
             tui().sidebar.header.version,
           )}
           {renderTuiToggle(
             'tui.sidebar.header.preset',
-            'Header: Preset',
+            tr('Header: Preset', 'Cabeçalho: Preset'),
             tui().sidebar.header.preset,
           )}
           {renderTuiToggle(
             'tui.sidebar.header.session',
-            'Header: Session',
+            tr('Header: Session', 'Cabeçalho: Sessão'),
             tui().sidebar.header.session,
           )}
           {renderTuiToggle(
             'tui.sidebar.block.context',
-            'Block: Context',
+            tr('Block: Context', 'Bloco: Contexto'),
             tui().sidebar.blocks.context,
           )}
-          {renderTuiToggle('tui.sidebar.block.git', 'Block: Git', tui().sidebar.blocks.git)}
+          {renderTuiToggle(
+            'tui.sidebar.block.git',
+            tr('Block: Git', 'Bloco: Git'),
+            tui().sidebar.blocks.git,
+          )}
           {renderTuiToggle(
             'tui.sidebar.block.todo',
-            'Block: Todo',
+            tr('Block: Todo', 'Bloco: Tarefas (Todo)'),
             tui().sidebar.blocks.todo ?? true,
           )}
           {renderTuiToggle(
             'tui.sidebar.block.dispatch',
-            'Block: Dispatch',
+            tr('Block: Dispatch', 'Bloco: Dispatch'),
             tui().sidebar.blocks.dispatch,
           )}
           {renderTuiToggle(
             'tui.sidebar.context.tokens',
-            'Context: Tokens Row',
+            tr('Context: Tokens Row', 'Contexto: Linha de Tokens'),
             tui().sidebar.context.tokens,
           )}
           {renderTuiToggle(
             'tui.sidebar.context.spent',
-            'Context: Spent Row',
+            tr('Context: Spent Row', 'Contexto: Linha de Custo'),
             tui().sidebar.context.spent,
           )}
           {renderTuiToggle(
             'tui.sidebar.context.modelUsage',
-            'Context: Model Usage',
+            tr('Context: Model Usage', 'Contexto: Uso de Modelos'),
             tui().sidebar.context.modelUsage,
           )}
           {renderTuiToggle(
             'tui.sidebar.context.performance',
-            'Context: Performance',
+            tr('Context: Performance', 'Contexto: Desempenho'),
             tui().sidebar.context.performance,
           )}
           {renderTuiToggle(
             'tui.sidebar.context.turnCost',
-            'Context: Turn Cost',
+            tr('Context: Turn Cost', 'Contexto: Custo do Turno'),
             tui().sidebar.context.turnCost,
           )}
           {renderTuiToggle(
             'tui.sidebar.context.tokenAnatomy',
-            'Context: Token Anatomy',
+            tr('Context: Token Anatomy', 'Contexto: Anatomia de Tokens'),
             tui().sidebar.context.tokenAnatomy,
           )}
           {renderTuiToggle(
             'tui.sidebar.context.localSpend',
-            'Context: Local Spend',
+            tr('Context: Local Spend', 'Contexto: Gasto Local'),
             tui().sidebar.context.localSpend,
           )}
-          {renderTuiToggle('tui.footer.prompt', 'Footer: Prompt', tui().footer.prompt)}
-          {renderTuiToggle('tui.footer.home', 'Footer: Home Status', tui().footer.home)}
+          {renderTuiToggle(
+            'tui.footer.prompt',
+            tr('Footer: Prompt', 'Rodapé: Prompt'),
+            tui().footer.prompt,
+          )}
+          {renderTuiToggle(
+            'tui.footer.home',
+            tr('Footer: Home Status', 'Rodapé: Status Inicial'),
+            tui().footer.home,
+          )}
         </div>
       </Show>
 
       {/* 7. Updates & Legacy Cleanup */}
       <Show when={section() === 'updates'}>
         <div style={cardStyle}>
-          <div style={{ 'font-weight': 600 }}>Plugin Updates</div>
+          <div style={{ 'font-weight': 600 }}>{tr('Plugin Updates', 'Atualizações do Plugin')}</div>
           <div style={rowStyle}>
-            <span>Channel</span>
+            <span>{tr('Channel', 'Canal')}</span>
             <div style={{ display: 'flex', gap: '4px' }}>
               {(['stable', 'beta'] as const).map((ch) => (
                 <button
@@ -2954,11 +3078,11 @@ function PantheonSettingsControls(props: {
             </div>
           </div>
           <div style={rowStyle}>
-            <span>Latest Registry Version</span>
+            <span>{tr('Latest Registry Version', 'Última Versão no Registro')}</span>
             <span style={{ 'font-family': 'monospace' }}>
               {sharedSnapshot().latestVersion
                 ? `v${sharedSnapshot().latestVersion}`
-                : 'not checked'}
+                : tr('not checked', 'não verificado')}
             </span>
           </div>
           <div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}>
@@ -2968,7 +3092,9 @@ function PantheonSettingsControls(props: {
               onClick={() => void triggerAction('update-check')}
               style={pillButtonStyle(false)}
             >
-              {busyAction() === 'update-check' ? 'Checking…' : 'Check Now'}
+              {busyAction() === 'update-check'
+                ? tr('Checking…', 'Verificando…')
+                : tr('Check Now', 'Verificar Agora')}
             </button>
             <button
               type="button"
@@ -2976,21 +3102,25 @@ function PantheonSettingsControls(props: {
               onClick={() => void triggerAction('update-run')}
               style={pillButtonStyle(true)}
             >
-              {busyAction() === 'update-run' ? 'Updating…' : 'Update / Refresh Plugin'}
+              {busyAction() === 'update-run'
+                ? tr('Updating…', 'Atualizando…')
+                : tr('Update / Refresh Plugin', 'Atualizar / Recarregar Plugin')}
             </button>
           </div>
         </div>
 
         <div style={cardStyle}>
-          <div style={{ 'font-weight': 600 }}>Legacy, Drift & Cleanup</div>
+          <div style={{ 'font-weight': 600 }}>
+            {tr('Legacy, Drift & Cleanup', 'Legado, Drift & Limpeza')}
+          </div>
           <div style={rowStyle}>
-            <span>Audit Status</span>
+            <span>{tr('Audit Status', 'Status da Auditoria')}</span>
             <span style={{ 'font-family': 'monospace' }}>
               {sharedSnapshot().legacyAudit
                 ? sharedSnapshot().legacyAudit?.total === 0
-                  ? 'clean (0 obsolete)'
-                  : `${sharedSnapshot().legacyAudit?.total ?? 0} item(s) (${formatBytes(sharedSnapshot().legacyAudit?.totalBytes ?? 0)})`
-                : 'not scanned'}
+                  ? tr('clean (0 obsolete)', 'limpo (0 obsoletos)')
+                  : `${sharedSnapshot().legacyAudit?.total ?? 0} ${tr('item(s)', 'item(ns)')} (${formatBytes(sharedSnapshot().legacyAudit?.totalBytes ?? 0)})`
+                : tr('not scanned', 'não verificado')}
             </span>
           </div>
           <div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}>
@@ -3000,7 +3130,9 @@ function PantheonSettingsControls(props: {
               onClick={() => void triggerAction('legacy-scan')}
               style={pillButtonStyle(false)}
             >
-              {busyAction() === 'legacy-scan' ? 'Scanning…' : 'Scan Legacy & Drift'}
+              {busyAction() === 'legacy-scan'
+                ? tr('Scanning…', 'Verificando…')
+                : tr('Scan Legacy & Drift', 'Verificar Legado & Drift')}
             </button>
             <button
               type="button"
@@ -3008,7 +3140,9 @@ function PantheonSettingsControls(props: {
               onClick={() => void triggerAction('legacy-clean')}
               style={pillButtonStyle(false)}
             >
-              {busyAction() === 'legacy-clean' ? 'Cleaning…' : 'Migrate & Clean Obsolete'}
+              {busyAction() === 'legacy-clean'
+                ? tr('Cleaning…', 'Limpando…')
+                : tr('Migrate & Clean Obsolete', 'Migrar & Limpar Obsoletos')}
             </button>
             <button
               type="button"
@@ -3022,10 +3156,10 @@ function PantheonSettingsControls(props: {
               }}
             >
               {busyAction() === 'legacy-purge'
-                ? 'Purging…'
+                ? tr('Purging…', 'Apagando…')
                 : confirmPurge()
-                  ? 'Confirm Purge (.pantheon)'
-                  : 'Purge Pantheon Data'}
+                  ? tr('Confirm Purge (.pantheon)', 'Confirmar Limpeza Total (.pantheon)')
+                  : tr('Purge Pantheon Data', 'Apagar Dados do Pantheon')}
             </button>
           </div>
         </div>
@@ -3034,15 +3168,17 @@ function PantheonSettingsControls(props: {
       {/* 8. Doctor, Changelog & About */}
       <Show when={section() === 'doctor'}>
         <div style={cardStyle}>
-          <div style={{ 'font-weight': 600 }}>Doctor Health (File-Derived)</div>
+          <div style={{ 'font-weight': 600 }}>
+            {tr('Doctor Health (File-Derived)', 'Saúde Doctor (Baseado em Arquivos)')}
+          </div>
           <div style={rowStyle}>
-            <span>Install Version</span>
+            <span>{tr('Install Version', 'Versão Instalada')}</span>
             <span style={{ 'font-family': 'monospace' }}>
               {`${sharedSnapshot().doctor.installVersion} (${sharedSnapshot().doctor.installStatus})`}
             </span>
           </div>
           <div style={rowStyle}>
-            <span>{`Node Runtime (>= ${MIN_SUPPORTED_NODE_VERSION})`}</span>
+            <span>{`${tr('Node Runtime', 'Runtime Node')} (>= ${MIN_SUPPORTED_NODE_VERSION})`}</span>
             <span
               style={{
                 'font-family': 'monospace',
@@ -3053,13 +3189,13 @@ function PantheonSettingsControls(props: {
             </span>
           </div>
           <div style={rowStyle}>
-            <span>Overrides Health</span>
+            <span>{tr('Overrides Health', 'Saúde das Substituições')}</span>
             <span style={{ 'font-family': 'monospace' }}>
               {sharedSnapshot().doctor.overridesStatus}
             </span>
           </div>
           <div style={rowStyle}>
-            <span>Decision Config</span>
+            <span>{tr('Decision Config', 'Configuração de Decisão')}</span>
             <span style={{ 'font-family': 'monospace' }}>
               {sharedSnapshot().doctor.decisionStatus}
             </span>
@@ -3068,7 +3204,9 @@ function PantheonSettingsControls(props: {
 
         <Show when={sharedSnapshot().changelogHighlights.length > 0}>
           <div style={cardStyle}>
-            <div style={{ 'font-weight': 600 }}>{`What's New in v${resolveRunningVersion()}`}</div>
+            <div style={{ 'font-weight': 600 }}>
+              {`${tr("What's New in v", 'Novidades na v')}${resolveRunningVersion()}`}
+            </div>
             <For each={sharedSnapshot().changelogHighlights.slice(0, 8)}>
               {(hl) => (
                 <div style={{ 'font-size': '11px' }}>
@@ -3081,7 +3219,9 @@ function PantheonSettingsControls(props: {
         </Show>
 
         <div style={cardStyle}>
-          <div style={{ 'font-weight': 600 }}>Native Tools (30)</div>
+          <div style={{ 'font-weight': 600 }}>
+            {tr('Native Tools (30)', 'Ferramentas Nativas (30)')}
+          </div>
           <For each={sharedSnapshot().aboutToolGroups}>
             {(grp) => (
               <div style={{ display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
@@ -3140,7 +3280,7 @@ function PantheonSettingsView(props: { ctx: SetupContext<any> }) {
             cursor: 'pointer',
           }}
         >
-          Refresh
+          {tr('Refresh', 'Atualizar')}
         </button>
       </div>
       <Show when={uiError() !== null}>
@@ -3158,8 +3298,10 @@ function PantheonSettingsView(props: { ctx: SetupContext<any> }) {
       </Show>
       <PantheonSettingsControls ctx={props.ctx} directory={effectiveDirectory} onSaved={refresh} />
       <p style={{ 'font-size': '12px', opacity: 0.7 }}>
-        Olympus Topology, interactive Agora Board, and Ephemeral Worker telemetry are active in the
-        Pantheon side panel.
+        {tr(
+          'Olympus Topology, interactive Agora Board, and Ephemeral Worker telemetry are active in the Pantheon side panel.',
+          'Topologia Olympus, Board Agora interativo e telemetria de Workers Efêmeros estão ativos no painel lateral do Pantheon.',
+        )}
       </p>
     </div>
   )
@@ -3197,7 +3339,7 @@ export default Plugin.define({
             >
               <strong>Pantheon Cockpit</strong>
               <button type="button" onClick={() => dialog.close()}>
-                Close
+                {tr('Close', 'Fechar')}
               </button>
             </div>
             <PantheonCockpitView ctx={ctx} directory={() => resolveActiveDirectory(ctx)} />
@@ -3224,18 +3366,21 @@ export default Plugin.define({
       show: () => {
         const running = sharedSnapshot().activeJobs.filter((j) => j.status === 'running').length
         return {
-          label: running > 0 ? `Pantheon · ${running} active` : 'Pantheon · ready',
+          label:
+            running > 0
+              ? `Pantheon · ${running} ${tr('active', 'ativos')}`
+              : `Pantheon · ${tr('ready', 'pronto')}`,
           tone: running > 0 ? 'success' : undefined,
           rows: [
             {
               id: 'open-cockpit',
-              label: 'Open Pantheon Cockpit',
+              label: tr('Open Pantheon Cockpit', 'Abrir Cockpit Pantheon'),
               detail: `${sharedSnapshot().messages.length} msgs`,
               run: openCockpit,
             },
             {
               id: 'open-settings',
-              label: 'Open Pantheon Settings',
+              label: tr('Open Pantheon Settings', 'Abrir Configurações Pantheon'),
               detail: sharedSnapshot().gateMode,
               run: () => ctx.layout.settings('pantheon'),
             },

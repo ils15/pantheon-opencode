@@ -22,24 +22,38 @@ export const SUPPORTED_LANGUAGES = SETTINGS_LANGUAGES_CYCLE
  */
 export function resolveLanguage(
   preference: string = 'auto',
-  env: Record<string, string | undefined> = process.env,
+  env: Record<string, string | undefined> | undefined = typeof process !== 'undefined'
+    ? process.env
+    : undefined,
 ): 'pt-BR' | 'en' {
   if (preference === 'pt-BR') return 'pt-BR'
   if (preference === 'en') return 'en'
 
   // 1. Auto-detection based on environment locale variables
-  const lang = (env.LC_ALL ?? env.LC_MESSAGES ?? env.LANG ?? env.LANGUAGE ?? '').toLowerCase()
-  if (lang.startsWith('pt')) return 'pt-BR'
+  if (env) {
+    const lang = (env.LC_ALL ?? env.LC_MESSAGES ?? env.LANG ?? env.LANGUAGE ?? '').toLowerCase()
+    if (lang.startsWith('pt')) return 'pt-BR'
+  }
 
-  // 2. Auto-detection based on Intl locale
+  // 2. Auto-detection based on browser/Electron navigator.language
+  try {
+    const navLang = (
+      typeof navigator !== 'undefined' && typeof navigator.language === 'string'
+        ? navigator.language
+        : ''
+    ).toLowerCase()
+    if (navLang.startsWith('pt')) return 'pt-BR'
+  } catch {}
+
+  // 3. Auto-detection based on Intl locale
   try {
     const intlLocale = Intl.DateTimeFormat().resolvedOptions().locale.toLowerCase()
     if (intlLocale.startsWith('pt')) return 'pt-BR'
   } catch {}
 
-  // 3. Auto-detection based on timezone (Brazil & Portugal)
+  // 4. Auto-detection based on timezone (Brazil & Portugal)
   try {
-    const tz = (env.TZ ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? '').toLowerCase()
+    const tz = (env?.TZ ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? '').toLowerCase()
     if (
       tz.includes('sao_paulo') ||
       tz.includes('brazil') ||
