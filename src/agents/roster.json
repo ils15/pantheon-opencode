@@ -114,6 +114,7 @@
         "glob": "allow",
         "webfetch": "allow",
         "pantheon_deepwork": "allow",
+        "pantheon_strategy": "allow",
         "question": "allow",
         "todowrite": "allow",
         "task": {
@@ -286,6 +287,7 @@
         "pantheon_worktree": "deny",
         "pantheon_review_verdict": "allow",
         "pantheon_deepwork": "allow",
+        "pantheon_strategy": "allow",
         "task": {
           "*": "deny"
         },
@@ -348,6 +350,7 @@
         "pantheon_agent_forge": "allow",
         "pantheon_board": "allow",
         "pantheon_step_ledger": "allow",
+        "pantheon_strategy": "allow",
         "pantheon_worktree": "allow",
         "question": "allow",
         "todowrite": "allow",

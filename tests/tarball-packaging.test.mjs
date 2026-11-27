@@ -395,6 +395,51 @@ test('installed tarball runs postinstall legacy cleanup and serves native plugin
   }
 })
 
+test('redaction gate inspects tarball members larger than the 1 MiB child buffer', () => {
+  const work = mkdtempSync(join(tmpdir(), 'pantheon-redaction-large-'))
+  try {
+    const gate = join(ROOT, 'scripts', 'redaction-gate.mjs')
+    // Node's execFileSync default buffer is 1 MiB. The published plugin bundle is
+    // already larger than that, so the gate must raise its own ceiling; these
+    // synthetic members reproduce the ENOBUFS failure without shipping a fixture.
+    const padding = 'x'.repeat(2 * 1024 * 1024)
+    const bigBuffer = 64 * 1024 * 1024
+
+    const cleanFile = join(work, 'clean.txt')
+    writeFileSync(cleanFile, `${padding}\nno secrets here\n`)
+    const cleanArchive = join(work, 'clean.tgz')
+    execFileSync('tar', ['-czf', cleanArchive, '-C', work, 'clean.txt'], {
+      maxBuffer: bigBuffer,
+    })
+
+    const clean = spawnSync(process.execPath, [gate, cleanArchive], { encoding: 'utf8' })
+    assert.equal(
+      clean.status,
+      0,
+      `the gate must inspect a >1 MiB member instead of failing closed: ${clean.stderr || clean.stdout}`,
+    )
+    assert.match(clean.stdout, /Redaction gate passed/)
+
+    // A finding past the old 1 MiB cap proves the whole member is really read.
+    const secretFile = join(work, 'tail.txt')
+    writeFileSync(secretFile, `${padding}\ncallback: https://example.invalid/callback\n`)
+    const secretArchive = join(work, 'tail.tgz')
+    execFileSync('tar', ['-czf', secretArchive, '-C', work, 'tail.txt'], {
+      maxBuffer: bigBuffer,
+    })
+
+    const found = spawnSync(process.execPath, [gate, secretArchive], { encoding: 'utf8' })
+    assert.equal(
+      found.status,
+      1,
+      `a secret past 1 MiB must be detected: ${found.stderr || found.stdout}`,
+    )
+    assert.match(found.stderr, /callback URL detected/)
+  } finally {
+    rmSync(work, { recursive: true, force: true })
+  }
+})
+
 test('package validator rejects executable templates with machine paths', () => {
   const fixture = mkdtempSync(join(tmpdir(), 'pantheon-package-fixture-'))
   try {

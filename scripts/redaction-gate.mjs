@@ -6,6 +6,17 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 
+/**
+ * Child-process output ceiling for the `tar` probes below.
+ *
+ * `execFileSync` inherits Node's 1 MiB default, which is *smaller* than the
+ * generated plugin bundle: `src/plugin/index.js` is ~1.05 MB and grows with the
+ * tool surface, so `tar -xOzf` failed closed with ENOBUFS while no secret was
+ * present. 64 MiB leaves headroom for a realistic artifact and still refuses an
+ * absurd input.
+ */
+const MAX_CHILD_BUFFER_BYTES = 64 * 1024 * 1024
+
 const callbackUrl = /https?:\/\/[^\s"'<>]+(?:callback|redirect|return|webhook)[^\s"'<>]*/iu
 const bearer = /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b/u
 const jwt = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/u
@@ -30,12 +41,17 @@ function scanFile(path) {
 }
 
 function scanTarball(path) {
-  const entries = execFileSync('tar', ['-tzf', path], { encoding: 'utf8' })
+  const entries = execFileSync('tar', ['-tzf', path], {
+    encoding: 'utf8',
+    maxBuffer: MAX_CHILD_BUFFER_BYTES,
+  })
     .split('\n')
     .filter(Boolean)
   const result = []
   for (const entry of entries) {
-    const content = execFileSync('tar', ['-xOzf', path, entry])
+    const content = execFileSync('tar', ['-xOzf', path, entry], {
+      maxBuffer: MAX_CHILD_BUFFER_BYTES,
+    })
     if (isText(content)) result.push(...findings(content.toString('utf8')))
   }
   return [...new Set(result)]

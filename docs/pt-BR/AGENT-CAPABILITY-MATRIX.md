@@ -45,6 +45,10 @@ flowchart TD
 | **@apollo** | Investigação & Busca Exploratória | ❌ `deny` | ❌ `deny` | ❌ `deny` | ❌ `deny` | `resources`, `memory_search`, `webfetch` |
 | **@iris** | Git, Releases, Memory Bank & ADRs | ❌ `deny` | ✅ `allow` (git/gh) | ❌ `deny` | ❌ `deny` | `resources`, `memory_store`, `code-mode` |
 
+A ferramenta de plugin `pantheon_strategy` (resultados e taxas de sucesso por
+estratégia de passo) é concedida apenas a `@zeus`, `@athena` e `@themis`; os
+demais agentes herdam o `deny` padrão do host.
+
 ---
 
 ## 2. O que Cada Agente PODE e NÃO PODE Fazer

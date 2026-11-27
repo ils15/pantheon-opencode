@@ -283,6 +283,53 @@ MCP servers listed above.
 | `pantheon_cost` | `days?: 1..365` (default `7`), `session?: <root session id>`, `refreshPricing?: boolean` | Read-only token totals and USD cost by agent and phase, by model, and by session, in a rolling `days × 24-hour` window from query time. It is not a calendar-day or session window. |
 | `pantheon_local_decision` | `schemaVersion: 1`, structured candidate agent/skill/resource IDs, `domain?`, `gateStatus`, bounded `complexity` dimensions | Zeus-only (identity from the host tool context) local advisory selector over the caller-supplied candidates. Deterministic, offline, fail-closed; never dispatches, searches, or changes grants. Obvious work should skip it and go straight to native `subagent`. |
 | `pantheon_jev_decide` | `schemaVersion: 1`, `state: string (≤12k)`, `questions: 1–4` typed (`choice` 2–16 options, `score` 2–10 levels, `predicate`) | Zeus-only advisory typed decisions answered by the Jev decision model through the host's native Decisions API (no Pantheon transport). Registers only on hosts exposing that API; refuses without enabled config, egress consent, a cap-valid ledger candidate, or a host permission allow; settles the budget reservation from host-reported cost. Returns validated answers with confidence plus `effect: 'none'` — advice only. |
+| `pantheon_strategy` | `action: record\|query\|stats\|prune`, plus `strategyId`, `agent`, `success`, `summary`, and optional run metadata (`stepKey`, `taskType`, `wave`, `sliceCount`, `parallel`, `durationMs`, `filesTouched`, `themisVerdict`, `retries`, `errorClass`) or query filters (`query`, `status`, `limit`) | Per-step strategy outcomes and their success rates. Lexical **FTS5 BM25 only** — no embeddings, no vector store, no network. Granted to `@zeus`, `@athena` and `@themis` only. |
+
+### Strategy outcome store
+
+`pantheon_strategy` records one run per terminal step outcome and folds it into
+`(strategy_id, agent)` aggregates, so orchestration can stop repeating a
+decomposition that keeps failing.
+
+- **Identity.** `strategy_id` is free-form (the step ledger derives
+  `<agent>:<taskType>`, e.g. `hermes:feature`). Run ids default to
+  `<stepKey>:<attempt>`; a duplicate run id is ignored and reported
+  (`recorded: false`, `reason: "duplicate_run_id"`).
+- **Ladder (D02, evaluated at query time).** `proven` needs ≥3 attempts and a
+  success rate ≥ `PANTHEON_STRATEGY_PROMOTION_MIN` (0.8); `anti_pattern` needs
+  ≥3 attempts and a failure rate > 0.6; everything else is `candidate`. Results
+  rank by `success_rate * decay DESC, attempts DESC`, where
+  `decay = max(0, 1 - age_days/90)`. `strategy_effective` is the SQL read model
+  and evaluates the **default** thresholds only; the tool is the authority when
+  an override is set and reports the thresholds it actually applied
+  (`promotionMinInvalid` is `true` when an unusable env value fell back), so no
+  payload carries two promotion answers.
+- **Themis.** `themis_verdict: "BLOCK"` forces `success = 0` and counts one
+  objection per run (`strategy_runs.blocked_at`); `objections <= attempts`
+  always holds, so BLOCK → `APPROVE_WITH_NOTES` → BLOCK never double-counts and
+  re-approving a blocked run never restores its success.
+  `pantheon_review_verdict` attaches a `BLOCK` to the newest run for the supplied
+  `stepKey`, else for the reviewed agent's newest run **inside**
+  `PANTHEON_STRATEGY_ATTACH_WINDOW_MINUTES` (60, capped at 1440 = 24 h; a larger
+  value is clamped and reported as `attachWindowCapped: true`). Several eligible
+  runs → `attached: false, reason: "ambiguous_target"` with the candidates listed
+  and nothing demoted; an unattributable **BLOCK** is persisted in
+  `strategy_objections` and surfaced by `stats` as `unattributed_objections`, and
+  the payload says it was not attributed. An unattributable APPROVE writes
+  nothing.
+- **Bounded text.** `summary` is capped at 4 KiB of UTF-8 (cut on a code-point
+  boundary); the record payload then carries `summaryTruncated: true`.
+- **Retention.** `strategy_runs` is pruned every 50th insert and on
+  `action: "prune"`, bounded by `PANTHEON_STRATEGY_MAX_AGE_DAYS` (30) and
+  `PANTHEON_STRATEGY_MAX_ROWS` (10000). `strategy_stats`, `strategy_docs` and
+  the `strategy_objections` trail are **never** pruned — the aggregates are the
+  durable knowledge and an unattributed objection must not disappear.
+- **Isolation.** The tables live beside `memories` in the same `memory.db`, and
+  `memory_store`/`memory_search` keep their exact SQL and inputs: they never
+  read or return strategy rows, federation never queries them, and the tool is a
+  separate surface. Recording is best-effort — a broken store returns
+  `recorded: false` with an error and never fails a step or a review verdict.
+
 
 Prices come from the public `models.dev` catalog (USD per 1M tokens: input,
 output, cache read and cache write), cached at

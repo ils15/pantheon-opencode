@@ -67,6 +67,7 @@ import { createReviewVerdictTool, type ReviewSyntheticSessionDomain } from './re
 import { createV2SkillSearchDefinition } from './skill-search-tool.ts'
 import { createStepLedgerTool } from './step-ledger.ts'
 import type { SubSessionDomainLike } from './step-runner.ts'
+import { createStrategyTool } from './strategy-tool.ts'
 import { resolveToolCwd, type ToolContextLike } from './tool-context.ts'
 import { createWorktreeTool } from './worktree-orchestrator.ts'
 
@@ -731,6 +732,7 @@ export function createV2ToolDefinitions(
   definitions.push(...createCodemapTools(hostLocationDirectory))
   definitions.push(...createAstTools(hostLocationDirectory))
   definitions.push(createReviewVerdictTool(shadow.sessionDomain))
+  definitions.push(createStrategyTool(hostLocationDirectory))
   definitions.push(createWorktreeTool(hostLocationDirectory))
   definitions.push(createBoardTool(hostLocationDirectory))
   if (visionRuntime) definitions.push(createV2VisionTool(visionRuntime))

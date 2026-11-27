@@ -45,6 +45,10 @@ flowchart TD
 | **@apollo** | Codebase Research & Exploration | ❌ `deny` | ❌ `deny` | ❌ `deny` | ❌ `deny` | `resources`, `memory_search`, `webfetch` |
 | **@iris** | Git, Releases, Memory Bank & ADRs | ❌ `deny` | ✅ `allow` (git/gh) | ❌ `deny` | ❌ `deny` | `resources`, `memory_store`, `code-mode` |
 
+The `pantheon_strategy` plugin tool (per-step strategy outcomes and success
+rates) is granted only to `@zeus`, `@athena` and `@themis`; every other agent
+inherits the host default deny.
+
 ---
 
 ## 3. What Each Agent CAN and CANNOT Do

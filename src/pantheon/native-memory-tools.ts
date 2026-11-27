@@ -119,6 +119,20 @@ function getMemoryDb(workspaceDir: string): DatabaseSync {
   return db
 }
 
+/**
+ * Open the workspace memory database (`.pantheon/memory/memory.db`) using the
+ * same per-path cache the `memory_*` tools share.
+ *
+ * Thin, contract-preserving export for adjacent stores that must live in the
+ * same file (e.g. `strategy-store.ts`). It adds no tables, changes no SQL and
+ * does not alter `memory_store`/`memory_search` behaviour: callers that need
+ * extra tables create them themselves, and the memory statements never read
+ * them.
+ */
+export function openMemoryDb(workspaceDir: string): DatabaseSync {
+  return getMemoryDb(workspaceDir)
+}
+
 function jsonResult(payload: unknown): V2ToolResult {
   return { output: JSON.stringify(payload) }
 }

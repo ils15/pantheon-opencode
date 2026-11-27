@@ -12864,23 +12864,23 @@ ${layers.history.map((h) => h.trim()).join("\n\n")}`
 }
 
 // src/pantheon/step-ledger.ts
-import { randomUUID as randomUUID3 } from "node:crypto";
+import { randomUUID as randomUUID4 } from "node:crypto";
 import {
   closeSync as closeSync4,
-  existsSync as existsSync16,
+  existsSync as existsSync18,
   linkSync,
-  mkdirSync as mkdirSync10,
+  mkdirSync as mkdirSync11,
   openSync as openSync4,
-  readdirSync as readdirSync3,
-  readFileSync as readFileSync13,
-  realpathSync as realpathSync7,
+  readdirSync as readdirSync4,
+  readFileSync as readFileSync15,
+  realpathSync as realpathSync9,
   renameSync as renameSync4,
   statSync as statSync6,
   unlinkSync as unlinkSync4,
-  writeFileSync as writeFileSync7,
+  writeFileSync as writeFileSync8,
   writeSync
 } from "node:fs";
-import { basename as basename6, dirname as dirname14, join as join21, resolve as resolve16, sep as sep7 } from "node:path";
+import { basename as basename7, dirname as dirname14, join as join23, resolve as resolve18, sep as sep8 } from "node:path";
 
 // src/pantheon/ephemeral-worker.ts
 import { execFile as execFile5 } from "node:child_process";
@@ -15934,6 +15934,1706 @@ function cascadeBlock(nodes, rootStepKey, reason) {
   });
 }
 
+// src/pantheon/strategy-store.ts
+import { randomUUID as randomUUID3 } from "node:crypto";
+
+// src/pantheon/native-memory-tools.ts
+import {
+  existsSync as existsSync17,
+  mkdirSync as mkdirSync10,
+  readdirSync as readdirSync3,
+  readFileSync as readFileSync14,
+  realpathSync as realpathSync8,
+  writeFileSync as writeFileSync7
+} from "node:fs";
+import { join as join22, resolve as resolve17, sep as sep7 } from "node:path";
+import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
+
+// src/pantheon/memory-federation.ts
+import { existsSync as existsSync16, readFileSync as readFileSync13, realpathSync as realpathSync7 } from "node:fs";
+import { homedir as homedir6 } from "node:os";
+import { basename as basename6, join as join21, resolve as resolve16 } from "node:path";
+import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
+var NOT_EXPIRED_SQL = "(expires_at IS NULL OR expires_at > ?)";
+function safeRealpath(dir) {
+  try {
+    return realpathSync7(dir);
+  } catch {
+    return resolve16(dir);
+  }
+}
+function resolveFederatedRepoDirs(primaryWorkspaceDir, options = {}) {
+  const candidates = [];
+  if (Array.isArray(options.explicitRepos)) {
+    candidates.push(...options.explicitRepos);
+  }
+  const rawEnv = options.federatedEnv ?? process.env.PANTHEON_FEDERATED_REPOS ?? "";
+  if (rawEnv.trim()) {
+    for (const part of rawEnv.split(/[,;]/)) {
+      const trimmed = part.trim();
+      if (trimmed) candidates.push(trimmed);
+    }
+  }
+  const manifestFile = options.manifestPath ?? join21(homedir6(), ".pantheon", "federation.json");
+  if (existsSync16(manifestFile)) {
+    try {
+      const parsed = JSON.parse(readFileSync13(manifestFile, "utf8"));
+      if (Array.isArray(parsed.repos)) {
+        for (const item of parsed.repos) {
+          if (typeof item === "string" && item.trim()) candidates.push(item.trim());
+        }
+      }
+    } catch {
+    }
+  }
+  const primaryStore = safeRealpath(resolveSharedPantheonRoot(primaryWorkspaceDir));
+  const seenStores = /* @__PURE__ */ new Set([primaryStore]);
+  const peers = [];
+  for (const candidate of candidates) {
+    const abs = resolve16(candidate);
+    if (!existsSync16(abs)) continue;
+    const peerStore = safeRealpath(resolveSharedPantheonRoot(abs));
+    if (seenStores.has(peerStore)) continue;
+    const dbPath = join21(peerStore, ".pantheon", "memory", "memory.db");
+    if (!existsSync16(dbPath)) continue;
+    seenStores.add(peerStore);
+    peers.push(peerStore);
+  }
+  return peers;
+}
+function querySinglePeerDb(peerRoot, rawQuery, nowIso, limit, namespace) {
+  const dbPath = join21(peerRoot, ".pantheon", "memory", "memory.db");
+  if (!existsSync16(dbPath)) return [];
+  const repoName = basename6(peerRoot) || peerRoot;
+  let db;
+  try {
+    db = new DatabaseSync3(dbPath, { readOnly: true });
+    const tokens = rawQuery.replace(/[^\p{L}\p{N}_-]+/gu, " ").trim().split(/\s+/).filter((t) => t.length >= 2);
+    if (tokens.length > 0) {
+      try {
+        const ftsExpr = tokens.map((t) => `"${t.replace(/"/g, '""')}"*`).join(" OR ");
+        let ftsSql = `
+          SELECT m.namespace, m.key, m.value, m.metadata, m.created_at, bm25(memories_fts) AS score
+          FROM memories_fts
+          JOIN memories m ON m.id = memories_fts.rowid
+          WHERE memories_fts MATCH ? AND (m.expires_at IS NULL OR m.expires_at > ?)
+        `;
+        const ftsParams = [ftsExpr, nowIso];
+        if (namespace) {
+          ftsSql += " AND m.namespace = ?";
+          ftsParams.push(namespace);
+        }
+        ftsSql += " ORDER BY score LIMIT ?";
+        ftsParams.push(limit);
+        const rows2 = db.prepare(ftsSql).all(...ftsParams);
+        if (rows2.length > 0) {
+          return rows2.map((r) => ({ ...r, sourceRepo: repoName, sourcePath: peerRoot }));
+        }
+      } catch {
+      }
+    }
+    const escaped = rawQuery.replace(/[\\%_]/g, "\\$&");
+    let sql = `
+      SELECT namespace, key, value, metadata, created_at
+      FROM memories
+      WHERE (value LIKE ? ESCAPE '\\' OR key LIKE ? ESCAPE '\\')
+        AND ${NOT_EXPIRED_SQL}
+    `;
+    const params = [`%${escaped}%`, `%${escaped}%`, nowIso];
+    if (namespace) {
+      sql += " AND namespace = ?";
+      params.push(namespace);
+    }
+    sql += " ORDER BY id DESC LIMIT ?";
+    params.push(limit);
+    const rows = db.prepare(sql).all(...params);
+    return rows.map((r) => ({ ...r, sourceRepo: repoName, sourcePath: peerRoot }));
+  } catch {
+    return [];
+  } finally {
+    try {
+      db?.close();
+    } catch {
+    }
+  }
+}
+function searchFederatedMemories(primaryWorkspaceDir, query, options = {}) {
+  const peers = resolveFederatedRepoDirs(primaryWorkspaceDir, options);
+  if (peers.length === 0) return [];
+  const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+  const limit = Math.max(1, Math.min(options.limit ?? 10, 100));
+  const results = [];
+  for (const peer of peers) {
+    const hits = querySinglePeerDb(peer, query, nowIso, limit, options.namespace);
+    results.push(...hits);
+    if (results.length >= limit) break;
+  }
+  return results.slice(0, limit);
+}
+function getFederatedStats(primaryWorkspaceDir, options = {}) {
+  const peers = resolveFederatedRepoDirs(primaryWorkspaceDir, options);
+  const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+  const repos = [];
+  let total = 0;
+  for (const peer of peers) {
+    const dbPath = join21(peer, ".pantheon", "memory", "memory.db");
+    let count = 0;
+    let db;
+    try {
+      db = new DatabaseSync3(dbPath, { readOnly: true });
+      const row = db.prepare(`SELECT count(*) as count FROM memories WHERE ${NOT_EXPIRED_SQL}`).get(nowIso);
+      count = typeof row?.count === "number" ? row.count : 0;
+    } catch {
+      count = 0;
+    } finally {
+      try {
+        db?.close();
+      } catch {
+      }
+    }
+    repos.push({ repo: basename6(peer) || peer, path: peer, total: count });
+    total += count;
+  }
+  return { total, repos };
+}
+
+// src/pantheon/native-memory-tools.ts
+var SAFE_SEGMENT_RE2 = /^[a-zA-Z0-9._:-]{1,128}$/;
+var MAX_MEMORY_VALUE_BYTES = 65536;
+function isSafeSegment(value) {
+  return typeof value === "string" && SAFE_SEGMENT_RE2.test(value) && value !== "." && value !== ".." && !value.includes("..") && !value.includes("/") && !value.includes("\\");
+}
+function resolveConfinedPath(baseDir, ...segments) {
+  mkdirSync10(baseDir, { recursive: true });
+  const canonicalBase = realpathSync8(baseDir);
+  const candidate = resolve17(canonicalBase, ...segments);
+  const prefix = canonicalBase.endsWith(sep7) ? canonicalBase : `${canonicalBase}${sep7}`;
+  if (candidate !== canonicalBase && !candidate.startsWith(prefix)) {
+    throw new Error("Path traversal denied: target escapes confined directory");
+  }
+  return candidate;
+}
+var dbCache = /* @__PURE__ */ new Map();
+function runAutoMigration(workspaceDir) {
+  try {
+    const globalConfigDir = resolveSafeGlobalConfigDir();
+    ensureLegacyStoresMigratedOnce(workspaceDir, globalConfigDir ? { globalConfigDir } : {});
+  } catch {
+  }
+}
+function getMemoryDb(workspaceDir) {
+  runAutoMigration(workspaceDir);
+  const memoryDir = join22(workspaceDir, ".pantheon", "memory");
+  mkdirSync10(memoryDir, { recursive: true });
+  const dbPath = resolveConfinedPath(memoryDir, "memory.db");
+  const cached = dbCache.get(dbPath);
+  if (cached) return cached;
+  const db = new DatabaseSync4(dbPath);
+  db.exec(`
+    PRAGMA busy_timeout = 3000;
+    PRAGMA journal_mode = WAL;
+    CREATE TABLE IF NOT EXISTS memories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      namespace TEXT NOT NULL,
+      key TEXT NOT NULL,
+      value TEXT NOT NULL,
+      metadata TEXT,
+      created_at TEXT NOT NULL,
+      expires_at TEXT,
+      UNIQUE(namespace, key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_memories_ns_key ON memories(namespace, key);
+  `);
+  try {
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+        namespace,
+        key,
+        value,
+        content='memories',
+        content_rowid='id',
+        tokenize='porter unicode61'
+      );
+      CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+        INSERT INTO memories_fts(rowid, namespace, key, value)
+        VALUES (new.id, new.namespace, new.key, new.value);
+      END;
+      CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+        INSERT INTO memories_fts(memories_fts, rowid, namespace, key, value)
+        VALUES ('delete', old.id, old.namespace, old.key, old.value);
+      END;
+      CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+        INSERT INTO memories_fts(memories_fts, rowid, namespace, key, value)
+        VALUES ('delete', old.id, old.namespace, old.key, old.value);
+        INSERT INTO memories_fts(rowid, namespace, key, value)
+        VALUES (new.id, new.namespace, new.key, new.value);
+      END;
+    `);
+  } catch {
+  }
+  dbCache.set(dbPath, db);
+  return db;
+}
+function openMemoryDb(workspaceDir) {
+  return getMemoryDb(workspaceDir);
+}
+function jsonResult3(payload) {
+  return { output: JSON.stringify(payload) };
+}
+var NOT_EXPIRED_SQL2 = "(expires_at IS NULL OR expires_at > ?)";
+function createNativeMemoryAndPersistenceTools(fallbackDir) {
+  return [
+    {
+      name: "memory_store",
+      description: "Store a durable memory entry in .pantheon/memory/memory.db with FTS5 indexing and optional TTL.",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        required: ["namespace", "key", "value"],
+        properties: {
+          namespace: { type: "string", description: "Project or domain namespace" },
+          key: { type: "string", description: "Unique key within the namespace" },
+          value: { type: "string", description: "Durable fact, ADR, or convention text (<=64KiB)" },
+          metadata: { type: "string", description: "Optional JSON metadata string" },
+          expires_at: { type: "string", description: "Optional ISO-8601 expiration timestamp" }
+        }
+      },
+      output: {},
+      execute: async (input, context) => {
+        try {
+          const ns = input.namespace;
+          const key = input.key;
+          const value = input.value;
+          if (typeof ns !== "string" || !ns.trim() || typeof key !== "string" || !key.trim()) {
+            return jsonResult3({
+              ok: false,
+              error: "namespace and key are required non-empty strings"
+            });
+          }
+          if (typeof value !== "string" || !value.trim()) {
+            return jsonResult3({
+              ok: false,
+              error: "value is required and must be a non-empty string"
+            });
+          }
+          if (Buffer.byteLength(value, "utf8") > MAX_MEMORY_VALUE_BYTES) {
+            return jsonResult3({ ok: false, error: "value exceeds maximum size of 64 KiB" });
+          }
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
+          const db = getMemoryDb(cwd);
+          const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+          db.prepare(
+            `INSERT INTO memories (namespace, key, value, metadata, created_at, expires_at)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(namespace, key) DO UPDATE SET
+               value = excluded.value,
+               metadata = excluded.metadata,
+               created_at = excluded.created_at,
+               expires_at = excluded.expires_at`
+          ).run(
+            ns.trim(),
+            key.trim(),
+            value,
+            typeof input.metadata === "string" ? input.metadata : null,
+            nowIso,
+            typeof input.expires_at === "string" ? input.expires_at : null
+          );
+          return jsonResult3({ ok: true, status: "stored", namespace: ns.trim(), key: key.trim() });
+        } catch (err) {
+          return jsonResult3({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    },
+    {
+      name: "memory_recall",
+      description: "Recall a specific memory entry by exact namespace and key.",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        required: ["namespace", "key"],
+        properties: {
+          namespace: { type: "string", description: "Memory namespace" },
+          key: { type: "string", description: "Memory key" }
+        }
+      },
+      output: {},
+      execute: async (input, context) => {
+        try {
+          const ns = input.namespace;
+          const key = input.key;
+          if (typeof ns !== "string" || !ns.trim() || typeof key !== "string" || !key.trim()) {
+            return jsonResult3({ ok: false, error: "namespace and key are required" });
+          }
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
+          const db = getMemoryDb(cwd);
+          const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+          const row = db.prepare(
+            `SELECT namespace, key, value, metadata, created_at, expires_at
+               FROM memories
+               WHERE namespace = ? AND key = ? AND ${NOT_EXPIRED_SQL2}`
+          ).get(ns.trim(), key.trim(), nowIso);
+          return jsonResult3(row ?? { ok: false, error: "not_found" });
+        } catch (err) {
+          return jsonResult3({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    },
+    {
+      name: "memory_search",
+      description: "Search durable memories using SQLite FTS5 BM25 ranking with lexical fallback.",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        required: ["query"],
+        properties: {
+          query: { type: "string", description: "Search query terms" },
+          namespace: { type: "string", description: "Optional namespace filter" },
+          top_k: { type: "number", description: "Maximum results to return (default 10)" },
+          federated: {
+            type: "boolean",
+            description: "Include federated peer repositories (default true when configured)"
+          }
+        }
+      },
+      output: {},
+      execute: async (input, context) => {
+        try {
+          const rawQuery = typeof input.query === "string" ? input.query.trim() : "";
+          if (!rawQuery) {
+            return jsonResult3({ ok: false, error: "query is required", count: 0, results: [] });
+          }
+          const limit = typeof input.top_k === "number" && Number.isFinite(input.top_k) && input.top_k > 0 ? Math.min(Math.floor(input.top_k), 100) : 10;
+          const ns = typeof input.namespace === "string" && input.namespace.trim() ? input.namespace.trim() : void 0;
+          const useFederated = input.federated !== false;
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
+          const db = getMemoryDb(cwd);
+          const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+          const tokens = rawQuery.replace(/[^\p{L}\p{N}_-]+/gu, " ").trim().split(/\s+/).filter((t) => t.length >= 2);
+          let localRows = [];
+          let matchedFts = false;
+          if (tokens.length > 0) {
+            try {
+              const ftsExpr = tokens.map((t) => `"${t.replace(/"/g, '""')}"*`).join(" OR ");
+              let ftsSql = `
+                SELECT m.namespace, m.key, m.value, m.metadata, m.created_at, bm25(memories_fts) AS score
+                FROM memories_fts
+                JOIN memories m ON m.id = memories_fts.rowid
+                WHERE memories_fts MATCH ? AND (m.expires_at IS NULL OR m.expires_at > ?)
+              `;
+              const ftsParams = [ftsExpr, nowIso];
+              if (ns) {
+                ftsSql += " AND m.namespace = ?";
+                ftsParams.push(ns);
+              }
+              ftsSql += " ORDER BY score LIMIT ?";
+              ftsParams.push(limit);
+              const rows = db.prepare(ftsSql).all(...ftsParams);
+              if (rows.length > 0) {
+                localRows = rows;
+                matchedFts = true;
+              }
+            } catch {
+            }
+          }
+          if (!matchedFts) {
+            const escaped = rawQuery.replace(/[\\%_]/g, "\\$&");
+            let sql = `
+              SELECT namespace, key, value, metadata, created_at
+              FROM memories
+              WHERE (value LIKE ? ESCAPE '\\' OR key LIKE ? ESCAPE '\\')
+                AND ${NOT_EXPIRED_SQL2}
+            `;
+            const params = [`%${escaped}%`, `%${escaped}%`, nowIso];
+            if (ns) {
+              sql += " AND namespace = ?";
+              params.push(ns);
+            }
+            sql += " ORDER BY id DESC LIMIT ?";
+            params.push(limit);
+            localRows = db.prepare(sql).all(...params);
+          }
+          const remaining = Math.max(0, limit - localRows.length);
+          const peerRows = useFederated && remaining > 0 ? searchFederatedMemories(cwd, rawQuery, {
+            ...ns ? { namespace: ns } : {},
+            limit: remaining
+          }) : [];
+          const combined = [...localRows, ...peerRows];
+          return jsonResult3({ ok: true, count: combined.length, results: combined });
+        } catch (err) {
+          return jsonResult3({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    },
+    {
+      name: "memory_forget",
+      description: "Delete a durable memory entry by namespace and key.",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        required: ["namespace", "key"],
+        properties: {
+          namespace: { type: "string", description: "Memory namespace" },
+          key: { type: "string", description: "Memory key to delete" }
+        }
+      },
+      output: {},
+      execute: async (input, context) => {
+        try {
+          const ns = input.namespace;
+          const key = input.key;
+          if (typeof ns !== "string" || !ns.trim() || typeof key !== "string" || !key.trim()) {
+            return jsonResult3({ ok: false, error: "namespace and key are required" });
+          }
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
+          const db = getMemoryDb(cwd);
+          const info = db.prepare("DELETE FROM memories WHERE namespace = ? AND key = ?").run(ns.trim(), key.trim());
+          return jsonResult3({
+            ok: true,
+            deleted: info.changes > 0,
+            namespace: ns.trim(),
+            key: key.trim()
+          });
+        } catch (err) {
+          return jsonResult3({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    },
+    {
+      name: "memory_list",
+      description: "List active memory keys in a namespace.",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          namespace: { type: "string", description: "Optional namespace filter" },
+          limit: { type: "number", description: "Maximum entries to list (default 50)" }
+        }
+      },
+      output: {},
+      execute: async (input, context) => {
+        try {
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
+          const db = getMemoryDb(cwd);
+          const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+          const limit = typeof input.limit === "number" && Number.isFinite(input.limit) && input.limit > 0 ? Math.min(Math.floor(input.limit), 200) : 50;
+          let sql = `SELECT namespace, key, created_at FROM memories WHERE ${NOT_EXPIRED_SQL2}`;
+          const params = [nowIso];
+          if (typeof input.namespace === "string" && input.namespace.trim()) {
+            sql += " AND namespace = ?";
+            params.push(input.namespace.trim());
+          }
+          sql += " ORDER BY id DESC LIMIT ?";
+          params.push(limit);
+          const rows = db.prepare(sql).all(...params);
+          return jsonResult3({ ok: true, count: rows.length, entries: rows });
+        } catch (err) {
+          return jsonResult3({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    },
+    {
+      name: "memory_stats",
+      description: "Get counts of active durable memory entries by namespace.",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          namespace: { type: "string", description: "Optional namespace filter" }
+        }
+      },
+      output: {},
+      execute: async (_input, context) => {
+        try {
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
+          const db = getMemoryDb(cwd);
+          const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+          const total = db.prepare(`SELECT count(*) as count FROM memories WHERE ${NOT_EXPIRED_SQL2}`).get(nowIso);
+          const byNamespace = db.prepare(
+            `SELECT namespace, count(*) as count FROM memories WHERE ${NOT_EXPIRED_SQL2} GROUP BY namespace`
+          ).all(nowIso);
+          const fed = getFederatedStats(cwd);
+          return jsonResult3({
+            ok: true,
+            total: total?.count ?? 0,
+            byNamespace,
+            ...fed.repos.length > 0 ? { federated: fed } : {}
+          });
+        } catch (err) {
+          return jsonResult3({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    },
+    {
+      name: "context_save",
+      description: "Save a milestone session checkpoint under .pantheon/persistence.",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        required: ["session_id", "content"],
+        properties: {
+          session_id: { type: "string", description: "Session identifier" },
+          content: { type: "string", description: "Serialized JSON state object" },
+          namespace: { type: "string", description: "Optional checkpoint namespace" }
+        }
+      },
+      output: {},
+      execute: async (input, context) => {
+        try {
+          const sessionId = input.session_id;
+          const ns = input.namespace ?? "checkpoints";
+          if (!isSafeSegment(sessionId) || !isSafeSegment(ns)) {
+            return jsonResult3({
+              ok: false,
+              error: "session_id and namespace must be safe identifiers without path traversal"
+            });
+          }
+          if (typeof input.content !== "string" || !input.content.trim()) {
+            return jsonResult3({ ok: false, error: "content must be a non-empty string" });
+          }
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
+          runAutoMigration(cwd);
+          const baseDir = join22(cwd, ".pantheon", "persistence");
+          const dir = resolveConfinedPath(baseDir, ns);
+          mkdirSync10(dir, { recursive: true });
+          const filePath = resolveConfinedPath(dir, `${sessionId}.json`);
+          const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+          writeFileSync7(
+            filePath,
+            JSON.stringify(
+              {
+                session_id: sessionId,
+                namespace: ns,
+                content: input.content,
+                updated_at: nowIso
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return jsonResult3({
+            ok: true,
+            status: "saved",
+            session_id: sessionId,
+            updated_at: nowIso
+          });
+        } catch (err) {
+          return jsonResult3({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    },
+    {
+      name: "context_get",
+      description: "Retrieve a saved session checkpoint by session_id.",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        required: ["session_id"],
+        properties: {
+          session_id: { type: "string", description: "Session identifier" },
+          namespace: { type: "string", description: "Optional checkpoint namespace" }
+        }
+      },
+      output: {},
+      execute: async (input, context) => {
+        try {
+          const sessionId = input.session_id;
+          const ns = input.namespace ?? "checkpoints";
+          if (!isSafeSegment(sessionId) || !isSafeSegment(ns)) {
+            return jsonResult3({
+              ok: false,
+              error: "session_id and namespace must be safe identifiers without path traversal"
+            });
+          }
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
+          runAutoMigration(cwd);
+          const baseDir = join22(cwd, ".pantheon", "persistence");
+          const dir = resolveConfinedPath(baseDir, ns);
+          const filePath = resolveConfinedPath(dir, `${sessionId}.json`);
+          if (!existsSync17(filePath)) {
+            const globalDir = resolveSafeGlobalConfigDir();
+            if (globalDir) {
+              const globalNsDir = join22(globalDir, ".pantheon", "persistence", ns);
+              if (existsSync17(join22(globalNsDir, `${sessionId}.json`))) {
+                const globalFile = resolveConfinedPath(globalNsDir, `${sessionId}.json`);
+                if (existsSync17(globalFile)) {
+                  return jsonResult3(JSON.parse(readFileSync14(globalFile, "utf8")));
+                }
+              }
+            }
+            return jsonResult3({ ok: false, error: "not_found", session_id: sessionId });
+          }
+          return jsonResult3(JSON.parse(readFileSync14(filePath, "utf8")));
+        } catch (err) {
+          return jsonResult3({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    },
+    {
+      name: "goal_create",
+      description: "Create a persistent session goal in .pantheon/goals (read by compaction hooks).",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        required: ["title"],
+        properties: {
+          id: { type: "string", description: "Optional goal identifier" },
+          title: { type: "string", description: "Concise goal statement" },
+          criteria: {
+            type: "array",
+            items: { type: "string" },
+            description: "Completion criteria checklist"
+          }
+        }
+      },
+      output: {},
+      execute: async (input, context) => {
+        try {
+          const title = typeof input.title === "string" ? input.title.trim() : "";
+          if (!title) return jsonResult3({ ok: false, error: "title is required" });
+          const rawId = typeof input.id === "string" && input.id.trim() ? input.id.trim() : `goal-${Date.now()}`;
+          if (!isSafeSegment(rawId)) {
+            return jsonResult3({ ok: false, error: "id must be a safe identifier" });
+          }
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
+          runAutoMigration(cwd);
+          const goalsDir = join22(cwd, ".pantheon", "goals");
+          const filePath = resolveConfinedPath(goalsDir, `${rawId}.json`);
+          const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+          const goal = {
+            id: rawId,
+            title,
+            criteria: Array.isArray(input.criteria) ? input.criteria.map(String) : [],
+            status: "active",
+            created_at: nowIso,
+            updated_at: nowIso
+          };
+          writeFileSync7(filePath, JSON.stringify(goal, null, 2), "utf8");
+          return jsonResult3({ ok: true, goal });
+        } catch (err) {
+          return jsonResult3({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    },
+    {
+      name: "goal_get",
+      description: "Retrieve an active session goal by id or latest.",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          id: { type: "string", description: "Optional goal id (defaults to latest)" }
+        }
+      },
+      output: {},
+      execute: async (input, context) => {
+        try {
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
+          runAutoMigration(cwd);
+          const goalsDir = join22(cwd, ".pantheon", "goals");
+          mkdirSync10(goalsDir, { recursive: true });
+          if (typeof input.id === "string" && input.id.trim()) {
+            const id = input.id.trim();
+            if (!isSafeSegment(id)) {
+              return jsonResult3({ ok: false, error: "id must be a safe identifier" });
+            }
+            const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
+            if (!existsSync17(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
+            return jsonResult3(JSON.parse(readFileSync14(filePath, "utf8")));
+          }
+          const files = readdirSync3(goalsDir).filter((f) => f.endsWith(".json")).sort();
+          const latest = files.at(-1);
+          if (!latest) return jsonResult3({ ok: false, error: "no_active_goals" });
+          return jsonResult3(JSON.parse(readFileSync14(resolveConfinedPath(goalsDir, latest), "utf8")));
+        } catch (err) {
+          return jsonResult3({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    },
+    {
+      name: "goal_update",
+      description: 'Update progress notes or status on an active session goal. Use "notes" (not "progress") for progress text.',
+      input: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id"],
+        properties: {
+          id: { type: "string", description: "Goal identifier" },
+          status: { type: "string", description: "Updated status (active, paused, completed)" },
+          notes: { type: "string", description: 'Progress notes (use "notes", not "progress")' }
+        }
+      },
+      output: {},
+      execute: async (input, context) => {
+        try {
+          const id = typeof input.id === "string" ? input.id.trim() : "";
+          if (!isSafeSegment(id)) {
+            return jsonResult3({ ok: false, error: "valid goal id is required" });
+          }
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
+          runAutoMigration(cwd);
+          const goalsDir = join22(cwd, ".pantheon", "goals");
+          const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
+          if (!existsSync17(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
+          const existing = JSON.parse(readFileSync14(filePath, "utf8"));
+          const updated = {
+            ...existing,
+            status: typeof input.status === "string" ? input.status : existing.status,
+            ...typeof input.notes === "string" ? { notes: input.notes } : {},
+            updated_at: (/* @__PURE__ */ new Date()).toISOString()
+          };
+          writeFileSync7(filePath, JSON.stringify(updated, null, 2), "utf8");
+          return jsonResult3({ ok: true, goal: updated });
+        } catch (err) {
+          return jsonResult3({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    },
+    {
+      name: "goal_done",
+      description: "Mark a session goal as completed.",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id"],
+        properties: {
+          id: { type: "string", description: "Goal identifier" },
+          summary: { type: "string", description: "Completion summary" }
+        }
+      },
+      output: {},
+      execute: async (input, context) => {
+        try {
+          const id = typeof input.id === "string" ? input.id.trim() : "";
+          if (!isSafeSegment(id)) {
+            return jsonResult3({ ok: false, error: "valid goal id is required" });
+          }
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
+          runAutoMigration(cwd);
+          const goalsDir = join22(cwd, ".pantheon", "goals");
+          const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
+          if (!existsSync17(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
+          const existing = JSON.parse(readFileSync14(filePath, "utf8"));
+          const updated = {
+            ...existing,
+            status: "completed",
+            ...typeof input.summary === "string" ? { summary: input.summary } : {},
+            updated_at: (/* @__PURE__ */ new Date()).toISOString()
+          };
+          writeFileSync7(filePath, JSON.stringify(updated, null, 2), "utf8");
+          return jsonResult3({ ok: true, goal: updated });
+        } catch (err) {
+          return jsonResult3({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    }
+  ];
+}
+
+// src/pantheon/strategy-store.ts
+var STRATEGY_SCHEMA_VERSION = "2";
+var STRATEGY_DECAY_DAYS = 90;
+var STRATEGY_MIN_ATTEMPTS = 3;
+var DEFAULT_PROMOTION_MIN = 0.8;
+var DEFAULT_ANTI_PATTERN_MAX = 0.6;
+var DEFAULT_MAX_AGE_DAYS = 30;
+var DEFAULT_MAX_ROWS = 1e4;
+var DEFAULT_ATTACH_WINDOW_MINUTES = 60;
+var MAX_ATTACH_WINDOW_MINUTES = 1440;
+var MAX_SUMMARY_BYTES = 4096;
+var STRATEGY_PRUNE_EVERY = 50;
+var DAY_MS = 864e5;
+function readUnitInterval(raw, fallback) {
+  if (raw === void 0 || raw.trim() === "") {
+    return { value: fallback, source: "default", invalid: false };
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+    return { value: fallback, source: "default", invalid: true };
+  }
+  return { value: parsed, source: "env", invalid: false };
+}
+function readPositiveInt(raw, fallback) {
+  if (raw === void 0 || raw.trim() === "") {
+    return { value: fallback, source: "default", invalid: false };
+  }
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return { value: fallback, source: "default", invalid: true };
+  }
+  return { value: parsed, source: "env", invalid: false };
+}
+function resolveStrategyPolicy(env = process.env) {
+  const promotion = readUnitInterval(env.PANTHEON_STRATEGY_PROMOTION_MIN, DEFAULT_PROMOTION_MIN);
+  const attachWindow = readPositiveInt(
+    env.PANTHEON_STRATEGY_ATTACH_WINDOW_MINUTES,
+    DEFAULT_ATTACH_WINDOW_MINUTES
+  );
+  const attachWindowCapped = !attachWindow.invalid && attachWindow.value > MAX_ATTACH_WINDOW_MINUTES;
+  return {
+    minAttempts: STRATEGY_MIN_ATTEMPTS,
+    promotionMin: promotion.value,
+    antiPatternMax: DEFAULT_ANTI_PATTERN_MAX,
+    promotionMinSource: promotion.source,
+    promotionMinInvalid: promotion.invalid,
+    attachWindowMinutes: attachWindowCapped ? MAX_ATTACH_WINDOW_MINUTES : attachWindow.value,
+    attachWindowSource: attachWindow.source,
+    attachWindowInvalid: attachWindow.invalid,
+    attachWindowCapped
+  };
+}
+function resolveRetentionPolicy(env = process.env) {
+  const age = readPositiveInt(env.PANTHEON_STRATEGY_MAX_AGE_DAYS, DEFAULT_MAX_AGE_DAYS);
+  const rows = readPositiveInt(env.PANTHEON_STRATEGY_MAX_ROWS, DEFAULT_MAX_ROWS);
+  return {
+    maxAgeDays: age.value,
+    maxRows: rows.value,
+    maxAgeSource: age.source,
+    maxRowsSource: rows.source,
+    maxAgeInvalid: age.invalid,
+    maxRowsInvalid: rows.invalid
+  };
+}
+function computeDecay(lastSeenIso, now) {
+  const lastSeen = Date.parse(lastSeenIso);
+  if (!Number.isFinite(lastSeen)) return 0;
+  const ageDays = (now.getTime() - lastSeen) / DAY_MS;
+  if (!Number.isFinite(ageDays)) return 0;
+  return Math.max(0, Math.min(1, 1 - ageDays / STRATEGY_DECAY_DAYS));
+}
+function computeEffectiveStatus(attempts, successes, policy) {
+  if (!Number.isFinite(attempts) || attempts < policy.minAttempts || attempts <= 0) {
+    return "candidate";
+  }
+  const rate = Math.max(0, Math.min(1, successes / attempts));
+  if (rate >= policy.promotionMin) return "proven";
+  if (1 - rate > policy.antiPatternMax) return "anti_pattern";
+  return "candidate";
+}
+function deriveStrategyKey(agent, taskType) {
+  const normalizedAgent = agent.trim() || "unknown";
+  const normalizedTask = (taskType ?? "").trim() || "general";
+  return `${normalizedAgent}:${normalizedTask}`;
+}
+var STRATEGY_DDL = `
+  CREATE TABLE IF NOT EXISTS strategy_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL UNIQUE,
+    strategy_id TEXT NOT NULL,
+    agent TEXT NOT NULL,
+    task_type TEXT,
+    step_key TEXT,
+    wave INTEGER,
+    slice_count INTEGER,
+    parallel INTEGER,
+    duration_ms INTEGER,
+    files_touched INTEGER,
+    success INTEGER NOT NULL,
+    themis_verdict TEXT,
+    retries INTEGER,
+    error_class TEXT,
+    blocked_at TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_strategy_runs_strategy
+    ON strategy_runs(strategy_id, agent, created_at);
+  CREATE INDEX IF NOT EXISTS idx_strategy_runs_step
+    ON strategy_runs(step_key, created_at);
+  CREATE INDEX IF NOT EXISTS idx_strategy_runs_created
+    ON strategy_runs(created_at);
+
+  CREATE TABLE IF NOT EXISTS strategy_stats (
+    strategy_id TEXT NOT NULL,
+    agent TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    successes INTEGER NOT NULL DEFAULT 0,
+    objections INTEGER NOT NULL DEFAULT 0,
+    files_total INTEGER NOT NULL DEFAULT 0,
+    duration_ms_total INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'candidate',
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    PRIMARY KEY (strategy_id, agent)
+  );
+
+  CREATE TABLE IF NOT EXISTS strategy_docs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    strategy_id TEXT NOT NULL,
+    agent TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(strategy_id, agent)
+  );
+
+  CREATE VIRTUAL TABLE IF NOT EXISTS strategy_docs_fts USING fts5(
+    strategy_id,
+    agent,
+    summary,
+    content='strategy_docs',
+    content_rowid='id',
+    tokenize='porter unicode61'
+  );
+  CREATE TRIGGER IF NOT EXISTS strategy_docs_ai AFTER INSERT ON strategy_docs BEGIN
+    INSERT INTO strategy_docs_fts(rowid, strategy_id, agent, summary)
+    VALUES (new.id, new.strategy_id, new.agent, new.summary);
+  END;
+  CREATE TRIGGER IF NOT EXISTS strategy_docs_ad AFTER DELETE ON strategy_docs BEGIN
+    INSERT INTO strategy_docs_fts(strategy_docs_fts, rowid, strategy_id, agent, summary)
+    VALUES ('delete', old.id, old.strategy_id, old.agent, old.summary);
+  END;
+  CREATE TRIGGER IF NOT EXISTS strategy_docs_au AFTER UPDATE ON strategy_docs BEGIN
+    INSERT INTO strategy_docs_fts(strategy_docs_fts, rowid, strategy_id, agent, summary)
+    VALUES ('delete', old.id, old.strategy_id, old.agent, old.summary);
+    INSERT INTO strategy_docs_fts(rowid, strategy_id, agent, summary)
+    VALUES (new.id, new.strategy_id, new.agent, new.summary);
+  END;
+
+  -- stored_status is the persisted default-ladder projection kept for raw-SQL
+  -- consumers. CREATE VIEW IF NOT EXISTS cannot drop a column, so it stays
+  -- here until a v3 migration redefines the view; tool payloads never expose it
+  -- (they report the status computed with the policy actually applied).
+  CREATE VIEW IF NOT EXISTS strategy_effective AS
+  SELECT
+    s.strategy_id,
+    s.agent,
+    s.attempts,
+    s.successes,
+    s.objections,
+    s.files_total,
+    s.duration_ms_total,
+    s.status AS stored_status,
+    s.first_seen,
+    s.last_seen,
+    CASE WHEN s.attempts > 0 THEN CAST(s.successes AS REAL) / s.attempts ELSE 0.0 END
+      AS success_rate,
+    CASE WHEN s.attempts > 0 THEN CAST(s.attempts - s.successes AS REAL) / s.attempts ELSE 0.0 END
+      AS failure_rate,
+    max(
+      0.0,
+      1.0 - (julianday('now') - julianday(s.last_seen)) / 90.0
+    ) AS decay,
+    CASE
+      WHEN s.attempts >= 3
+        AND CAST(s.successes AS REAL) / s.attempts >= 0.8 THEN 'proven'
+      WHEN s.attempts >= 3
+        AND CAST(s.attempts - s.successes AS REAL) / s.attempts > 0.6 THEN 'anti_pattern'
+      ELSE 'candidate'
+    END AS effective_status
+  FROM strategy_stats s;
+
+  CREATE TABLE IF NOT EXISTS strategy_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+
+  -- A BLOCK that could not be attributed to a run. Never pruned: a reviewer's
+  -- objection must not vanish without trace.
+  CREATE TABLE IF NOT EXISTS strategy_objections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent TEXT,
+    step_key TEXT,
+    strategy_id TEXT,
+    reason TEXT NOT NULL,
+    verdict TEXT NOT NULL,
+    candidates TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_strategy_objections_created
+    ON strategy_objections(created_at);
+`;
+function readSchemaVersion(db) {
+  const table = db.prepare(
+    "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'strategy_meta'"
+  ).get();
+  if (!table) return null;
+  const row = db.prepare("SELECT value FROM strategy_meta WHERE key = 'schema_version'").get();
+  return row?.value ?? null;
+}
+function objectNames(db) {
+  const rows = db.prepare("SELECT name FROM sqlite_master").all();
+  return new Set(rows.map((row) => row.name));
+}
+function tableColumns(db, table) {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all();
+  return rows.map((row) => row.name);
+}
+function ensureStrategySchema(db) {
+  const existing = readSchemaVersion(db);
+  if (existing !== null && Number(existing) > Number(STRATEGY_SCHEMA_VERSION)) {
+    throw new Error(
+      `strategy schema_version "${existing}" is newer than supported "${STRATEGY_SCHEMA_VERSION}"; refusing to write`
+    );
+  }
+  const before = objectNames(db);
+  const hasRuns = before.has("strategy_runs");
+  const hasBlockedAt = hasRuns && tableColumns(db, "strategy_runs").includes("blocked_at");
+  const hasObjections = before.has("strategy_objections");
+  if (existing === STRATEGY_SCHEMA_VERSION && hasBlockedAt && hasObjections) {
+    return { applied: false, schemaVersion: existing, created: [], from: existing };
+  }
+  const from = existing ?? (hasRuns ? "unversioned" : null);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(STRATEGY_DDL);
+    if (hasRuns && !hasBlockedAt) {
+      db.exec("ALTER TABLE strategy_runs ADD COLUMN blocked_at TEXT");
+    }
+    db.prepare(
+      `INSERT INTO strategy_meta (key, value) VALUES ('schema_version', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+    ).run(STRATEGY_SCHEMA_VERSION);
+    db.exec("COMMIT");
+  } catch (err) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+    }
+    throw err;
+  }
+  const after = objectNames(db);
+  return {
+    applied: true,
+    schemaVersion: STRATEGY_SCHEMA_VERSION,
+    created: [...after].filter((name) => !before.has(name)).sort(),
+    from
+  };
+}
+var ensuredHandles = /* @__PURE__ */ new WeakMap();
+function openStrategyDb(workspaceDir) {
+  const db = openMemoryDb(workspaceDir);
+  if (!ensuredHandles.has(db)) ensuredHandles.set(db, ensureStrategySchema(db));
+  return db;
+}
+var insertCounters = /* @__PURE__ */ new WeakMap();
+function normalizeVerdict(raw) {
+  if (typeof raw !== "string") return null;
+  const value = raw.trim().toUpperCase();
+  return value === "BLOCK" || value === "APPROVE" || value === "APPROVE_WITH_NOTES" ? value : null;
+}
+function normalizeTimestamp(raw, field) {
+  if (raw === void 0 || raw === null || raw === "") return null;
+  const parsed = Date.parse(raw);
+  if (!Number.isFinite(parsed)) throw new Error(`${field} must be an ISO-8601 timestamp`);
+  return new Date(parsed).toISOString();
+}
+function truncateUtf8(value, maxBytes) {
+  const encoder = new TextEncoder();
+  if (encoder.encode(value).length <= maxBytes) return { text: value, truncated: false };
+  let used = 0;
+  let text2 = "";
+  for (const char of value) {
+    const size = encoder.encode(char).length;
+    if (used + size > maxBytes) break;
+    used += size;
+    text2 += char;
+  }
+  return { text: text2, truncated: true };
+}
+function readAggregate(db, strategyId, agent) {
+  const row = db.prepare(
+    `SELECT strategy_id, agent, attempts, successes, objections, files_total,
+              duration_ms_total, status, first_seen, last_seen
+         FROM strategy_stats WHERE strategy_id = ? AND agent = ?`
+  ).get(strategyId, agent);
+  return row ?? null;
+}
+function aggregateFields(aggregate, policy) {
+  if (!aggregate) return {};
+  return {
+    attempts: aggregate.attempts,
+    successes: aggregate.successes,
+    objections: aggregate.objections,
+    status: computeEffectiveStatus(aggregate.attempts, aggregate.successes, policy)
+  };
+}
+function recomputeStoredStatus(db, strategyId, agent) {
+  db.prepare(
+    `UPDATE strategy_stats SET status = CASE
+        WHEN attempts >= 3 AND CAST(successes AS REAL) / attempts >= 0.8 THEN 'proven'
+        WHEN attempts >= 3 AND CAST(attempts - successes AS REAL) / attempts > 0.6
+          THEN 'anti_pattern'
+        ELSE 'candidate'
+      END
+      WHERE strategy_id = ? AND agent = ?`
+  ).run(strategyId, agent);
+}
+function nextAttemptForStep(db, stepKey) {
+  const row = db.prepare("SELECT count(*) AS n FROM strategy_runs WHERE step_key = ?").get(stepKey);
+  return Number(row?.n ?? 0) + 1;
+}
+function clampInt(value, fallback, min, max) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(value)));
+}
+function recordStrategyRun(workspaceDir, input) {
+  const strategyId = typeof input.strategyId === "string" ? input.strategyId.trim() : "";
+  const agent = typeof input.agent === "string" ? input.agent.trim() : "";
+  if (!strategyId) throw new Error("strategyId is required");
+  if (!agent) throw new Error("agent is required");
+  if (typeof input.success !== "boolean") throw new Error("success must be a boolean");
+  const db = openStrategyDb(workspaceDir);
+  const env = input.env ?? process.env;
+  const policy = resolveStrategyPolicy(env);
+  const createdAt = normalizeTimestamp(input.createdAt, "createdAt") ?? (/* @__PURE__ */ new Date()).toISOString();
+  const verdict = normalizeVerdict(input.themisVerdict);
+  const rawVerdict = typeof input.themisVerdict === "string" ? input.themisVerdict.trim() : "";
+  if (rawVerdict && !verdict) {
+    throw new Error("themisVerdict must be APPROVE, APPROVE_WITH_NOTES or BLOCK");
+  }
+  const stepKey = typeof input.stepKey === "string" && input.stepKey.trim() ? input.stepKey.trim() : null;
+  const attempt = typeof input.attempt === "number" && Number.isFinite(input.attempt) ? Math.trunc(input.attempt) : null;
+  const runId = typeof input.runId === "string" && input.runId.trim() ? input.runId.trim() : stepKey ? `${stepKey}:${attempt ?? nextAttemptForStep(db, stepKey)}` : newRunId();
+  const requestedSuccess = input.success;
+  const success = requestedSuccess && verdict !== "BLOCK";
+  const forcedSuccessZero = requestedSuccess && verdict === "BLOCK";
+  const objections = verdict === "BLOCK" ? 1 : 0;
+  const blockedAt = verdict === "BLOCK" ? createdAt : null;
+  const filesTouched = Math.max(0, Math.trunc(input.filesTouched ?? 0));
+  const durationMs = Math.max(0, Math.trunc(input.durationMs ?? 0));
+  const retries = Math.max(0, Math.trunc(input.retries ?? 0));
+  const rawSummary = typeof input.summary === "string" ? input.summary.trim() : "";
+  const summary = rawSummary ? truncateUtf8(rawSummary, MAX_SUMMARY_BYTES) : null;
+  let inserted = false;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const insert = db.prepare(
+      `INSERT INTO strategy_runs (
+           run_id, strategy_id, agent, task_type, step_key, wave, slice_count, parallel,
+           duration_ms, files_touched, success, themis_verdict, retries, error_class,
+           blocked_at, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(run_id) DO NOTHING`
+    ).run(
+      runId,
+      strategyId,
+      agent,
+      typeof input.taskType === "string" && input.taskType.trim() ? input.taskType.trim() : null,
+      stepKey,
+      typeof input.wave === "number" && Number.isFinite(input.wave) ? Math.trunc(input.wave) : null,
+      typeof input.sliceCount === "number" && Number.isFinite(input.sliceCount) ? Math.trunc(input.sliceCount) : null,
+      typeof input.parallel === "boolean" ? input.parallel ? 1 : 0 : null,
+      durationMs,
+      filesTouched,
+      success ? 1 : 0,
+      verdict,
+      retries,
+      typeof input.errorClass === "string" && input.errorClass.trim() ? input.errorClass.trim() : null,
+      blockedAt,
+      createdAt
+    );
+    inserted = Number(insert.changes ?? 0) > 0;
+    if (inserted) {
+      db.prepare(
+        `INSERT INTO strategy_stats (
+           strategy_id, agent, attempts, successes, objections, files_total,
+           duration_ms_total, status, first_seen, last_seen
+         ) VALUES (?, ?, 1, ?, ?, ?, ?, 'candidate', ?, ?)
+         ON CONFLICT(strategy_id, agent) DO UPDATE SET
+           attempts = attempts + 1,
+           successes = successes + excluded.successes,
+           objections = objections + excluded.objections,
+           files_total = files_total + excluded.files_total,
+           duration_ms_total = duration_ms_total + excluded.duration_ms_total,
+           last_seen = CASE
+             WHEN excluded.last_seen > strategy_stats.last_seen THEN excluded.last_seen
+             ELSE strategy_stats.last_seen
+           END,
+           first_seen = CASE
+             WHEN excluded.first_seen < strategy_stats.first_seen THEN excluded.first_seen
+             ELSE strategy_stats.first_seen
+           END`
+      ).run(
+        strategyId,
+        agent,
+        success ? 1 : 0,
+        objections,
+        filesTouched,
+        durationMs,
+        createdAt,
+        createdAt
+      );
+      recomputeStoredStatus(db, strategyId, agent);
+      if (summary?.text) {
+        db.prepare(
+          `INSERT INTO strategy_docs (strategy_id, agent, summary, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(strategy_id, agent) DO UPDATE SET
+             summary = excluded.summary,
+             updated_at = excluded.updated_at`
+        ).run(strategyId, agent, summary.text, createdAt, createdAt);
+      }
+    }
+    db.exec("COMMIT");
+  } catch (err) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+    }
+    throw err;
+  }
+  const aggregate = readAggregate(db, strategyId, agent);
+  if (!inserted) {
+    const stored = db.prepare("SELECT success, themis_verdict AS verdict FROM strategy_runs WHERE run_id = ?").get(runId);
+    return {
+      ok: true,
+      recorded: false,
+      reason: "duplicate_run_id",
+      runId,
+      strategyId,
+      agent,
+      success: Number(stored?.success ?? 0) === 1,
+      requestedSuccess,
+      ...aggregateFields(aggregate, policy),
+      ...summary?.truncated ? { summaryTruncated: true } : {},
+      prune: { applied: false, deletedByAge: 0, deletedByRows: 0 }
+    };
+  }
+  const counter = (insertCounters.get(db) ?? 0) + 1;
+  insertCounters.set(db, counter);
+  let prune = { applied: false, deletedByAge: 0, deletedByRows: 0 };
+  if (counter % STRATEGY_PRUNE_EVERY === 0) {
+    const pass = pruneStrategyRuns(workspaceDir, { env });
+    prune = {
+      applied: pass.ok,
+      deletedByAge: pass.deletedByAge,
+      deletedByRows: pass.deletedByRows,
+      ...pass.error ? { error: pass.error } : {}
+    };
+  }
+  return {
+    ok: true,
+    recorded: true,
+    runId,
+    strategyId,
+    agent,
+    success,
+    requestedSuccess,
+    forcedSuccessZero,
+    ...aggregateFields(aggregate, policy),
+    ...summary?.truncated ? { summaryTruncated: true } : {},
+    prune
+  };
+}
+function pruneStrategyRuns(workspaceDir, options = {}) {
+  const empty = { deletedByAge: 0, deletedByRows: 0 };
+  try {
+    const db = openStrategyDb(workspaceDir);
+    const retention = resolveRetentionPolicy(options.env ?? process.env);
+    const now = options.now ?? /* @__PURE__ */ new Date();
+    const cutoff = new Date(now.getTime() - retention.maxAgeDays * DAY_MS).toISOString();
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const byAge = db.prepare("DELETE FROM strategy_runs WHERE created_at < ?").run(cutoff);
+      const remainingAfterAge = Number(
+        db.prepare("SELECT count(*) AS n FROM strategy_runs").get()?.n ?? 0
+      );
+      const excess = Math.max(0, remainingAfterAge - retention.maxRows);
+      const byRows = excess > 0 ? db.prepare(
+        `DELETE FROM strategy_runs WHERE id IN (
+                   SELECT id FROM strategy_runs ORDER BY created_at ASC, id ASC LIMIT ?
+                 )`
+      ).run(excess) : { changes: 0 };
+      const remainingRuns = Number(
+        db.prepare("SELECT count(*) AS n FROM strategy_runs").get()?.n ?? 0
+      );
+      const aggregateRows = Number(
+        db.prepare("SELECT count(*) AS n FROM strategy_stats").get()?.n ?? 0
+      );
+      db.exec("COMMIT");
+      return {
+        ok: true,
+        deletedByAge: Number(byAge.changes ?? 0),
+        deletedByRows: Number(byRows.changes ?? 0),
+        remainingRuns,
+        aggregateRows
+      };
+    } catch (err) {
+      try {
+        db.exec("ROLLBACK");
+      } catch {
+      }
+      throw err;
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      ...empty,
+      remainingRuns: -1,
+      aggregateRows: -1,
+      error: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
+function tokenize3(rawQuery) {
+  return rawQuery.replace(/[^\p{L}\p{N}_-]+/gu, " ").trim().split(/\s+/).filter((token) => token.length >= 2);
+}
+var HIT_COLUMNS = `s.strategy_id AS strategy_id, s.agent AS agent, s.attempts AS attempts,
+  s.successes AS successes, s.objections AS objections, s.files_total AS files_total,
+  s.duration_ms_total AS duration_ms_total,
+  s.first_seen AS first_seen, s.last_seen AS last_seen`;
+function toHit(row, now, policy) {
+  if (!row.strategy_id || !row.agent) return null;
+  const attempts = Number(row.attempts ?? 0);
+  const successes = Number(row.successes ?? 0);
+  const lastSeen = String(row.last_seen ?? "");
+  const successRate = attempts > 0 ? successes / attempts : 0;
+  return {
+    strategy_id: row.strategy_id,
+    agent: row.agent,
+    attempts,
+    successes,
+    objections: Number(row.objections ?? 0),
+    files_total: Number(row.files_total ?? 0),
+    duration_ms_total: Number(row.duration_ms_total ?? 0),
+    success_rate: successRate,
+    failure_rate: attempts > 0 ? (attempts - successes) / attempts : 0,
+    decay: computeDecay(lastSeen, now),
+    status: computeEffectiveStatus(attempts, successes, policy),
+    first_seen: String(row.first_seen ?? ""),
+    last_seen: lastSeen,
+    summary: row.summary ?? null,
+    ...typeof row.score === "number" ? { score: row.score } : {}
+  };
+}
+function rankHits(hits) {
+  return hits.sort((a, b) => {
+    const left = a.success_rate * a.decay;
+    const right = b.success_rate * b.decay;
+    if (right !== left) return right - left;
+    if (b.attempts !== a.attempts) return b.attempts - a.attempts;
+    if (a.score !== void 0 && b.score !== void 0 && a.score !== b.score) {
+      return a.score - b.score;
+    }
+    return a.strategy_id.localeCompare(b.strategy_id);
+  });
+}
+function queryStrategies(workspaceDir, options = {}) {
+  const env = options.env ?? process.env;
+  const policy = resolveStrategyPolicy(env);
+  const now = options.now ?? /* @__PURE__ */ new Date();
+  const limit = clampInt(options.limit, 10, 1, 100);
+  const strategyId = options.strategyId?.trim() || null;
+  const agent = options.agent?.trim() || null;
+  const statusFilter = options.status && options.status !== "all" ? options.status : null;
+  try {
+    const db = openStrategyDb(workspaceDir);
+    const rawQuery = options.query?.trim() ?? "";
+    const tokens = tokenize3(rawQuery);
+    let rows = [];
+    let fts = false;
+    if (tokens.length > 0) {
+      try {
+        const expression = tokens.map((token) => `"${token.replace(/"/g, '""')}"*`).join(" OR ");
+        rows = db.prepare(
+          `SELECT ${HIT_COLUMNS}, d.summary AS summary,
+                    bm25(strategy_docs_fts) AS score
+               FROM strategy_docs_fts
+               JOIN strategy_docs d ON d.id = strategy_docs_fts.rowid
+               JOIN strategy_stats s
+                 ON s.strategy_id = d.strategy_id AND s.agent = d.agent
+              WHERE strategy_docs_fts MATCH ?
+              ORDER BY score
+              LIMIT 500`
+        ).all(expression);
+        fts = true;
+      } catch {
+        fts = false;
+      }
+      if (!fts) {
+        const escaped = rawQuery.replace(/[\\%_]/g, "\\$&");
+        rows = db.prepare(
+          `SELECT ${HIT_COLUMNS}, d.summary AS summary
+               FROM strategy_docs d
+               JOIN strategy_stats s
+                 ON s.strategy_id = d.strategy_id AND s.agent = d.agent
+              WHERE d.summary LIKE ? ESCAPE '\\'
+              ORDER BY s.attempts DESC
+              LIMIT 500`
+        ).all(`%${escaped}%`);
+      }
+    } else {
+      rows = db.prepare(
+        `SELECT ${HIT_COLUMNS}, d.summary AS summary
+             FROM strategy_stats s
+             LEFT JOIN strategy_docs d
+               ON d.strategy_id = s.strategy_id AND d.agent = s.agent
+            LIMIT 500`
+      ).all();
+    }
+    const hits = rows.map((row) => toHit(row, now, policy)).filter((hit) => hit !== null).filter((hit) => strategyId ? hit.strategy_id === strategyId : true).filter((hit) => agent ? hit.agent === agent : true).filter((hit) => statusFilter ? hit.status === statusFilter : true);
+    const results = rankHits(hits).slice(0, limit);
+    return { ok: true, count: results.length, fts, policy, results };
+  } catch (err) {
+    return {
+      ok: false,
+      count: 0,
+      fts: false,
+      policy,
+      results: [],
+      error: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
+function strategyStats(workspaceDir, options = {}) {
+  const env = options.env ?? process.env;
+  const policy = resolveStrategyPolicy(env);
+  const retention = resolveRetentionPolicy(env);
+  try {
+    const db = openStrategyDb(workspaceDir);
+    const rows = db.prepare("SELECT strategy_id, agent, attempts, successes FROM strategy_stats").all();
+    const by_status = {
+      candidate: 0,
+      proven: 0,
+      anti_pattern: 0
+    };
+    for (const row of rows) {
+      by_status[computeEffectiveStatus(Number(row.attempts ?? 0), Number(row.successes ?? 0), policy)] += 1;
+    }
+    const runs = db.prepare("SELECT count(*) AS n FROM strategy_runs").get();
+    const bounds = db.prepare("SELECT min(created_at) AS oldest, max(created_at) AS newest FROM strategy_runs").get();
+    const meta = db.prepare("SELECT value FROM strategy_meta WHERE key = 'schema_version'").get();
+    const objections = db.prepare("SELECT count(*) AS n, max(created_at) AS latest FROM strategy_objections").get();
+    return {
+      ok: true,
+      schema_version: String(meta?.value ?? "unknown"),
+      runs: Number(runs?.n ?? 0),
+      strategies: rows.length,
+      by_status,
+      policy,
+      retention,
+      oldest_run: bounds?.oldest ?? null,
+      newest_run: bounds?.newest ?? null,
+      unattributed_objections: Number(objections?.n ?? 0),
+      last_unattributed_objection_at: objections?.latest ?? null
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      schema_version: "unknown",
+      runs: 0,
+      strategies: 0,
+      by_status: { candidate: 0, proven: 0, anti_pattern: 0 },
+      policy,
+      retention,
+      oldest_run: null,
+      newest_run: null,
+      unattributed_objections: 0,
+      last_unattributed_objection_at: null,
+      error: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
+var TARGET_COLUMNS = "id, run_id, strategy_id, agent, success, themis_verdict, blocked_at, created_at";
+function toCandidate(row) {
+  return {
+    runId: row.run_id,
+    strategyId: row.strategy_id,
+    agent: row.agent,
+    createdAt: row.created_at
+  };
+}
+function resolveAttachTarget(db, params) {
+  const select = `SELECT ${TARGET_COLUMNS} FROM strategy_runs`;
+  if (params.stepKey) {
+    const target = db.prepare(`${select} WHERE step_key = ? ORDER BY created_at DESC, id DESC LIMIT 1`).get(params.stepKey);
+    return target ? { target } : { reason: "no_run" };
+  }
+  if (params.strategyId) {
+    const target = db.prepare(
+      `${select} WHERE strategy_id = ? AND (? IS NULL OR agent = ?)
+          ORDER BY created_at DESC, id DESC LIMIT 1`
+    ).get(params.strategyId, params.agent, params.agent);
+    return target ? { target } : { reason: "no_run" };
+  }
+  const windowStart = new Date(
+    params.now.getTime() - params.policy.attachWindowMinutes * 6e4
+  ).toISOString();
+  const rows = db.prepare(
+    `${select} WHERE (? IS NULL OR agent = ?) AND created_at >= ?
+        ORDER BY created_at DESC, id DESC LIMIT 6`
+  ).all(params.agent, params.agent, windowStart);
+  if (rows.length === 0) return { reason: "no_run" };
+  if (rows.length > 1) {
+    return { reason: "ambiguous_target", candidates: rows.slice(0, 5).map(toCandidate) };
+  }
+  const only = rows[0];
+  return only ? { target: only } : { reason: "no_run" };
+}
+function insertUnattributedObjection(db, params) {
+  const info = db.prepare(
+    `INSERT INTO strategy_objections (agent, step_key, strategy_id, reason, verdict, candidates, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    params.agent,
+    params.stepKey,
+    params.strategyId,
+    params.reason,
+    params.verdict,
+    params.candidates && params.candidates.length > 0 ? JSON.stringify(params.candidates) : null,
+    params.createdAt
+  );
+  return Number(info.lastInsertRowid ?? 0);
+}
+var BLOCK_VERDICT_SQL = "UPDATE strategy_runs SET themis_verdict = ? WHERE id = ?";
+var BLOCK_FLAG_SQL = "UPDATE strategy_runs SET success = 0, blocked_at = COALESCE(blocked_at, ?) WHERE id = ?";
+var BLOCK_AGGREGATE_SQL = "UPDATE strategy_stats SET successes = max(0, successes - ?), objections = objections + ? WHERE strategy_id = ? AND agent = ?";
+function attachThemisVerdict(workspaceDir, input) {
+  const verdict = normalizeVerdict(input.verdict);
+  if (!verdict) {
+    return {
+      ok: false,
+      attached: false,
+      reason: "invalid_verdict",
+      error: `invalid verdict "${String(input.verdict)}"`
+    };
+  }
+  const policy = resolveStrategyPolicy();
+  const stepKey = input.stepKey?.trim() || null;
+  const strategyId = input.strategyId?.trim() || null;
+  const agent = input.agent?.trim() || null;
+  const now = input.now ?? /* @__PURE__ */ new Date();
+  const nowIso = now.toISOString();
+  try {
+    const db = openStrategyDb(workspaceDir);
+    db.exec("BEGIN IMMEDIATE");
+    let resolution;
+    let forcedSuccessZero = false;
+    let objectionDelta = 0;
+    let objectionId;
+    try {
+      resolution = resolveAttachTarget(db, { stepKey, strategyId, agent, now, policy });
+      const target2 = resolution.target;
+      if (!target2) {
+        if (verdict === "BLOCK") {
+          objectionId = insertUnattributedObjection(db, {
+            verdict,
+            stepKey,
+            strategyId,
+            agent,
+            reason: resolution.reason ?? "no_run",
+            candidates: resolution.candidates,
+            createdAt: nowIso
+          });
+        }
+      } else {
+        forcedSuccessZero = verdict === "BLOCK" && Number(target2.success) === 1;
+        objectionDelta = verdict === "BLOCK" && target2.blocked_at === null ? 1 : 0;
+        db.prepare(BLOCK_VERDICT_SQL).run(verdict, target2.id);
+        if (verdict === "BLOCK") {
+          db.prepare(BLOCK_FLAG_SQL).run(nowIso, target2.id);
+        }
+        if (forcedSuccessZero || objectionDelta > 0) {
+          db.prepare(BLOCK_AGGREGATE_SQL).run(
+            forcedSuccessZero ? 1 : 0,
+            objectionDelta,
+            target2.strategy_id,
+            target2.agent
+          );
+          recomputeStoredStatus(db, target2.strategy_id, target2.agent);
+        }
+      }
+      db.exec("COMMIT");
+    } catch (err) {
+      try {
+        db.exec("ROLLBACK");
+      } catch {
+      }
+      throw err;
+    }
+    const target = resolution.target;
+    if (!target) {
+      return {
+        ok: true,
+        attached: false,
+        reason: resolution.reason ?? "no_run",
+        ...resolution.candidates && resolution.candidates.length > 0 ? { candidates: resolution.candidates } : {},
+        ...objectionId !== void 0 ? { unattributedObjectionId: objectionId } : {}
+      };
+    }
+    const aggregate = readAggregate(db, target.strategy_id, target.agent);
+    return {
+      ok: true,
+      attached: true,
+      runId: target.run_id,
+      strategyId: target.strategy_id,
+      agent: target.agent,
+      forcedSuccessZero,
+      objections: aggregate?.objections ?? 0,
+      status: aggregate ? computeEffectiveStatus(aggregate.attempts, aggregate.successes, policy) : "candidate"
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      attached: false,
+      error: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
+function recordStrategyRunSafe(workspaceDir, input) {
+  try {
+    return recordStrategyRun(workspaceDir, input);
+  } catch (err) {
+    return {
+      ok: false,
+      recorded: false,
+      error: err instanceof Error ? err.message : String(err),
+      ...input.strategyId ? { strategyId: input.strategyId } : {},
+      ...input.agent ? { agent: input.agent } : {}
+    };
+  }
+}
+function attachThemisVerdictSafe(workspaceDir, input) {
+  try {
+    return attachThemisVerdict(workspaceDir, input);
+  } catch (err) {
+    return {
+      ok: false,
+      attached: false,
+      error: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
+function newRunId() {
+  return `run-${randomUUID3()}`;
+}
+
 // src/pantheon/themis-reflex.ts
 var ThemisReflexController = class {
   states = /* @__PURE__ */ new Map();
@@ -16053,21 +17753,21 @@ function assertSafeStepKey(stepKey) {
 }
 function resolveLedgerPath(workspaceDir) {
   const sharedRoot = resolveSharedPantheonRoot(workspaceDir);
-  const dir = join21(sharedRoot, ".pantheon", "ledger");
-  mkdirSync10(dir, { recursive: true });
-  const canonicalDir = realpathSync7(dir);
-  const filePath = resolve16(canonicalDir, "step-ledger.json");
-  const prefix = canonicalDir.endsWith(sep7) ? canonicalDir : `${canonicalDir}${sep7}`;
+  const dir = join23(sharedRoot, ".pantheon", "ledger");
+  mkdirSync11(dir, { recursive: true });
+  const canonicalDir = realpathSync9(dir);
+  const filePath = resolve18(canonicalDir, "step-ledger.json");
+  const prefix = canonicalDir.endsWith(sep8) ? canonicalDir : `${canonicalDir}${sep8}`;
   if (!filePath.startsWith(prefix)) {
     throw new Error("Path traversal denied for step-ledger.json");
   }
   return filePath;
 }
 function readLedgerFileAtPath(filePath) {
-  if (!existsSync16(filePath)) return { version: 1, steps: {} };
+  if (!existsSync18(filePath)) return { version: 1, steps: {} };
   let raw;
   try {
-    raw = readFileSync13(filePath, "utf8");
+    raw = readFileSync15(filePath, "utf8");
   } catch (err) {
     throw new Error(
       `step-ledger cannot be read at ${filePath}: ${err instanceof Error ? err.message : String(err)}`
@@ -16111,10 +17811,10 @@ function sleepMs(ms) {
   Atomics.wait(sleepBuffer, 0, 0, ms);
 }
 function resolveLockPath(ledgerPath) {
-  return join21(dirname14(ledgerPath), ".step-ledger.lock");
+  return join23(dirname14(ledgerPath), ".step-ledger.lock");
 }
 function createLockToken() {
-  return `${process.pid}:${randomUUID3()}`;
+  return `${process.pid}:${randomUUID4()}`;
 }
 function lockOwnerPid(token) {
   const [pid] = token.trim().split(":");
@@ -16123,24 +17823,24 @@ function lockOwnerPid(token) {
 }
 function readLockToken(lockPath) {
   try {
-    return readFileSync13(lockPath, "utf8").trim();
+    return readFileSync15(lockPath, "utf8").trim();
   } catch {
     return void 0;
   }
 }
 function sweepOrphanTempFiles(filePath) {
   const dir = dirname14(filePath);
-  const prefix = `${basename6(filePath)}.tmp.`;
+  const prefix = `${basename7(filePath)}.tmp.`;
   let entries;
   try {
-    entries = readdirSync3(dir);
+    entries = readdirSync4(dir);
   } catch {
     return;
   }
   const now = Date.now();
   for (const entry of entries) {
     if (!entry.startsWith(prefix)) continue;
-    const candidate = join21(dir, entry);
+    const candidate = join23(dir, entry);
     try {
       if (now - statSync6(candidate).mtimeMs > TMP_SWEEP_AGE_MS) unlinkSync4(candidate);
     } catch {
@@ -16239,12 +17939,12 @@ function assertLockStillOwned(lockPath, token) {
 function writeLedgerFileAtomic(filePath, store2) {
   const tmpPath = `${filePath}.tmp.${process.pid}`;
   try {
-    writeFileSync7(tmpPath, `${JSON.stringify(store2, null, 2)}
+    writeFileSync8(tmpPath, `${JSON.stringify(store2, null, 2)}
 `, "utf8");
     renameSync4(tmpPath, filePath);
   } catch (err) {
     try {
-      if (existsSync16(tmpPath)) unlinkSync4(tmpPath);
+      if (existsSync18(tmpPath)) unlinkSync4(tmpPath);
     } catch {
     }
     throw err;
@@ -16281,7 +17981,7 @@ function canTransitionStepToDone(step) {
   }
   return { allowed: true };
 }
-function jsonResult3(payload) {
+function jsonResult4(payload) {
   return { output: JSON.stringify(payload) };
 }
 function evaluateLaunchGate(entry, store2) {
@@ -16466,7 +18166,7 @@ function describeLedgerError(err) {
 }
 async function preserveLedgerBytes(cwd, fn) {
   const filePath = resolveLedgerPath(cwd);
-  const beforeText = existsSync16(filePath) ? readFileSync13(filePath, "utf8") : void 0;
+  const beforeText = existsSync18(filePath) ? readFileSync15(filePath, "utf8") : void 0;
   let snapshot;
   if (beforeText !== void 0) {
     try {
@@ -16480,10 +18180,52 @@ async function preserveLedgerBytes(cwd, fn) {
   }
   const result = await fn();
   if (!snapshot) return result;
-  const afterText = existsSync16(filePath) ? readFileSync13(filePath, "utf8") : void 0;
+  const afterText = existsSync18(filePath) ? readFileSync15(filePath, "utf8") : void 0;
   if (afterText === beforeText) return result;
   restoreLedgerSnapshotUnderLock(cwd, snapshot);
   return result;
+}
+function recordStepStrategyOutcome(workspaceDir, ledger, entry, params) {
+  let waveIndex = null;
+  let parallel = null;
+  try {
+    const graph = buildDependencyGraph(Object.values(ledger.steps));
+    const index = graph.waves.findIndex((wave) => wave.includes(entry.stepKey));
+    if (index >= 0) {
+      waveIndex = index;
+      parallel = (graph.waves[index]?.length ?? 0) > 1;
+    }
+  } catch {
+  }
+  return recordStrategyRunSafe(workspaceDir, {
+    strategyId: deriveStrategyKey(entry.agent, entry.taskType),
+    agent: entry.agent,
+    success: params.success,
+    taskType: entry.taskType ?? null,
+    stepKey: entry.stepKey,
+    wave: waveIndex,
+    // Slice count is not tracked by the ledger; reporting mutated files as
+    // "slices" would be a fabricated metric, so it stays unknown.
+    sliceCount: null,
+    parallel,
+    durationMs: entry.lastMutationAt !== null ? Math.max(0, params.now - entry.lastMutationAt) : null,
+    filesTouched: entry.mutatedFiles.length,
+    retries: entry.verificationFailures ?? 0,
+    errorClass: params.errorClass ?? null,
+    createdAt: new Date(params.now).toISOString()
+  });
+}
+function strategyPayload(result) {
+  return {
+    recorded: result.recorded,
+    ...result.runId ? { runId: result.runId } : {},
+    ...result.strategyId ? { strategyId: result.strategyId } : {},
+    ...typeof result.success === "boolean" ? { success: result.success } : {},
+    ...result.status ? { status: result.status } : {},
+    ...typeof result.attempts === "number" ? { attempts: result.attempts } : {},
+    ...result.reason ? { reason: result.reason } : {},
+    ...result.error ? { error: result.error } : {}
+  };
 }
 function emitBlocked(stepKey, entry) {
   if (!entry) return;
@@ -16649,8 +18391,8 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
           if (typeof input.stepKey === "string" && input.stepKey.trim()) {
             const key2 = assertSafeStepKey(input.stepKey.trim());
             const step = store2.steps[key2];
-            if (!step) return jsonResult3({ ok: false, error: "step_not_found", stepKey: key2 });
-            return jsonResult3({
+            if (!step) return jsonResult4({ ok: false, error: "step_not_found", stepKey: key2 });
+            return jsonResult4({
               ok: true,
               step,
               gate: canTransitionStepToDone(step),
@@ -16658,7 +18400,7 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
               unmet: unmetDependencies(nodes)[key2] ?? []
             });
           }
-          return jsonResult3({
+          return jsonResult4({
             ok: true,
             steps: nodes,
             graph: buildDependencyGraph(nodes)
@@ -16669,7 +18411,7 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             (b) => typeof b === "string" && b.trim().length > 0
           ) : [];
           if (branches.length === 0) {
-            return jsonResult3({
+            return jsonResult4({
               ok: false,
               error: "branches array is required for verify_ephemeral"
             });
@@ -16682,16 +18424,16 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             ...sessionDomain ? { sessionDomain } : {},
             ...parentSid ? { parentSessionID: parentSid } : {}
           });
-          return jsonResult3(verifyOut);
+          return jsonResult4(verifyOut);
         }
         if (action === "scrub_checkpoints") {
           const outcome = await scrubCheckpointHistory(cwd, { dryRun: input.dryRun === true });
-          return jsonResult3(outcome);
+          return jsonResult4(outcome);
         }
         const key = assertSafeStepKey(input.stepKey);
         if (action === "init_step") {
           const objective = typeof input.objective === "string" ? input.objective.trim() : "";
-          if (!objective) return jsonResult3({ ok: false, error: "objective is required" });
+          if (!objective) return jsonResult4({ ok: false, error: "objective is required" });
           const agent = typeof input.agent === "string" && input.agent.trim() ? input.agent.trim() : "specialist";
           const rawTaskType = input.taskType;
           const taskType = rawTaskType === "feature" || rawTaskType === "bugfix" || rawTaskType === "refactor" || rawTaskType === "chore" ? rawTaskType : void 0;
@@ -16707,7 +18449,7 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             requestedDeps,
             Object.values(readStepLedger(cwd).steps)
           );
-          if (!precheck.ok) return jsonResult3(dependencyFailurePayload(key, precheck));
+          if (!precheck.ok) return jsonResult4(dependencyFailurePayload(key, precheck));
           const ckpt = await captureGitCheckpoint(cwd, key);
           const anchor = ckpt.ok && ckpt.treeHash ? await anchorCheckpointTree(cwd, ckpt.treeHash, key) : void 0;
           const outcome = updateStepLedger(cwd, (ledger) => {
@@ -16741,7 +18483,7 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             ledger.steps[key] = entry;
             return { ok: true, entry, unmetDeps };
           });
-          if (!outcome.ok) return jsonResult3(outcome.failure);
+          if (!outcome.ok) return jsonResult4(outcome.failure);
           const callerSid = typeof context?.sessionID === "string" ? context.sessionID : void 0;
           const leaseHook = globalThis.__pantheonFileLeases;
           if (callerSid && leaseHook?.acquireFileLease && (ownedFiles.length > 0 || forbiddenFiles.length > 0)) {
@@ -16753,7 +18495,7 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
               cwd
             });
           }
-          return jsonResult3({
+          return jsonResult4({
             ok: true,
             step: outcome.entry,
             ...outcome.entry.state === "pending" ? { unmet: outcome.unmetDeps } : {}
@@ -16761,15 +18503,15 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
         }
         if (action === "execute_step") {
           if (!sessionDomain) {
-            return jsonResult3({ ok: false, error: "host session domain unavailable" });
+            return jsonResult4({ ok: false, error: "host session domain unavailable" });
           }
           const launchStore = readStepLedger(cwd);
           const launchGate = evaluateLaunchGate(launchStore.steps[key], launchStore);
-          if (!launchGate.ok) return jsonResult3({ ...launchGate, stepKey: key });
+          if (!launchGate.ok) return jsonResult4({ ...launchGate, stepKey: key });
           const objective = typeof input.objective === "string" && input.objective.trim() ? input.objective.trim() : launchStore.steps[key]?.objective ?? "";
-          if (!objective) return jsonResult3({ ok: false, error: "objective is required" });
+          if (!objective) return jsonResult4({ ok: false, error: "objective is required" });
           const claim = claimStepForLaunch(cwd, key, nowIso);
-          if (!claim.ok) return jsonResult3({ ...claim.gate, stepKey: key });
+          if (!claim.ok) return jsonResult4({ ...claim.gate, stepKey: key });
           const agent = typeof input.agent === "string" && input.agent.trim() ? input.agent.trim().replace(/^@/, "") : launchStore.steps[key]?.agent ?? "hermes";
           const rawTaskType = input.taskType;
           const taskType = rawTaskType === "feature" || rawTaskType === "bugfix" || rawTaskType === "refactor" || rawTaskType === "chore" ? rawTaskType : launchStore.steps[key]?.taskType;
@@ -16800,19 +18542,19 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             } : {},
             ...Array.isArray(input.to) ? { to: input.to.filter((entry) => typeof entry === "string") } : {}
           });
-          return jsonResult3(runOut);
+          return jsonResult4(runOut);
         }
         if (action === "spawn_ephemeral") {
           if (!sessionDomain) {
-            return jsonResult3({ ok: false, error: "host session domain unavailable" });
+            return jsonResult4({ ok: false, error: "host session domain unavailable" });
           }
           const launchStore = readStepLedger(cwd);
           const launchGate = evaluateLaunchGate(launchStore.steps[key], launchStore);
-          if (!launchGate.ok) return jsonResult3({ ...launchGate, stepKey: key });
+          if (!launchGate.ok) return jsonResult4({ ...launchGate, stepKey: key });
           const objective = typeof input.objective === "string" && input.objective.trim() ? input.objective.trim() : launchStore.steps[key]?.objective ?? "";
-          if (!objective) return jsonResult3({ ok: false, error: "objective is required" });
+          if (!objective) return jsonResult4({ ok: false, error: "objective is required" });
           const claim = claimStepForLaunch(cwd, key, nowIso);
-          if (!claim.ok) return jsonResult3({ ...claim.gate, stepKey: key });
+          if (!claim.ok) return jsonResult4({ ...claim.gate, stepKey: key });
           const role = typeof input.role === "string" && input.role.trim() ? input.role.trim() : deriveEphemeralRoleSlug(`worker-${key}`);
           const parentSid = typeof context?.sessionID === "string" ? context.sessionID ?? void 0 : void 0;
           const ephOut = await spawnEphemeralWorker({
@@ -16844,14 +18586,14 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             ...typeof input.verifierAgent === "string" && input.verifierAgent.trim() ? { verifierAgent: input.verifierAgent.trim() } : {},
             ...Array.isArray(input.to) ? { to: input.to.filter((entry) => typeof entry === "string") } : {}
           });
-          return jsonResult3(ephOut);
+          return jsonResult4(ephOut);
         }
         if (action === "record_reproduction") {
           const command = typeof input.command === "string" ? input.command.trim() : "";
           const exitCode = typeof input.exitCode === "number" ? input.exitCode : 1;
-          if (!command) return jsonResult3({ ok: false, error: "command is required" });
+          if (!command) return jsonResult4({ ok: false, error: "command is required" });
           if (exitCode === 0) {
-            return jsonResult3({
+            return jsonResult4({
               ok: false,
               error: "Bugfix reproduction must demonstrate a failing test/probe (exitCode !== 0)"
             });
@@ -16866,18 +18608,18 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             return { kind: "ok", step: entry };
           });
           if (outcome.kind === "missing") {
-            return jsonResult3({ ok: false, error: `Step "${key}" is not initialized` });
+            return jsonResult4({ ok: false, error: `Step "${key}" is not initialized` });
           }
-          return jsonResult3({ ok: true, reproduced: true, step: outcome.step });
+          return jsonResult4({ ok: true, reproduced: true, step: outcome.step });
         }
         if (action === "rollback_step") {
           const preStore = readStepLedger(cwd);
           const step = preStore.steps[key];
           if (!step) {
-            return jsonResult3({ ok: false, error: `Step "${key}" is not initialized` });
+            return jsonResult4({ ok: false, error: `Step "${key}" is not initialized` });
           }
           if (!step.baselineTree) {
-            return jsonResult3({ ok: false, error: `Step "${key}" has no Git baselineTree`, step });
+            return jsonResult4({ ok: false, error: `Step "${key}" has no Git baselineTree`, step });
           }
           const cascade = input.cascade === true;
           const doneDependentKeys = (store2) => cascadeBlock(
@@ -16887,7 +18629,7 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
           ).filter((target) => store2.steps[target.stepKey]?.state === "done").map((target) => target.stepKey);
           const preflightDone = doneDependentKeys(preStore);
           if (preflightDone.length > 0 && !cascade) {
-            return jsonResult3({
+            return jsonResult4({
               ok: false,
               error: "dependents_done",
               dependents: preflightDone,
@@ -16906,10 +18648,10 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             return { kind: "proceed" };
           });
           if (decision2.kind === "missing") {
-            return jsonResult3({ ok: false, error: `Step "${key}" is not initialized` });
+            return jsonResult4({ ok: false, error: `Step "${key}" is not initialized` });
           }
           if (decision2.kind === "refused") {
-            return jsonResult3({
+            return jsonResult4({
               ok: false,
               error: "dependents_done",
               dependents: decision2.dependents,
@@ -16918,7 +18660,7 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             });
           }
           if (!await checkpointTreeExists(cwd, step.baselineTree)) {
-            return jsonResult3({
+            return jsonResult4({
               ok: false,
               error: "baseline_missing",
               baselineTree: step.baselineTree,
@@ -16961,7 +18703,7 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
               cwd,
               () => compensateRollbackTree(cwd, preRollback)
             );
-            return jsonResult3({
+            return jsonResult4({
               ok: false,
               error: `Step "${key}" is not initialized`,
               ...compensationPayload(compensation),
@@ -16973,7 +18715,7 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
               cwd,
               () => compensateRollbackTree(cwd, preRollback)
             );
-            return jsonResult3({
+            return jsonResult4({
               ok: false,
               error: "dependents_done",
               dependents: outcome.dependents,
@@ -16997,7 +18739,7 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
           const latest = readStepLedger(cwd);
           for (const blockedKey of outcome.blocked)
             emitBlocked(blockedKey, latest.steps[blockedKey]);
-          return jsonResult3({
+          return jsonResult4({
             ok: rb.ok,
             // Distinct from `restoredTree` (which only ever reports a verified
             // compensating restore): this is the tree the rollback moved to.
@@ -17020,15 +18762,15 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             return { kind: "ok", step: entry };
           });
           if (outcome.kind === "missing") {
-            return jsonResult3({ ok: false, error: `Step "${key}" is not initialized` });
+            return jsonResult4({ ok: false, error: `Step "${key}" is not initialized` });
           }
-          return jsonResult3({ ok: true, step: outcome.step });
+          return jsonResult4({ ok: true, step: outcome.step });
         }
         if (action === "record_verification") {
           const command = typeof input.command === "string" ? input.command.trim() : "";
           const exitCode = typeof input.exitCode === "number" ? input.exitCode : 1;
           const durationMs = typeof input.durationMs === "number" ? input.durationMs : 0;
-          if (!command) return jsonResult3({ ok: false, error: "command is required" });
+          if (!command) return jsonResult4({ ok: false, error: "command is required" });
           const outcome = updateStepLedger(cwd, (ledger) => {
             const entry = ledger.steps[key];
             if (!entry) return { kind: "missing" };
@@ -17069,10 +18811,10 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             return { kind: "failed", reflex, step: entry };
           });
           if (outcome.kind === "missing") {
-            return jsonResult3({ ok: false, error: `Step "${key}" is not initialized` });
+            return jsonResult4({ ok: false, error: `Step "${key}" is not initialized` });
           }
           if (outcome.kind === "verified") {
-            return jsonResult3({
+            return jsonResult4({
               ok: true,
               verified: true,
               receiptId: outcome.receiptId,
@@ -17080,7 +18822,7 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             });
           }
           if (outcome.kind === "failed") {
-            return jsonResult3({
+            return jsonResult4({
               ok: false,
               verified: false,
               reflex: outcome.reflex,
@@ -17116,12 +18858,19 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             });
             const latest2 = readStepLedger(cwd);
             for (const blockedKey of blocked) emitBlocked(blockedKey, latest2.steps[blockedKey]);
-            return jsonResult3({
+            const strategy2 = recordStepStrategyOutcome(
+              resolveMemoryStoreCwd(context, fallbackDir),
+              latest2,
+              patched2.step ?? outcome.step,
+              { success: false, errorClass: "verification_failed", now }
+            );
+            return jsonResult4({
               ok: false,
               verified: false,
               reflex: outcome.reflex,
               ...rollbackResult ? { rollback: rollbackResult } : {},
               step: patched2.step ?? outcome.step,
+              strategy: strategyPayload(strategy2),
               ...blocked.length > 0 ? { blocked } : {}
             });
           }
@@ -17137,11 +18886,18 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
           for (const blockedKey of patched.blocked) {
             emitBlocked(blockedKey, latest.steps[blockedKey]);
           }
-          return jsonResult3({
+          const strategy = recordStepStrategyOutcome(
+            resolveMemoryStoreCwd(context, fallbackDir),
+            latest,
+            patched.step ?? outcome.step,
+            { success: false, errorClass: "verification_failed", now }
+          );
+          return jsonResult4({
             ok: false,
             verified: false,
             reflex: outcome.reflex,
             step: patched.step ?? outcome.step,
+            strategy: strategyPayload(strategy),
             ...patched.blocked.length > 0 ? { blocked: patched.blocked } : {}
           });
         }
@@ -17163,10 +18919,10 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             return { kind: "unblocked", step: entry };
           });
           if (outcome.kind === "missing") {
-            return jsonResult3({ ok: false, error: `Step "${key}" is not initialized` });
+            return jsonResult4({ ok: false, error: `Step "${key}" is not initialized` });
           }
           if (outcome.kind === "unmet") {
-            return jsonResult3({
+            return jsonResult4({
               ok: false,
               error: "dependencies_unmet",
               unmet: outcome.unmet,
@@ -17174,14 +18930,14 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             });
           }
           if (outcome.kind === "not_blocked") {
-            return jsonResult3({
+            return jsonResult4({
               ok: false,
               error: "not_blocked",
               state: outcome.state,
               step: outcome.step
             });
           }
-          return jsonResult3({ ok: true, status: "in_progress", step: outcome.step });
+          return jsonResult4({ ok: true, status: "in_progress", step: outcome.step });
         }
         if (action === "complete_step") {
           const outcome = updateStepLedger(cwd, (ledger) => {
@@ -17198,19 +18954,20 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             const readyBefore = new Set(
               readyStepKeys(Object.values(ledger.steps))
             );
+            const wasDone = entry.state === "done";
             entry.state = "done";
             entry.updatedAt = nowIso;
             delete entry.blockedBy;
             delete entry.cascadeReason;
             const readyAfter = readyStepKeys(Object.values(ledger.steps));
             const unlocked = readyAfter.filter((dep) => dep !== key && !readyBefore.has(dep));
-            return { kind: "done", step: entry, unlocked };
+            return { kind: "done", step: entry, unlocked, wasDone };
           });
           if (outcome.kind === "missing") {
-            return jsonResult3({ ok: false, error: `Step "${key}" is not initialized` });
+            return jsonResult4({ ok: false, error: `Step "${key}" is not initialized` });
           }
           if (outcome.kind === "unmet") {
-            return jsonResult3({
+            return jsonResult4({
               ok: false,
               error: "dependencies_unmet",
               unmet: outcome.unmet,
@@ -17218,7 +18975,7 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             });
           }
           if (outcome.kind === "refused") {
-            return jsonResult3({ ok: false, error: outcome.reason, step: outcome.step });
+            return jsonResult4({ ok: false, error: outcome.reason, step: outcome.step });
           }
           const callerSidDone = typeof context?.sessionID === "string" ? context.sessionID : void 0;
           const releaseHookDone = globalThis.__pantheonFileLeases?.releaseFileLease;
@@ -17236,19 +18993,26 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
               timestamp: Date.now()
             });
           }
-          return jsonResult3({
+          const strategy = outcome.wasDone ? { ok: true, recorded: false, reason: "already_done" } : recordStepStrategyOutcome(
+            resolveMemoryStoreCwd(context, fallbackDir),
+            latest,
+            outcome.step,
+            { success: true, now }
+          );
+          return jsonResult4({
             ok: true,
             status: "done",
             receiptId: outcome.step.receiptId,
             step: outcome.step,
+            strategy: strategyPayload(strategy),
             ...outcome.unlocked.length > 0 ? { unlocked: outcome.unlocked } : {}
           });
         }
-        return jsonResult3({ ok: false, error: `Unsupported action: ${action}` });
+        return jsonResult4({ ok: false, error: `Unsupported action: ${action}` });
       } catch (err) {
         const structured = describeLedgerError(err);
-        if (structured) return jsonResult3(structured);
-        return jsonResult3({
+        if (structured) return jsonResult4(structured);
+        return jsonResult4({
           ok: false,
           error: err instanceof Error ? err.message : String(err)
         });
@@ -17322,7 +19086,7 @@ function evaluateReproductionGate(params) {
 }
 
 // src/pantheon/shell-hooks.ts
-import { randomUUID as randomUUID4 } from "node:crypto";
+import { randomUUID as randomUUID5 } from "node:crypto";
 
 // src/plugins/hook-runner.ts
 import { spawn as spawn2 } from "node:child_process";
@@ -17574,7 +19338,7 @@ function createV2ShellHooks(options = {}) {
         return;
       }
       const start = {
-        delegationId: randomUUID4(),
+        delegationId: randomUUID5(),
         agent: delegationAgent(tool2, event.input),
         startedAt: now()
       };
@@ -17612,7 +19376,7 @@ function createV2ShellHooks(options = {}) {
           // the record was evicted). The STOP still needs a key field to be a
           // well-formed audit line, so it gets a fresh one — an orphan STOP,
           // never an unkeyed one.
-          delegation_id: randomUUID4()
+          delegation_id: randomUUID5()
         } : {
           // The BEFORE-time agent wins: the AFTER-time args may carry the
           // merged background result, which has no subagent_type.
@@ -18478,28 +20242,28 @@ import { promisify as promisify6 } from "node:util";
 
 // src/pantheon/agent-forge-tool.ts
 import {
-  existsSync as existsSync18,
-  mkdirSync as mkdirSync11,
-  readdirSync as readdirSync4,
-  readFileSync as readFileSync15,
-  realpathSync as realpathSync8,
+  existsSync as existsSync20,
+  mkdirSync as mkdirSync12,
+  readdirSync as readdirSync5,
+  readFileSync as readFileSync17,
+  realpathSync as realpathSync10,
   rmSync as rmSync3,
-  writeFileSync as writeFileSync8
+  writeFileSync as writeFileSync9
 } from "node:fs";
-import { join as join23, resolve as resolve18, sep as sep8 } from "node:path";
+import { join as join25, resolve as resolve20, sep as sep9 } from "node:path";
 
 // scripts/stack-detector.mjs
-import { existsSync as existsSync17, readFileSync as readFileSync14 } from "node:fs";
-import { join as join22, resolve as resolve17 } from "node:path";
+import { existsSync as existsSync19, readFileSync as readFileSync16 } from "node:fs";
+import { join as join24, resolve as resolve19 } from "node:path";
 function detectRepositoryStacks(workspaceDir) {
-  const root = resolve17(workspaceDir);
+  const root = resolve19(workspaceDir);
   const stacks = [];
   const suggestedSpecialists = [];
   const suggestedDocs = /* @__PURE__ */ new Set();
-  const pkgPath = join22(root, "package.json");
-  if (existsSync17(pkgPath)) {
+  const pkgPath = join24(root, "package.json");
+  if (existsSync19(pkgPath)) {
     try {
-      const pkg = JSON.parse(readFileSync14(pkgPath, "utf8"));
+      const pkg = JSON.parse(readFileSync16(pkgPath, "utf8"));
       const deps = { ...pkg.dependencies, ...pkg.devDependencies };
       const frameworks = [];
       for (const fw of [
@@ -18550,12 +20314,12 @@ function detectRepositoryStacks(workspaceDir) {
     } catch {
     }
   }
-  const pyProjPath = join22(root, "pyproject.toml");
-  const reqPath = join22(root, "requirements.txt");
-  if (existsSync17(pyProjPath) || existsSync17(reqPath)) {
+  const pyProjPath = join24(root, "pyproject.toml");
+  const reqPath = join24(root, "requirements.txt");
+  if (existsSync19(pyProjPath) || existsSync19(reqPath)) {
     const rawPy = [
-      existsSync17(pyProjPath) ? readFileSync14(pyProjPath, "utf8") : "",
-      existsSync17(reqPath) ? readFileSync14(reqPath, "utf8") : ""
+      existsSync19(pyProjPath) ? readFileSync16(pyProjPath, "utf8") : "",
+      existsSync19(reqPath) ? readFileSync16(reqPath, "utf8") : ""
     ].join("\n").toLowerCase();
     const frameworks = [];
     for (const fw of ["fastapi", "django", "flask", "sqlalchemy", "pydantic", "pytest"]) {
@@ -18563,7 +20327,7 @@ function detectRepositoryStacks(workspaceDir) {
     }
     const testRunner = rawPy.includes("pytest") ? "pytest -q" : "python3 -m unittest";
     const linter = rawPy.includes("ruff") ? "ruff check" : "pyright";
-    const pyManifest = existsSync17(pyProjPath) ? "pyproject.toml" : "requirements.txt";
+    const pyManifest = existsSync19(pyProjPath) ? "pyproject.toml" : "requirements.txt";
     stacks.push({
       id: "python",
       manifest: pyManifest,
@@ -18581,9 +20345,9 @@ function detectRepositoryStacks(workspaceDir) {
     });
     suggestedDocs.add(pyManifest);
   }
-  const goModPath = join22(root, "go.mod");
-  if (existsSync17(goModPath)) {
-    const rawGo = readFileSync14(goModPath, "utf8").toLowerCase();
+  const goModPath = join24(root, "go.mod");
+  if (existsSync19(goModPath)) {
+    const rawGo = readFileSync16(goModPath, "utf8").toLowerCase();
     const frameworks = ["gin", "echo", "fiber", "chi"].filter((fw) => rawGo.includes(fw));
     stacks.push({
       id: "go",
@@ -18602,9 +20366,9 @@ function detectRepositoryStacks(workspaceDir) {
     });
     suggestedDocs.add("go.mod");
   }
-  const cargoPath = join22(root, "Cargo.toml");
-  if (existsSync17(cargoPath)) {
-    const rawCargo = readFileSync14(cargoPath, "utf8").toLowerCase();
+  const cargoPath = join24(root, "Cargo.toml");
+  if (existsSync19(cargoPath)) {
+    const rawCargo = readFileSync16(cargoPath, "utf8").toLowerCase();
     const frameworks = ["tokio", "axum", "actix-web", "serde", "sqlx"].filter(
       (fw) => rawCargo.includes(fw)
     );
@@ -18643,13 +20407,13 @@ function isValidAgentSlug(value) {
   return typeof value === "string" && SAFE_AGENT_NAME_RE.test(value) && !value.includes("..") && !value.includes("/") && !value.includes("\\");
 }
 function resolveAgentsDir(workspaceDir) {
-  const dir = join23(workspaceDir, ".opencode", "agents");
-  mkdirSync11(dir, { recursive: true });
-  return realpathSync8(dir);
+  const dir = join25(workspaceDir, ".opencode", "agents");
+  mkdirSync12(dir, { recursive: true });
+  return realpathSync10(dir);
 }
 function resolveConfinedAgentFile(agentsDir, name) {
-  const filePath = resolve18(agentsDir, `${name}.md`);
-  const prefix = agentsDir.endsWith(sep8) ? agentsDir : `${agentsDir}${sep8}`;
+  const filePath = resolve20(agentsDir, `${name}.md`);
+  const prefix = agentsDir.endsWith(sep9) ? agentsDir : `${agentsDir}${sep9}`;
   if (!filePath.startsWith(prefix)) {
     throw new Error("Path traversal denied: agent file escapes .opencode/agents");
   }
@@ -18709,7 +20473,7 @@ function buildAgentMarkdown(params) {
     ""
   ].join("\n");
 }
-function jsonResult4(payload) {
+function jsonResult5(payload) {
   return { output: JSON.stringify(payload) };
 }
 function createAgentForgeTool(fallbackDir) {
@@ -18770,14 +20534,14 @@ function createAgentForgeTool(fallbackDir) {
         const cwd = resolveToolCwd(context, fallbackDir);
         if (action === "detect_stack") {
           const report = detectRepositoryStacks2(cwd);
-          return jsonResult4({ ok: true, workspace: cwd, ...report });
+          return jsonResult5({ ok: true, workspace: cwd, ...report });
         }
         const agentsDir = resolveAgentsDir(cwd);
         if (action === "list") {
-          const files = readdirSync4(agentsDir).filter((f) => f.endsWith(".md") && f.toLowerCase() !== "readme.md").sort();
+          const files = readdirSync5(agentsDir).filter((f) => f.endsWith(".md") && f.toLowerCase() !== "readme.md").sort();
           const agents = files.map((file) => {
             const id = file.replace(/\.md$/, "");
-            const raw = readFileSync15(join23(agentsDir, file), "utf8");
+            const raw = readFileSync17(join25(agentsDir, file), "utf8");
             const descMatch = raw.match(/^description:\s*(.+)$/m);
             return {
               name: id,
@@ -18785,37 +20549,37 @@ function createAgentForgeTool(fallbackDir) {
               description: descMatch?.[1]?.replace(/^["']|["']$/g, "") ?? ""
             };
           });
-          return jsonResult4({ ok: true, count: agents.length, agents });
+          return jsonResult5({ ok: true, count: agents.length, agents });
         }
         const name = typeof input.name === "string" ? input.name.trim().toLowerCase() : "";
         if (!isValidAgentSlug(name)) {
-          return jsonResult4({
+          return jsonResult5({
             ok: false,
             error: "name must be a lowercase kebab-case identifier (2..49 chars, [a-z0-9-])"
           });
         }
         const filePath = resolveConfinedAgentFile(agentsDir, name);
         if (action === "inspect") {
-          if (!existsSync18(filePath)) {
-            return jsonResult4({ ok: false, error: "agent_not_found", name });
+          if (!existsSync20(filePath)) {
+            return jsonResult5({ ok: false, error: "agent_not_found", name });
           }
-          return jsonResult4({
+          return jsonResult5({
             ok: true,
             name,
             path: `.opencode/agents/${name}.md`,
-            content: readFileSync15(filePath, "utf8")
+            content: readFileSync17(filePath, "utf8")
           });
         }
         if (action === "remove") {
-          if (!existsSync18(filePath)) {
-            return jsonResult4({ ok: false, error: "agent_not_found", name });
+          if (!existsSync20(filePath)) {
+            return jsonResult5({ ok: false, error: "agent_not_found", name });
           }
           rmSync3(filePath, { force: true });
-          return jsonResult4({ ok: true, removed: true, name });
+          return jsonResult5({ ok: true, removed: true, name });
         }
         if (action === "create") {
           if (PANTHEON_AGENTS.has(name) && input.allowOverrideCanonical !== true) {
-            return jsonResult4({
+            return jsonResult5({
               ok: false,
               error: `"${name}" is a canonical Pantheon agent. Pass allowOverrideCanonical: true only if you intentionally want a project-local override.`
             });
@@ -18843,8 +20607,8 @@ function createAgentForgeTool(fallbackDir) {
             testCommand,
             conventions
           });
-          writeFileSync8(filePath, markdown, "utf8");
-          return jsonResult4({
+          writeFileSync9(filePath, markdown, "utf8");
+          return jsonResult5({
             ok: true,
             created: true,
             name,
@@ -18853,9 +20617,9 @@ function createAgentForgeTool(fallbackDir) {
             archetype
           });
         }
-        return jsonResult4({ ok: false, error: `Unsupported action: ${action}` });
+        return jsonResult5({ ok: false, error: `Unsupported action: ${action}` });
       } catch (err) {
-        return jsonResult4({
+        return jsonResult5({
           ok: false,
           error: err instanceof Error ? err.message : String(err)
         });
@@ -18865,8 +20629,8 @@ function createAgentForgeTool(fallbackDir) {
 }
 
 // src/pantheon/ast-tools.ts
-import { readdirSync as readdirSync5, readFileSync as readFileSync16, statSync as statSync7, writeFileSync as writeFileSync9 } from "node:fs";
-import { extname as extname3, join as join24, relative as relative5, resolve as resolve19 } from "node:path";
+import { readdirSync as readdirSync6, readFileSync as readFileSync18, statSync as statSync7, writeFileSync as writeFileSync10 } from "node:fs";
+import { extname as extname3, join as join26, relative as relative5, resolve as resolve21 } from "node:path";
 var SKIP_DIRS = /* @__PURE__ */ new Set([".git", "node_modules", ".pantheon", ".venv", "dist", "build"]);
 var SUPPORTED_EXTS = /* @__PURE__ */ new Set([
   ".ts",
@@ -19081,9 +20845,9 @@ function collectFiles(targetPath) {
   const st = statSync7(targetPath);
   if (st.isFile()) return [targetPath];
   const walk = (dir) => {
-    for (const entry of readdirSync5(dir, { withFileTypes: true })) {
+    for (const entry of readdirSync6(dir, { withFileTypes: true })) {
       if (SKIP_DIRS.has(entry.name)) continue;
-      const full = join24(dir, entry.name);
+      const full = join26(dir, entry.name);
       if (entry.isDirectory()) walk(full);
       else if (entry.isFile() && SUPPORTED_EXTS.has(extname3(entry.name).toLowerCase())) {
         out.push(full);
@@ -19094,7 +20858,7 @@ function collectFiles(targetPath) {
   return out;
 }
 function findAstMatchesInFile(absFile, relFile, pattern) {
-  const source = readFileSync16(absFile, "utf8");
+  const source = readFileSync18(absFile, "utf8");
   const patTokens = tokenizeCode(pattern, true);
   if (patTokens.length === 0) return [];
   const codeTokens = tokenizeCode(source, false);
@@ -19135,7 +20899,7 @@ function findAstMatchesInFile(absFile, relFile, pattern) {
 function substituteCaptures(template, captures) {
   return template.replace(/\${1,3}[A-Za-z_][A-Za-z0-9_]*/g, (token) => captures[token] ?? token);
 }
-function jsonResult5(payload) {
+function jsonResult6(payload) {
   return { output: JSON.stringify(payload) };
 }
 function createAstTools(fallbackDir) {
@@ -19165,7 +20929,7 @@ function createAstTools(fallbackDir) {
     execute: async (input, context) => {
       try {
         const pattern = typeof input.pattern === "string" ? input.pattern.trim() : "";
-        if (!pattern) return jsonResult5({ ok: false, error: "pattern is required" });
+        if (!pattern) return jsonResult6({ ok: false, error: "pattern is required" });
         const cwd = resolveToolCwd(context, fallbackDir);
         const rawPath = typeof input.path === "string" && input.path.trim() ? input.path.trim() : ".";
         const targetAbs = resolveSafeToolPath(cwd, rawPath);
@@ -19173,7 +20937,7 @@ function createAstTools(fallbackDir) {
         const files = collectFiles(targetAbs);
         const results = [];
         for (const f of files) {
-          const rel = relative5(resolve19(cwd), f).replace(/\\/g, "/") || f;
+          const rel = relative5(resolve21(cwd), f).replace(/\\/g, "/") || f;
           for (const m of findAstMatchesInFile(f, rel, pattern)) {
             results.push({
               file: m.file,
@@ -19186,7 +20950,7 @@ function createAstTools(fallbackDir) {
           }
           if (results.length >= limit) break;
         }
-        return jsonResult5({
+        return jsonResult6({
           ok: true,
           pattern,
           scannedFiles: files.length,
@@ -19195,7 +20959,7 @@ function createAstTools(fallbackDir) {
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        return jsonResult5({ ok: false, error: message });
+        return jsonResult6({ ok: false, error: message });
       }
     }
   };
@@ -19227,8 +20991,8 @@ function createAstTools(fallbackDir) {
       try {
         const pattern = typeof input.pattern === "string" ? input.pattern.trim() : "";
         const replacement = typeof input.replacement === "string" ? input.replacement : "";
-        if (!pattern) return jsonResult5({ ok: false, error: "pattern is required" });
-        if (!replacement) return jsonResult5({ ok: false, error: "replacement is required" });
+        if (!pattern) return jsonResult6({ ok: false, error: "pattern is required" });
+        if (!replacement) return jsonResult6({ ok: false, error: "replacement is required" });
         const cwd = resolveToolCwd(context, fallbackDir);
         const rawPath = typeof input.path === "string" && input.path.trim() ? input.path.trim() : ".";
         const targetAbs = resolveSafeToolPath(cwd, rawPath);
@@ -19238,7 +21002,7 @@ function createAstTools(fallbackDir) {
           newString: replacement
         });
         if (!guardrail.allowed) {
-          return jsonResult5({
+          return jsonResult6({
             ok: false,
             error: guardrail.message ?? "Edit blocked by Pantheon guardrail"
           });
@@ -19248,10 +21012,10 @@ function createAstTools(fallbackDir) {
         const previews = [];
         let totalReplacements = 0;
         for (const f of files) {
-          const rel = relative5(resolve19(cwd), f).replace(/\\/g, "/") || f;
+          const rel = relative5(resolve21(cwd), f).replace(/\\/g, "/") || f;
           const spans = findAstMatchesInFile(f, rel, pattern);
           if (spans.length === 0) continue;
-          const original = readFileSync16(f, "utf8");
+          const original = readFileSync18(f, "utf8");
           let updated = "";
           let cursor = 0;
           for (const span of spans) {
@@ -19265,11 +21029,11 @@ function createAstTools(fallbackDir) {
           }
           updated += original.slice(cursor);
           if (!dryRun && updated !== original) {
-            writeFileSync9(f, updated, "utf8");
+            writeFileSync10(f, updated, "utf8");
           }
           if (updated !== original) filesModified.push(rel);
         }
-        return jsonResult5({
+        return jsonResult6({
           ok: true,
           dryRun,
           pattern,
@@ -19279,7 +21043,7 @@ function createAstTools(fallbackDir) {
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        return jsonResult5({ ok: false, error: message });
+        return jsonResult6({ ok: false, error: message });
       }
     }
   };
@@ -19288,9 +21052,9 @@ function createAstTools(fallbackDir) {
 
 // src/pantheon/codemap-tools.ts
 import { createHash as createHash8 } from "node:crypto";
-import { existsSync as existsSync19, mkdirSync as mkdirSync12, readdirSync as readdirSync6, readFileSync as readFileSync17, realpathSync as realpathSync9, statSync as statSync8 } from "node:fs";
-import { extname as extname4, join as join25, relative as relative6, resolve as resolve20, sep as sep9 } from "node:path";
-import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
+import { existsSync as existsSync21, mkdirSync as mkdirSync13, readdirSync as readdirSync7, readFileSync as readFileSync19, realpathSync as realpathSync11, statSync as statSync8 } from "node:fs";
+import { extname as extname4, join as join27, relative as relative6, resolve as resolve22, sep as sep10 } from "node:path";
+import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
 var IGNORED_DIRS = /* @__PURE__ */ new Set([
   ".git",
   "node_modules",
@@ -19315,17 +21079,17 @@ var SUPPORTED_EXT_LANG = {
 };
 var codemapDbCache = /* @__PURE__ */ new Map();
 function getCodemapDb(workspaceDir) {
-  const memoryDir = join25(workspaceDir, ".pantheon", "memory");
-  mkdirSync12(memoryDir, { recursive: true });
-  const canonicalBase = realpathSync9(memoryDir);
-  const dbPath = resolve20(canonicalBase, "memory.db");
-  const prefix = canonicalBase.endsWith(sep9) ? canonicalBase : `${canonicalBase}${sep9}`;
+  const memoryDir = join27(workspaceDir, ".pantheon", "memory");
+  mkdirSync13(memoryDir, { recursive: true });
+  const canonicalBase = realpathSync11(memoryDir);
+  const dbPath = resolve22(canonicalBase, "memory.db");
+  const prefix = canonicalBase.endsWith(sep10) ? canonicalBase : `${canonicalBase}${sep10}`;
   if (!dbPath.startsWith(prefix)) {
     throw new Error("Path traversal denied for codemap database");
   }
   const cached = codemapDbCache.get(dbPath);
   if (cached) return cached;
-  const db = new DatabaseSync3(dbPath);
+  const db = new DatabaseSync5(dbPath);
   db.exec(`
     CREATE TABLE IF NOT EXISTS code_files (
       path TEXT PRIMARY KEY,
@@ -19511,7 +21275,7 @@ function collectSourceFiles(currentDir, maxFiles = 500) {
     if (results.length >= maxFiles) return;
     let entries;
     try {
-      entries = readdirSync6(dir, { withFileTypes: true });
+      entries = readdirSync7(dir, { withFileTypes: true });
     } catch {
       return;
     }
@@ -19520,12 +21284,12 @@ function collectSourceFiles(currentDir, maxFiles = 500) {
       const name = String(entry.name);
       if (entry.isDirectory()) {
         if (!IGNORED_DIRS.has(name) && !name.startsWith(".")) {
-          walk(join25(dir, name));
+          walk(join27(dir, name));
         }
       } else if (entry.isFile()) {
         const ext = extname4(name).toLowerCase();
         if (ext in SUPPORTED_EXT_LANG) {
-          results.push(join25(dir, name));
+          results.push(join27(dir, name));
         }
       }
     }
@@ -19533,7 +21297,7 @@ function collectSourceFiles(currentDir, maxFiles = 500) {
   walk(currentDir);
   return results;
 }
-function jsonResult6(payload) {
+function jsonResult7(payload) {
   return { output: JSON.stringify(payload) };
 }
 function deleteIndexedFile(db, relFile) {
@@ -19547,7 +21311,7 @@ function pruneMissingFilesInScope(db, canonicalRoot, subRel) {
   let pruned = 0;
   for (const row of rows) {
     if (typeof row?.path !== "string") continue;
-    if (!existsSync19(resolve20(canonicalRoot, row.path))) {
+    if (!existsSync21(resolve22(canonicalRoot, row.path))) {
       deleteIndexedFile(db, row.path);
       pruned += 1;
     }
@@ -19563,7 +21327,7 @@ function filterAndPruneExistingRows(db, canonicalRoot, rows) {
       kept.push(row);
       continue;
     }
-    if (missing.has(file) || !existsSync19(resolve20(canonicalRoot, file))) {
+    if (missing.has(file) || !existsSync21(resolve22(canonicalRoot, file))) {
       if (!missing.has(file)) {
         missing.add(file);
         deleteIndexedFile(db, file);
@@ -19597,15 +21361,15 @@ function createCodemapTools(fallbackDir) {
       execute: async (input, context) => {
         try {
           const cwd = resolveToolCwd(context, fallbackDir);
-          const canonicalRoot = realpathSync9(cwd);
+          const canonicalRoot = realpathSync11(cwd);
           const subPath = typeof input.path === "string" && input.path.trim() ? input.path.trim() : ".";
-          const targetPath = resolve20(canonicalRoot, subPath);
-          const rootPrefix = canonicalRoot.endsWith(sep9) ? canonicalRoot : `${canonicalRoot}${sep9}`;
+          const targetPath = resolve22(canonicalRoot, subPath);
+          const rootPrefix = canonicalRoot.endsWith(sep10) ? canonicalRoot : `${canonicalRoot}${sep10}`;
           if (targetPath !== canonicalRoot && !targetPath.startsWith(rootPrefix)) {
-            return jsonResult6({ ok: false, error: "path escapes workspace root" });
+            return jsonResult7({ ok: false, error: "path escapes workspace root" });
           }
-          if (!existsSync19(targetPath)) {
-            return jsonResult6({ ok: false, error: `path not found: ${subPath}` });
+          if (!existsSync21(targetPath)) {
+            return jsonResult7({ ok: false, error: `path not found: ${subPath}` });
           }
           const force = input.force === true;
           const db = getCodemapDb(canonicalRoot);
@@ -19621,7 +21385,7 @@ function createCodemapTools(fallbackDir) {
             const lang = SUPPORTED_EXT_LANG[ext];
             if (!lang) continue;
             const relFile = relative6(canonicalRoot, filePath).replace(/\\/g, "/");
-            const content = readFileSync17(filePath, "utf8");
+            const content = readFileSync19(filePath, "utf8");
             const hash = createHash8("sha256").update(content).digest("hex");
             const existing = db.prepare("SELECT hash FROM code_files WHERE path = ?").get(relFile);
             if (!force && existing?.hash === hash) {
@@ -19651,7 +21415,7 @@ function createCodemapTools(fallbackDir) {
             indexed += 1;
           }
           const pruned = st.isFile() ? 0 : pruneMissingFilesInScope(db, canonicalRoot, relative6(canonicalRoot, targetPath));
-          return jsonResult6({
+          return jsonResult7({
             ok: true,
             indexed,
             skipped,
@@ -19660,7 +21424,7 @@ function createCodemapTools(fallbackDir) {
             relations: relationsCount
           });
         } catch (err) {
-          return jsonResult6({
+          return jsonResult7({
             ok: false,
             error: err instanceof Error ? err.message : String(err)
           });
@@ -19687,10 +21451,10 @@ function createCodemapTools(fallbackDir) {
       execute: async (input, context) => {
         try {
           const q = typeof input.query === "string" ? input.query.trim() : "";
-          if (!q) return jsonResult6({ ok: false, error: "query is required", results: [] });
+          if (!q) return jsonResult7({ ok: false, error: "query is required", results: [] });
           const limit = typeof input.limit === "number" && Number.isFinite(input.limit) && input.limit > 0 ? Math.min(Math.floor(input.limit), 100) : 25;
           const cwd = resolveToolCwd(context, fallbackDir);
-          const canonicalRoot = realpathSync9(cwd);
+          const canonicalRoot = realpathSync11(cwd);
           const db = getCodemapDb(canonicalRoot);
           const escaped = q.replace(/[\\%_]/g, "\\$&");
           let sql = `
@@ -19710,9 +21474,9 @@ function createCodemapTools(fallbackDir) {
             canonicalRoot,
             db.prepare(sql).all(...params)
           );
-          return jsonResult6({ ok: true, count: rows.length, results: rows });
+          return jsonResult7({ ok: true, count: rows.length, results: rows });
         } catch (err) {
-          return jsonResult6({
+          return jsonResult7({
             ok: false,
             error: err instanceof Error ? err.message : String(err)
           });
@@ -19739,10 +21503,10 @@ function createCodemapTools(fallbackDir) {
       execute: async (input, context) => {
         try {
           const target = typeof input.target === "string" ? input.target.trim() : "";
-          if (!target) return jsonResult6({ ok: false, error: "target is required", neighbors: [] });
+          if (!target) return jsonResult7({ ok: false, error: "target is required", neighbors: [] });
           const direction = typeof input.direction === "string" ? input.direction : "both";
           const cwd = resolveToolCwd(context, fallbackDir);
-          const canonicalRoot = realpathSync9(cwd);
+          const canonicalRoot = realpathSync11(cwd);
           const db = getCodemapDb(canonicalRoot);
           const escaped = target.replace(/[\\%_]/g, "\\$&");
           const outgoing = direction === "incoming" ? [] : filterAndPruneExistingRows(
@@ -19765,14 +21529,14 @@ function createCodemapTools(fallbackDir) {
                        LIMIT 50`
             ).all(target, `%${escaped}%`)
           );
-          return jsonResult6({
+          return jsonResult7({
             ok: true,
             target,
             outgoing,
             incoming
           });
         } catch (err) {
-          return jsonResult6({
+          return jsonResult7({
             ok: false,
             error: err instanceof Error ? err.message : String(err)
           });
@@ -19784,19 +21548,19 @@ function createCodemapTools(fallbackDir) {
 
 // src/pantheon/cost-command.ts
 import { execFile as execFile6 } from "node:child_process";
-import { accessSync as accessSync2, constants as constants4, existsSync as existsSync21, statSync as statSync9 } from "node:fs";
-import { delimiter, dirname as dirname16, join as join28 } from "node:path";
+import { accessSync as accessSync2, constants as constants4, existsSync as existsSync23, statSync as statSync9 } from "node:fs";
+import { delimiter, dirname as dirname16, join as join30 } from "node:path";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
 import { z } from "zod";
 
 // src/plugins/tui/src/cost-data.ts
-import { homedir as homedir7 } from "node:os";
-import { join as join27 } from "node:path";
+import { homedir as homedir8 } from "node:os";
+import { join as join29 } from "node:path";
 
 // src/plugins/tui/src/model-pricing.ts
-import { existsSync as existsSync20, mkdirSync as mkdirSync13, readFileSync as readFileSync18, renameSync as renameSync5, writeFileSync as writeFileSync10 } from "node:fs";
-import { homedir as homedir6 } from "node:os";
-import { dirname as dirname15, join as join26 } from "node:path";
+import { existsSync as existsSync22, mkdirSync as mkdirSync14, readFileSync as readFileSync20, renameSync as renameSync5, writeFileSync as writeFileSync11 } from "node:fs";
+import { homedir as homedir7 } from "node:os";
+import { dirname as dirname15, join as join28 } from "node:path";
 var MODELS_DEV_URL = "https://models.dev/api.json";
 var PRICING_CACHE_VERSION = 1;
 var PRICING_TTL_MS = 24 * 60 * 60 * 1e3;
@@ -19805,11 +21569,11 @@ function resolvePricingCacheDir(env = process.env) {
   const explicit = env.PANTHEON_HOME?.trim();
   if (explicit !== void 0 && explicit !== "") return explicit;
   const xdg = env.XDG_CONFIG_HOME?.trim();
-  const base = xdg !== void 0 && xdg !== "" ? xdg : join26(homedir6(), ".config");
-  return join26(base, "opencode");
+  const base = xdg !== void 0 && xdg !== "" ? xdg : join28(homedir7(), ".config");
+  return join28(base, "opencode");
 }
 function resolvePricingCachePath(env = process.env) {
-  return join26(resolvePricingCacheDir(env), "cache", "models-dev.json");
+  return join28(resolvePricingCacheDir(env), "cache", "models-dev.json");
 }
 function isRecord19(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -19940,8 +21704,8 @@ function parseCachedCatalog(raw) {
 }
 function readPricingCache(cachePath) {
   try {
-    if (!existsSync20(cachePath)) return void 0;
-    return parseCachedCatalog(JSON.parse(readFileSync18(cachePath, "utf8")));
+    if (!existsSync22(cachePath)) return void 0;
+    return parseCachedCatalog(JSON.parse(readFileSync20(cachePath, "utf8")));
   } catch {
     return void 0;
   }
@@ -19949,8 +21713,8 @@ function readPricingCache(cachePath) {
 function writePricingCache(cachePath, catalog) {
   const temp = `${cachePath}.tmp-${process.pid}`;
   try {
-    mkdirSync13(dirname15(cachePath), { recursive: true });
-    writeFileSync10(temp, `${JSON.stringify(catalog)}
+    mkdirSync14(dirname15(cachePath), { recursive: true });
+    writeFileSync11(temp, `${JSON.stringify(catalog)}
 `, "utf8");
     renameSync5(temp, cachePath);
     return true;
@@ -20099,8 +21863,8 @@ var VERSION_SOURCES = {
 };
 function defaultDbPath() {
   const xdg = process.env.XDG_DATA_HOME;
-  const dataHome = xdg !== void 0 && xdg !== "" ? xdg : join27(homedir7(), ".local", "share");
-  return join27(dataHome, "opencode", "opencode.db");
+  const dataHome = xdg !== void 0 && xdg !== "" ? xdg : join29(homedir8(), ".local", "share");
+  return join29(dataHome, "opencode", "opencode.db");
 }
 function requestedVersion() {
   const configured = process.env.PANTHEON_OPENCODE_VERSION;
@@ -20171,7 +21935,7 @@ var costArgs = {
 };
 function findExistingDb(override) {
   const candidate = override === void 0 ? resolveCostDbPath() : resolveCostDbPath({ dbPath: override });
-  return existsSync21(candidate) ? candidate : void 0;
+  return existsSync23(candidate) ? candidate : void 0;
 }
 var COST_AGGREGATE_SQL = {
   message: (sessionId) => `
@@ -20239,7 +22003,7 @@ var COST_AGGREGATE_SQL = {
     HAVING agent IS NOT NULL AND agent != ''`
 };
 var SESSION_TABLES = ["session_v2", "session"];
-function tableColumns(db, table) {
+function tableColumns2(db, table) {
   try {
     const rows = db.prepare(`PRAGMA table_info(${table})`).all();
     return new Set(rows.map((row) => String(row.name)));
@@ -20252,7 +22016,7 @@ function readSessionIndex(db) {
   const children = /* @__PURE__ */ new Map();
   const tables = [];
   for (const table of SESSION_TABLES) {
-    const columns = tableColumns(db, table);
+    const columns = tableColumns2(db, table);
     if (columns.size === 0 || !columns.has("id")) continue;
     tables.push(table);
     const parent = columns.has("parent_id") ? "parent_id" : "NULL";
@@ -20352,7 +22116,7 @@ function queryWithSqlite(dbPath, days, sqlite, options) {
           db.prepare(DATABASE_START_SQL[source]).get()?.databaseStart
         )
       );
-      const hasSessionColumn = tableColumns(db, source).has("session_id");
+      const hasSessionColumn = tableColumns2(db, source).has("session_id");
       const groups = db.prepare(COST_AGGREGATE_SQL[source](hasSessionColumn)).all(since);
       for (const group of groups) {
         const agent = String(group.agent ?? "");
@@ -20815,7 +22579,7 @@ function resolveNodeFromPath(env, isExecutable = defaultIsExecutable) {
   for (const dir of pathValue.split(delimiter)) {
     if (dir === "") continue;
     for (const ext of extensions) {
-      const candidate = join28(dir, `node${ext}`);
+      const candidate = join30(dir, `node${ext}`);
       if (isExecutable(candidate)) return candidate;
     }
   }
@@ -20879,8 +22643,8 @@ async function queryWithCliFallback(dbPath, days, deps) {
   const env = deps?.env ?? process.env;
   const execFileAsync6 = deps?.execFile ?? defaultExecFile;
   const isExecutable = deps?.isExecutable ?? defaultIsExecutable;
-  const costScript = join28(__dirname, "..", "..", "scripts", "cost.mjs");
-  if (!existsSync21(costScript)) {
+  const costScript = join30(__dirname, "..", "..", "scripts", "cost.mjs");
+  if (!existsSync23(costScript)) {
     throw new Error(`CLI fallback script not found: ${costScript}`);
   }
   const node = resolveNodeExecutable(env, isExecutable);
@@ -21021,7 +22785,7 @@ ${renderMarkdown(query, days, pricing)}`;
 import { z as z3 } from "zod";
 
 // src/pantheon/deepwork/plan-projection.ts
-import { join as join29 } from "node:path";
+import { join as join31 } from "node:path";
 function generateChatProjection(plan, cwd = process.cwd()) {
   const pendingDecisions = plan.decisions_needed.filter((d) => d.status === "pending");
   const totalTasks = plan.tasks.length;
@@ -21031,8 +22795,8 @@ function generateChatProjection(plan, cwd = process.cwd()) {
   const readyTasks = plan.tasks.filter((t) => t.state === "ready");
   const nextTask = inProgressTasks[0] || readyTasks[0] || plan.tasks.find((t) => t.state === "pending");
   const percent = totalTasks > 0 ? Math.round(doneTasks / totalTasks * 100) : 0;
-  const absPlanMd = join29(cwd, ".pantheon", "deepwork", plan.plan_id, "PLAN.md");
-  const absPlanJson = join29(cwd, ".pantheon", "deepwork", plan.plan_id, "plan.json");
+  const absPlanMd = join31(cwd, ".pantheon", "deepwork", plan.plan_id, "PLAN.md");
+  const absPlanJson = join31(cwd, ".pantheon", "deepwork", plan.plan_id, "plan.json");
   const lines = [];
   lines.push(`### Deepwork: ${plan.title} (\`${plan.plan_id}\`)`);
   lines.push(
@@ -21206,9 +22970,9 @@ function buildApprovalQuestion(plan) {
 }
 
 // src/pantheon/deepwork/plan-tracker.ts
-import { existsSync as existsSync22 } from "node:fs";
+import { existsSync as existsSync24 } from "node:fs";
 import { appendFile as appendFile4, mkdir as mkdir7, readdir, readFile as readFile7, rename as rename5, writeFile as writeFile3 } from "node:fs/promises";
-import { join as join30 } from "node:path";
+import { join as join32 } from "node:path";
 
 // src/pantheon/deepwork/plan-schema.ts
 import { z as z2 } from "zod";
@@ -21278,7 +23042,7 @@ var DeepworkPlanSchema = z2.object({
 
 // src/pantheon/deepwork/plan-tracker.ts
 function deepworkRootDir(cwd = process.cwd()) {
-  return join30(cwd, ".pantheon", "deepwork");
+  return join32(cwd, ".pantheon", "deepwork");
 }
 function deepworkPlanDir(cwd = process.cwd(), slug) {
   const safeSlug = String(slug ?? "").trim();
@@ -21287,16 +23051,16 @@ function deepworkPlanDir(cwd = process.cwd(), slug) {
       `Invalid deepwork plan slug "${slug}": path traversal or separator characters are not allowed`
     );
   }
-  return join30(deepworkRootDir(cwd), safeSlug);
+  return join32(deepworkRootDir(cwd), safeSlug);
 }
 function deepworkPlanJsonPath(cwd = process.cwd(), slug) {
-  return join30(deepworkPlanDir(cwd, slug), "plan.json");
+  return join32(deepworkPlanDir(cwd, slug), "plan.json");
 }
 function deepworkPlanMdPath(cwd = process.cwd(), slug) {
-  return join30(deepworkPlanDir(cwd, slug), "PLAN.md");
+  return join32(deepworkPlanDir(cwd, slug), "PLAN.md");
 }
 function deepworkJournalPath(cwd = process.cwd(), slug) {
-  return join30(deepworkPlanDir(cwd, slug), "journal.ndjson");
+  return join32(deepworkPlanDir(cwd, slug), "journal.ndjson");
 }
 function computeTaskReadiness(plan) {
   const doneIds = new Set(plan.tasks.filter((t) => t.state === "done").map((t) => t.id));
@@ -21677,7 +23441,7 @@ async function resolvePlanDecision(cwd = process.cwd(), slug, decisionId, chosen
 }
 async function listPlans(cwd = process.cwd()) {
   const root = deepworkRootDir(cwd);
-  if (!existsSync22(root)) return [];
+  if (!existsSync24(root)) return [];
   const entries = await readdir(root, { withFileTypes: true });
   const result = [];
   for (const entry of entries) {
@@ -21977,7 +23741,7 @@ ${JSON.stringify(todoPayload, null, 2)}
 
 // src/pantheon/hashline/tool.ts
 import { readFile as readFile8, rename as rename6, rm, writeFile as writeFile4 } from "node:fs/promises";
-import { isAbsolute as isAbsolute6, resolve as resolve21, sep as sep10 } from "node:path";
+import { isAbsolute as isAbsolute6, resolve as resolve23, sep as sep11 } from "node:path";
 import { z as z4 } from "zod";
 var hashlineEditOpArgs = {
   op: z4.enum(["replace", "append", "prepend", "delete"]),
@@ -21991,10 +23755,10 @@ var hashlineEditArgs = {
   edits: z4.array(z4.object(hashlineEditOpArgs)).min(1)
 };
 function resolveFile(file, ctx, fallbackDir) {
-  if (isAbsolute6(file)) return { ok: true, file: resolve21(file) };
-  const base = resolve21(resolveToolCwd(ctx, fallbackDir));
-  const resolved = resolve21(base, file);
-  if (resolved !== base && !resolved.startsWith(base + sep10)) {
+  if (isAbsolute6(file)) return { ok: true, file: resolve23(file) };
+  const base = resolve23(resolveToolCwd(ctx, fallbackDir));
+  const resolved = resolve23(base, file);
+  if (resolved !== base && !resolved.startsWith(base + sep11)) {
     return {
       ok: false,
       error: `hashline_edit: file "${file}" escapes the worktree (resolved to "${resolved}") \u2014 path containment denied`
@@ -22243,8 +24007,8 @@ function createV2LocalDecisionDefinition(options = {}) {
 import { randomBytes } from "node:crypto";
 import { constants as constants5 } from "node:fs";
 import { lstat as lstat2, mkdir as mkdir8, open as open3, rename as rename7, unlink as unlink4 } from "node:fs/promises";
-import { homedir as homedir8 } from "node:os";
-import { basename as basename7, dirname as dirname17, join as join31, resolve as resolve22 } from "node:path";
+import { homedir as homedir9 } from "node:os";
+import { basename as basename8, dirname as dirname17, join as join33, resolve as resolve24 } from "node:path";
 import { z as z5 } from "zod";
 var MODEL_REF_PATTERN2 = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._:+-]*$/;
 var SAFE_PRESET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -22330,10 +24094,10 @@ async function syncDirectory(path6) {
 }
 async function createTemporaryFile(path6) {
   const directory = dirname17(path6);
-  const prefix = `.${basename7(path6)}.tmp-`;
+  const prefix = `.${basename8(path6)}.tmp-`;
   const flags = constants5.O_WRONLY | constants5.O_CREAT | constants5.O_EXCL | NO_FOLLOW;
   for (let attempt = 0; attempt < 10; attempt += 1) {
-    const temporaryPath = join31(directory, `${prefix}${randomBytes(16).toString("hex")}`);
+    const temporaryPath = join33(directory, `${prefix}${randomBytes(16).toString("hex")}`);
     try {
       return { path: temporaryPath, file: await open3(temporaryPath, flags, DEFAULT_FILE_MODE) };
     } catch (error) {
@@ -22400,30 +24164,30 @@ function envValue(options) {
   return options.env ?? process.env;
 }
 function projectConfigPath(options) {
-  return options.projectConfigPath ?? join31(options.cwd ?? process.cwd(), "opencode.json");
+  return options.projectConfigPath ?? join33(options.cwd ?? process.cwd(), "opencode.json");
 }
 function defaultGlobalConfigPath(options) {
   const env = envValue(options);
-  const home = env.HOME?.trim() || homedir8();
-  const xdg = env.XDG_CONFIG_HOME?.trim() || join31(home, ".config");
-  return join31(xdg, "opencode", "opencode.json");
+  const home = env.HOME?.trim() || homedir9();
+  const xdg = env.XDG_CONFIG_HOME?.trim() || join33(home, ".config");
+  return join33(xdg, "opencode", "opencode.json");
 }
 function globalConfigCandidates(options) {
   if (options.globalConfigPath !== void 0) return [options.globalConfigPath];
   const canonical = defaultGlobalConfigPath(options);
-  const home = envValue(options).HOME?.trim() || homedir8();
-  const legacy = join31(home, ".opencode", "opencode.json");
+  const home = envValue(options).HOME?.trim() || homedir9();
+  const legacy = join33(home, ".opencode", "opencode.json");
   return [.../* @__PURE__ */ new Set([canonical, legacy])];
 }
 function activePresetCandidatesList(options) {
   if (options.activePresetCandidates !== void 0) {
-    return options.activePresetCandidates.map((p) => resolve22(p));
+    return options.activePresetCandidates.map((p) => resolve24(p));
   }
-  const projectPreset = join31(dirname17(projectConfigPath(options)), ".pantheon", "active-preset.json");
+  const projectPreset = join33(dirname17(projectConfigPath(options)), ".pantheon", "active-preset.json");
   const globalPresets = globalConfigCandidates(options).map(
-    (p) => join31(dirname17(p), ".pantheon", "active-preset.json")
+    (p) => join33(dirname17(p), ".pantheon", "active-preset.json")
   );
-  return [...new Set([projectPreset, ...globalPresets].map((p) => resolve22(p)))];
+  return [...new Set([projectPreset, ...globalPresets].map((p) => resolve24(p)))];
 }
 function presetPathForScope(options, scope) {
   const candidates = activePresetCandidatesList(options);
@@ -22435,7 +24199,7 @@ function presetPathForScope(options, scope) {
   const second = candidates[1];
   if (second) return second;
   const globalCandidates = globalConfigCandidates(options).map(
-    (p) => resolve22(join31(dirname17(p), ".pantheon", "active-preset.json"))
+    (p) => resolve24(join33(dirname17(p), ".pantheon", "active-preset.json"))
   );
   const fallback = globalCandidates[0] ?? candidates[0];
   if (!fallback) throw new ModelCommandError("global preset path is unavailable");
@@ -22991,832 +24755,6 @@ function createModelCommand(options = {}) {
   };
 }
 
-// src/pantheon/native-memory-tools.ts
-import {
-  existsSync as existsSync24,
-  mkdirSync as mkdirSync14,
-  readdirSync as readdirSync7,
-  readFileSync as readFileSync20,
-  realpathSync as realpathSync11,
-  writeFileSync as writeFileSync11
-} from "node:fs";
-import { join as join33, resolve as resolve24, sep as sep11 } from "node:path";
-import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
-
-// src/pantheon/memory-federation.ts
-import { existsSync as existsSync23, readFileSync as readFileSync19, realpathSync as realpathSync10 } from "node:fs";
-import { homedir as homedir9 } from "node:os";
-import { basename as basename8, join as join32, resolve as resolve23 } from "node:path";
-import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
-var NOT_EXPIRED_SQL = "(expires_at IS NULL OR expires_at > ?)";
-function safeRealpath(dir) {
-  try {
-    return realpathSync10(dir);
-  } catch {
-    return resolve23(dir);
-  }
-}
-function resolveFederatedRepoDirs(primaryWorkspaceDir, options = {}) {
-  const candidates = [];
-  if (Array.isArray(options.explicitRepos)) {
-    candidates.push(...options.explicitRepos);
-  }
-  const rawEnv = options.federatedEnv ?? process.env.PANTHEON_FEDERATED_REPOS ?? "";
-  if (rawEnv.trim()) {
-    for (const part of rawEnv.split(/[,;]/)) {
-      const trimmed = part.trim();
-      if (trimmed) candidates.push(trimmed);
-    }
-  }
-  const manifestFile = options.manifestPath ?? join32(homedir9(), ".pantheon", "federation.json");
-  if (existsSync23(manifestFile)) {
-    try {
-      const parsed = JSON.parse(readFileSync19(manifestFile, "utf8"));
-      if (Array.isArray(parsed.repos)) {
-        for (const item of parsed.repos) {
-          if (typeof item === "string" && item.trim()) candidates.push(item.trim());
-        }
-      }
-    } catch {
-    }
-  }
-  const primaryStore = safeRealpath(resolveSharedPantheonRoot(primaryWorkspaceDir));
-  const seenStores = /* @__PURE__ */ new Set([primaryStore]);
-  const peers = [];
-  for (const candidate of candidates) {
-    const abs = resolve23(candidate);
-    if (!existsSync23(abs)) continue;
-    const peerStore = safeRealpath(resolveSharedPantheonRoot(abs));
-    if (seenStores.has(peerStore)) continue;
-    const dbPath = join32(peerStore, ".pantheon", "memory", "memory.db");
-    if (!existsSync23(dbPath)) continue;
-    seenStores.add(peerStore);
-    peers.push(peerStore);
-  }
-  return peers;
-}
-function querySinglePeerDb(peerRoot, rawQuery, nowIso, limit, namespace) {
-  const dbPath = join32(peerRoot, ".pantheon", "memory", "memory.db");
-  if (!existsSync23(dbPath)) return [];
-  const repoName = basename8(peerRoot) || peerRoot;
-  let db;
-  try {
-    db = new DatabaseSync4(dbPath, { readOnly: true });
-    const tokens = rawQuery.replace(/[^\p{L}\p{N}_-]+/gu, " ").trim().split(/\s+/).filter((t) => t.length >= 2);
-    if (tokens.length > 0) {
-      try {
-        const ftsExpr = tokens.map((t) => `"${t.replace(/"/g, '""')}"*`).join(" OR ");
-        let ftsSql = `
-          SELECT m.namespace, m.key, m.value, m.metadata, m.created_at, bm25(memories_fts) AS score
-          FROM memories_fts
-          JOIN memories m ON m.id = memories_fts.rowid
-          WHERE memories_fts MATCH ? AND (m.expires_at IS NULL OR m.expires_at > ?)
-        `;
-        const ftsParams = [ftsExpr, nowIso];
-        if (namespace) {
-          ftsSql += " AND m.namespace = ?";
-          ftsParams.push(namespace);
-        }
-        ftsSql += " ORDER BY score LIMIT ?";
-        ftsParams.push(limit);
-        const rows2 = db.prepare(ftsSql).all(...ftsParams);
-        if (rows2.length > 0) {
-          return rows2.map((r) => ({ ...r, sourceRepo: repoName, sourcePath: peerRoot }));
-        }
-      } catch {
-      }
-    }
-    const escaped = rawQuery.replace(/[\\%_]/g, "\\$&");
-    let sql = `
-      SELECT namespace, key, value, metadata, created_at
-      FROM memories
-      WHERE (value LIKE ? ESCAPE '\\' OR key LIKE ? ESCAPE '\\')
-        AND ${NOT_EXPIRED_SQL}
-    `;
-    const params = [`%${escaped}%`, `%${escaped}%`, nowIso];
-    if (namespace) {
-      sql += " AND namespace = ?";
-      params.push(namespace);
-    }
-    sql += " ORDER BY id DESC LIMIT ?";
-    params.push(limit);
-    const rows = db.prepare(sql).all(...params);
-    return rows.map((r) => ({ ...r, sourceRepo: repoName, sourcePath: peerRoot }));
-  } catch {
-    return [];
-  } finally {
-    try {
-      db?.close();
-    } catch {
-    }
-  }
-}
-function searchFederatedMemories(primaryWorkspaceDir, query, options = {}) {
-  const peers = resolveFederatedRepoDirs(primaryWorkspaceDir, options);
-  if (peers.length === 0) return [];
-  const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-  const limit = Math.max(1, Math.min(options.limit ?? 10, 100));
-  const results = [];
-  for (const peer of peers) {
-    const hits = querySinglePeerDb(peer, query, nowIso, limit, options.namespace);
-    results.push(...hits);
-    if (results.length >= limit) break;
-  }
-  return results.slice(0, limit);
-}
-function getFederatedStats(primaryWorkspaceDir, options = {}) {
-  const peers = resolveFederatedRepoDirs(primaryWorkspaceDir, options);
-  const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-  const repos = [];
-  let total = 0;
-  for (const peer of peers) {
-    const dbPath = join32(peer, ".pantheon", "memory", "memory.db");
-    let count = 0;
-    let db;
-    try {
-      db = new DatabaseSync4(dbPath, { readOnly: true });
-      const row = db.prepare(`SELECT count(*) as count FROM memories WHERE ${NOT_EXPIRED_SQL}`).get(nowIso);
-      count = typeof row?.count === "number" ? row.count : 0;
-    } catch {
-      count = 0;
-    } finally {
-      try {
-        db?.close();
-      } catch {
-      }
-    }
-    repos.push({ repo: basename8(peer) || peer, path: peer, total: count });
-    total += count;
-  }
-  return { total, repos };
-}
-
-// src/pantheon/native-memory-tools.ts
-var SAFE_SEGMENT_RE2 = /^[a-zA-Z0-9._:-]{1,128}$/;
-var MAX_MEMORY_VALUE_BYTES = 65536;
-function isSafeSegment(value) {
-  return typeof value === "string" && SAFE_SEGMENT_RE2.test(value) && value !== "." && value !== ".." && !value.includes("..") && !value.includes("/") && !value.includes("\\");
-}
-function resolveConfinedPath(baseDir, ...segments) {
-  mkdirSync14(baseDir, { recursive: true });
-  const canonicalBase = realpathSync11(baseDir);
-  const candidate = resolve24(canonicalBase, ...segments);
-  const prefix = canonicalBase.endsWith(sep11) ? canonicalBase : `${canonicalBase}${sep11}`;
-  if (candidate !== canonicalBase && !candidate.startsWith(prefix)) {
-    throw new Error("Path traversal denied: target escapes confined directory");
-  }
-  return candidate;
-}
-var dbCache = /* @__PURE__ */ new Map();
-function runAutoMigration(workspaceDir) {
-  try {
-    const globalConfigDir = resolveSafeGlobalConfigDir();
-    ensureLegacyStoresMigratedOnce(workspaceDir, globalConfigDir ? { globalConfigDir } : {});
-  } catch {
-  }
-}
-function getMemoryDb(workspaceDir) {
-  runAutoMigration(workspaceDir);
-  const memoryDir = join33(workspaceDir, ".pantheon", "memory");
-  mkdirSync14(memoryDir, { recursive: true });
-  const dbPath = resolveConfinedPath(memoryDir, "memory.db");
-  const cached = dbCache.get(dbPath);
-  if (cached) return cached;
-  const db = new DatabaseSync5(dbPath);
-  db.exec(`
-    PRAGMA busy_timeout = 3000;
-    PRAGMA journal_mode = WAL;
-    CREATE TABLE IF NOT EXISTS memories (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      namespace TEXT NOT NULL,
-      key TEXT NOT NULL,
-      value TEXT NOT NULL,
-      metadata TEXT,
-      created_at TEXT NOT NULL,
-      expires_at TEXT,
-      UNIQUE(namespace, key)
-    );
-    CREATE INDEX IF NOT EXISTS idx_memories_ns_key ON memories(namespace, key);
-  `);
-  try {
-    db.exec(`
-      CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
-        namespace,
-        key,
-        value,
-        content='memories',
-        content_rowid='id',
-        tokenize='porter unicode61'
-      );
-      CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-        INSERT INTO memories_fts(rowid, namespace, key, value)
-        VALUES (new.id, new.namespace, new.key, new.value);
-      END;
-      CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-        INSERT INTO memories_fts(memories_fts, rowid, namespace, key, value)
-        VALUES ('delete', old.id, old.namespace, old.key, old.value);
-      END;
-      CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-        INSERT INTO memories_fts(memories_fts, rowid, namespace, key, value)
-        VALUES ('delete', old.id, old.namespace, old.key, old.value);
-        INSERT INTO memories_fts(rowid, namespace, key, value)
-        VALUES (new.id, new.namespace, new.key, new.value);
-      END;
-    `);
-  } catch {
-  }
-  dbCache.set(dbPath, db);
-  return db;
-}
-function jsonResult7(payload) {
-  return { output: JSON.stringify(payload) };
-}
-var NOT_EXPIRED_SQL2 = "(expires_at IS NULL OR expires_at > ?)";
-function createNativeMemoryAndPersistenceTools(fallbackDir) {
-  return [
-    {
-      name: "memory_store",
-      description: "Store a durable memory entry in .pantheon/memory/memory.db with FTS5 indexing and optional TTL.",
-      input: {
-        type: "object",
-        additionalProperties: false,
-        required: ["namespace", "key", "value"],
-        properties: {
-          namespace: { type: "string", description: "Project or domain namespace" },
-          key: { type: "string", description: "Unique key within the namespace" },
-          value: { type: "string", description: "Durable fact, ADR, or convention text (<=64KiB)" },
-          metadata: { type: "string", description: "Optional JSON metadata string" },
-          expires_at: { type: "string", description: "Optional ISO-8601 expiration timestamp" }
-        }
-      },
-      output: {},
-      execute: async (input, context) => {
-        try {
-          const ns = input.namespace;
-          const key = input.key;
-          const value = input.value;
-          if (typeof ns !== "string" || !ns.trim() || typeof key !== "string" || !key.trim()) {
-            return jsonResult7({
-              ok: false,
-              error: "namespace and key are required non-empty strings"
-            });
-          }
-          if (typeof value !== "string" || !value.trim()) {
-            return jsonResult7({
-              ok: false,
-              error: "value is required and must be a non-empty string"
-            });
-          }
-          if (Buffer.byteLength(value, "utf8") > MAX_MEMORY_VALUE_BYTES) {
-            return jsonResult7({ ok: false, error: "value exceeds maximum size of 64 KiB" });
-          }
-          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
-          const db = getMemoryDb(cwd);
-          const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-          db.prepare(
-            `INSERT INTO memories (namespace, key, value, metadata, created_at, expires_at)
-             VALUES (?, ?, ?, ?, ?, ?)
-             ON CONFLICT(namespace, key) DO UPDATE SET
-               value = excluded.value,
-               metadata = excluded.metadata,
-               created_at = excluded.created_at,
-               expires_at = excluded.expires_at`
-          ).run(
-            ns.trim(),
-            key.trim(),
-            value,
-            typeof input.metadata === "string" ? input.metadata : null,
-            nowIso,
-            typeof input.expires_at === "string" ? input.expires_at : null
-          );
-          return jsonResult7({ ok: true, status: "stored", namespace: ns.trim(), key: key.trim() });
-        } catch (err) {
-          return jsonResult7({
-            ok: false,
-            error: err instanceof Error ? err.message : String(err)
-          });
-        }
-      }
-    },
-    {
-      name: "memory_recall",
-      description: "Recall a specific memory entry by exact namespace and key.",
-      input: {
-        type: "object",
-        additionalProperties: false,
-        required: ["namespace", "key"],
-        properties: {
-          namespace: { type: "string", description: "Memory namespace" },
-          key: { type: "string", description: "Memory key" }
-        }
-      },
-      output: {},
-      execute: async (input, context) => {
-        try {
-          const ns = input.namespace;
-          const key = input.key;
-          if (typeof ns !== "string" || !ns.trim() || typeof key !== "string" || !key.trim()) {
-            return jsonResult7({ ok: false, error: "namespace and key are required" });
-          }
-          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
-          const db = getMemoryDb(cwd);
-          const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-          const row = db.prepare(
-            `SELECT namespace, key, value, metadata, created_at, expires_at
-               FROM memories
-               WHERE namespace = ? AND key = ? AND ${NOT_EXPIRED_SQL2}`
-          ).get(ns.trim(), key.trim(), nowIso);
-          return jsonResult7(row ?? { ok: false, error: "not_found" });
-        } catch (err) {
-          return jsonResult7({
-            ok: false,
-            error: err instanceof Error ? err.message : String(err)
-          });
-        }
-      }
-    },
-    {
-      name: "memory_search",
-      description: "Search durable memories using SQLite FTS5 BM25 ranking with lexical fallback.",
-      input: {
-        type: "object",
-        additionalProperties: false,
-        required: ["query"],
-        properties: {
-          query: { type: "string", description: "Search query terms" },
-          namespace: { type: "string", description: "Optional namespace filter" },
-          top_k: { type: "number", description: "Maximum results to return (default 10)" },
-          federated: {
-            type: "boolean",
-            description: "Include federated peer repositories (default true when configured)"
-          }
-        }
-      },
-      output: {},
-      execute: async (input, context) => {
-        try {
-          const rawQuery = typeof input.query === "string" ? input.query.trim() : "";
-          if (!rawQuery) {
-            return jsonResult7({ ok: false, error: "query is required", count: 0, results: [] });
-          }
-          const limit = typeof input.top_k === "number" && Number.isFinite(input.top_k) && input.top_k > 0 ? Math.min(Math.floor(input.top_k), 100) : 10;
-          const ns = typeof input.namespace === "string" && input.namespace.trim() ? input.namespace.trim() : void 0;
-          const useFederated = input.federated !== false;
-          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
-          const db = getMemoryDb(cwd);
-          const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-          const tokens = rawQuery.replace(/[^\p{L}\p{N}_-]+/gu, " ").trim().split(/\s+/).filter((t) => t.length >= 2);
-          let localRows = [];
-          let matchedFts = false;
-          if (tokens.length > 0) {
-            try {
-              const ftsExpr = tokens.map((t) => `"${t.replace(/"/g, '""')}"*`).join(" OR ");
-              let ftsSql = `
-                SELECT m.namespace, m.key, m.value, m.metadata, m.created_at, bm25(memories_fts) AS score
-                FROM memories_fts
-                JOIN memories m ON m.id = memories_fts.rowid
-                WHERE memories_fts MATCH ? AND (m.expires_at IS NULL OR m.expires_at > ?)
-              `;
-              const ftsParams = [ftsExpr, nowIso];
-              if (ns) {
-                ftsSql += " AND m.namespace = ?";
-                ftsParams.push(ns);
-              }
-              ftsSql += " ORDER BY score LIMIT ?";
-              ftsParams.push(limit);
-              const rows = db.prepare(ftsSql).all(...ftsParams);
-              if (rows.length > 0) {
-                localRows = rows;
-                matchedFts = true;
-              }
-            } catch {
-            }
-          }
-          if (!matchedFts) {
-            const escaped = rawQuery.replace(/[\\%_]/g, "\\$&");
-            let sql = `
-              SELECT namespace, key, value, metadata, created_at
-              FROM memories
-              WHERE (value LIKE ? ESCAPE '\\' OR key LIKE ? ESCAPE '\\')
-                AND ${NOT_EXPIRED_SQL2}
-            `;
-            const params = [`%${escaped}%`, `%${escaped}%`, nowIso];
-            if (ns) {
-              sql += " AND namespace = ?";
-              params.push(ns);
-            }
-            sql += " ORDER BY id DESC LIMIT ?";
-            params.push(limit);
-            localRows = db.prepare(sql).all(...params);
-          }
-          const remaining = Math.max(0, limit - localRows.length);
-          const peerRows = useFederated && remaining > 0 ? searchFederatedMemories(cwd, rawQuery, {
-            ...ns ? { namespace: ns } : {},
-            limit: remaining
-          }) : [];
-          const combined = [...localRows, ...peerRows];
-          return jsonResult7({ ok: true, count: combined.length, results: combined });
-        } catch (err) {
-          return jsonResult7({
-            ok: false,
-            error: err instanceof Error ? err.message : String(err)
-          });
-        }
-      }
-    },
-    {
-      name: "memory_forget",
-      description: "Delete a durable memory entry by namespace and key.",
-      input: {
-        type: "object",
-        additionalProperties: false,
-        required: ["namespace", "key"],
-        properties: {
-          namespace: { type: "string", description: "Memory namespace" },
-          key: { type: "string", description: "Memory key to delete" }
-        }
-      },
-      output: {},
-      execute: async (input, context) => {
-        try {
-          const ns = input.namespace;
-          const key = input.key;
-          if (typeof ns !== "string" || !ns.trim() || typeof key !== "string" || !key.trim()) {
-            return jsonResult7({ ok: false, error: "namespace and key are required" });
-          }
-          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
-          const db = getMemoryDb(cwd);
-          const info = db.prepare("DELETE FROM memories WHERE namespace = ? AND key = ?").run(ns.trim(), key.trim());
-          return jsonResult7({
-            ok: true,
-            deleted: info.changes > 0,
-            namespace: ns.trim(),
-            key: key.trim()
-          });
-        } catch (err) {
-          return jsonResult7({
-            ok: false,
-            error: err instanceof Error ? err.message : String(err)
-          });
-        }
-      }
-    },
-    {
-      name: "memory_list",
-      description: "List active memory keys in a namespace.",
-      input: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          namespace: { type: "string", description: "Optional namespace filter" },
-          limit: { type: "number", description: "Maximum entries to list (default 50)" }
-        }
-      },
-      output: {},
-      execute: async (input, context) => {
-        try {
-          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
-          const db = getMemoryDb(cwd);
-          const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-          const limit = typeof input.limit === "number" && Number.isFinite(input.limit) && input.limit > 0 ? Math.min(Math.floor(input.limit), 200) : 50;
-          let sql = `SELECT namespace, key, created_at FROM memories WHERE ${NOT_EXPIRED_SQL2}`;
-          const params = [nowIso];
-          if (typeof input.namespace === "string" && input.namespace.trim()) {
-            sql += " AND namespace = ?";
-            params.push(input.namespace.trim());
-          }
-          sql += " ORDER BY id DESC LIMIT ?";
-          params.push(limit);
-          const rows = db.prepare(sql).all(...params);
-          return jsonResult7({ ok: true, count: rows.length, entries: rows });
-        } catch (err) {
-          return jsonResult7({
-            ok: false,
-            error: err instanceof Error ? err.message : String(err)
-          });
-        }
-      }
-    },
-    {
-      name: "memory_stats",
-      description: "Get counts of active durable memory entries by namespace.",
-      input: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          namespace: { type: "string", description: "Optional namespace filter" }
-        }
-      },
-      output: {},
-      execute: async (_input, context) => {
-        try {
-          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
-          const db = getMemoryDb(cwd);
-          const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-          const total = db.prepare(`SELECT count(*) as count FROM memories WHERE ${NOT_EXPIRED_SQL2}`).get(nowIso);
-          const byNamespace = db.prepare(
-            `SELECT namespace, count(*) as count FROM memories WHERE ${NOT_EXPIRED_SQL2} GROUP BY namespace`
-          ).all(nowIso);
-          const fed = getFederatedStats(cwd);
-          return jsonResult7({
-            ok: true,
-            total: total?.count ?? 0,
-            byNamespace,
-            ...fed.repos.length > 0 ? { federated: fed } : {}
-          });
-        } catch (err) {
-          return jsonResult7({
-            ok: false,
-            error: err instanceof Error ? err.message : String(err)
-          });
-        }
-      }
-    },
-    {
-      name: "context_save",
-      description: "Save a milestone session checkpoint under .pantheon/persistence.",
-      input: {
-        type: "object",
-        additionalProperties: false,
-        required: ["session_id", "content"],
-        properties: {
-          session_id: { type: "string", description: "Session identifier" },
-          content: { type: "string", description: "Serialized JSON state object" },
-          namespace: { type: "string", description: "Optional checkpoint namespace" }
-        }
-      },
-      output: {},
-      execute: async (input, context) => {
-        try {
-          const sessionId = input.session_id;
-          const ns = input.namespace ?? "checkpoints";
-          if (!isSafeSegment(sessionId) || !isSafeSegment(ns)) {
-            return jsonResult7({
-              ok: false,
-              error: "session_id and namespace must be safe identifiers without path traversal"
-            });
-          }
-          if (typeof input.content !== "string" || !input.content.trim()) {
-            return jsonResult7({ ok: false, error: "content must be a non-empty string" });
-          }
-          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
-          runAutoMigration(cwd);
-          const baseDir = join33(cwd, ".pantheon", "persistence");
-          const dir = resolveConfinedPath(baseDir, ns);
-          mkdirSync14(dir, { recursive: true });
-          const filePath = resolveConfinedPath(dir, `${sessionId}.json`);
-          const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-          writeFileSync11(
-            filePath,
-            JSON.stringify(
-              {
-                session_id: sessionId,
-                namespace: ns,
-                content: input.content,
-                updated_at: nowIso
-              },
-              null,
-              2
-            ),
-            "utf8"
-          );
-          return jsonResult7({
-            ok: true,
-            status: "saved",
-            session_id: sessionId,
-            updated_at: nowIso
-          });
-        } catch (err) {
-          return jsonResult7({
-            ok: false,
-            error: err instanceof Error ? err.message : String(err)
-          });
-        }
-      }
-    },
-    {
-      name: "context_get",
-      description: "Retrieve a saved session checkpoint by session_id.",
-      input: {
-        type: "object",
-        additionalProperties: false,
-        required: ["session_id"],
-        properties: {
-          session_id: { type: "string", description: "Session identifier" },
-          namespace: { type: "string", description: "Optional checkpoint namespace" }
-        }
-      },
-      output: {},
-      execute: async (input, context) => {
-        try {
-          const sessionId = input.session_id;
-          const ns = input.namespace ?? "checkpoints";
-          if (!isSafeSegment(sessionId) || !isSafeSegment(ns)) {
-            return jsonResult7({
-              ok: false,
-              error: "session_id and namespace must be safe identifiers without path traversal"
-            });
-          }
-          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
-          runAutoMigration(cwd);
-          const baseDir = join33(cwd, ".pantheon", "persistence");
-          const dir = resolveConfinedPath(baseDir, ns);
-          const filePath = resolveConfinedPath(dir, `${sessionId}.json`);
-          if (!existsSync24(filePath)) {
-            const globalDir = resolveSafeGlobalConfigDir();
-            if (globalDir) {
-              const globalNsDir = join33(globalDir, ".pantheon", "persistence", ns);
-              if (existsSync24(join33(globalNsDir, `${sessionId}.json`))) {
-                const globalFile = resolveConfinedPath(globalNsDir, `${sessionId}.json`);
-                if (existsSync24(globalFile)) {
-                  return jsonResult7(JSON.parse(readFileSync20(globalFile, "utf8")));
-                }
-              }
-            }
-            return jsonResult7({ ok: false, error: "not_found", session_id: sessionId });
-          }
-          return jsonResult7(JSON.parse(readFileSync20(filePath, "utf8")));
-        } catch (err) {
-          return jsonResult7({
-            ok: false,
-            error: err instanceof Error ? err.message : String(err)
-          });
-        }
-      }
-    },
-    {
-      name: "goal_create",
-      description: "Create a persistent session goal in .pantheon/goals (read by compaction hooks).",
-      input: {
-        type: "object",
-        additionalProperties: false,
-        required: ["title"],
-        properties: {
-          id: { type: "string", description: "Optional goal identifier" },
-          title: { type: "string", description: "Concise goal statement" },
-          criteria: {
-            type: "array",
-            items: { type: "string" },
-            description: "Completion criteria checklist"
-          }
-        }
-      },
-      output: {},
-      execute: async (input, context) => {
-        try {
-          const title = typeof input.title === "string" ? input.title.trim() : "";
-          if (!title) return jsonResult7({ ok: false, error: "title is required" });
-          const rawId = typeof input.id === "string" && input.id.trim() ? input.id.trim() : `goal-${Date.now()}`;
-          if (!isSafeSegment(rawId)) {
-            return jsonResult7({ ok: false, error: "id must be a safe identifier" });
-          }
-          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
-          runAutoMigration(cwd);
-          const goalsDir = join33(cwd, ".pantheon", "goals");
-          const filePath = resolveConfinedPath(goalsDir, `${rawId}.json`);
-          const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-          const goal = {
-            id: rawId,
-            title,
-            criteria: Array.isArray(input.criteria) ? input.criteria.map(String) : [],
-            status: "active",
-            created_at: nowIso,
-            updated_at: nowIso
-          };
-          writeFileSync11(filePath, JSON.stringify(goal, null, 2), "utf8");
-          return jsonResult7({ ok: true, goal });
-        } catch (err) {
-          return jsonResult7({
-            ok: false,
-            error: err instanceof Error ? err.message : String(err)
-          });
-        }
-      }
-    },
-    {
-      name: "goal_get",
-      description: "Retrieve an active session goal by id or latest.",
-      input: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          id: { type: "string", description: "Optional goal id (defaults to latest)" }
-        }
-      },
-      output: {},
-      execute: async (input, context) => {
-        try {
-          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
-          runAutoMigration(cwd);
-          const goalsDir = join33(cwd, ".pantheon", "goals");
-          mkdirSync14(goalsDir, { recursive: true });
-          if (typeof input.id === "string" && input.id.trim()) {
-            const id = input.id.trim();
-            if (!isSafeSegment(id)) {
-              return jsonResult7({ ok: false, error: "id must be a safe identifier" });
-            }
-            const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
-            if (!existsSync24(filePath)) return jsonResult7({ ok: false, error: "not_found", id });
-            return jsonResult7(JSON.parse(readFileSync20(filePath, "utf8")));
-          }
-          const files = readdirSync7(goalsDir).filter((f) => f.endsWith(".json")).sort();
-          const latest = files.at(-1);
-          if (!latest) return jsonResult7({ ok: false, error: "no_active_goals" });
-          return jsonResult7(JSON.parse(readFileSync20(resolveConfinedPath(goalsDir, latest), "utf8")));
-        } catch (err) {
-          return jsonResult7({
-            ok: false,
-            error: err instanceof Error ? err.message : String(err)
-          });
-        }
-      }
-    },
-    {
-      name: "goal_update",
-      description: 'Update progress notes or status on an active session goal. Use "notes" (not "progress") for progress text.',
-      input: {
-        type: "object",
-        additionalProperties: false,
-        required: ["id"],
-        properties: {
-          id: { type: "string", description: "Goal identifier" },
-          status: { type: "string", description: "Updated status (active, paused, completed)" },
-          notes: { type: "string", description: 'Progress notes (use "notes", not "progress")' }
-        }
-      },
-      output: {},
-      execute: async (input, context) => {
-        try {
-          const id = typeof input.id === "string" ? input.id.trim() : "";
-          if (!isSafeSegment(id)) {
-            return jsonResult7({ ok: false, error: "valid goal id is required" });
-          }
-          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
-          runAutoMigration(cwd);
-          const goalsDir = join33(cwd, ".pantheon", "goals");
-          const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
-          if (!existsSync24(filePath)) return jsonResult7({ ok: false, error: "not_found", id });
-          const existing = JSON.parse(readFileSync20(filePath, "utf8"));
-          const updated = {
-            ...existing,
-            status: typeof input.status === "string" ? input.status : existing.status,
-            ...typeof input.notes === "string" ? { notes: input.notes } : {},
-            updated_at: (/* @__PURE__ */ new Date()).toISOString()
-          };
-          writeFileSync11(filePath, JSON.stringify(updated, null, 2), "utf8");
-          return jsonResult7({ ok: true, goal: updated });
-        } catch (err) {
-          return jsonResult7({
-            ok: false,
-            error: err instanceof Error ? err.message : String(err)
-          });
-        }
-      }
-    },
-    {
-      name: "goal_done",
-      description: "Mark a session goal as completed.",
-      input: {
-        type: "object",
-        additionalProperties: false,
-        required: ["id"],
-        properties: {
-          id: { type: "string", description: "Goal identifier" },
-          summary: { type: "string", description: "Completion summary" }
-        }
-      },
-      output: {},
-      execute: async (input, context) => {
-        try {
-          const id = typeof input.id === "string" ? input.id.trim() : "";
-          if (!isSafeSegment(id)) {
-            return jsonResult7({ ok: false, error: "valid goal id is required" });
-          }
-          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
-          runAutoMigration(cwd);
-          const goalsDir = join33(cwd, ".pantheon", "goals");
-          const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
-          if (!existsSync24(filePath)) return jsonResult7({ ok: false, error: "not_found", id });
-          const existing = JSON.parse(readFileSync20(filePath, "utf8"));
-          const updated = {
-            ...existing,
-            status: "completed",
-            ...typeof input.summary === "string" ? { summary: input.summary } : {},
-            updated_at: (/* @__PURE__ */ new Date()).toISOString()
-          };
-          writeFileSync11(filePath, JSON.stringify(updated, null, 2), "utf8");
-          return jsonResult7({ ok: true, goal: updated });
-        } catch (err) {
-          return jsonResult7({
-            ok: false,
-            error: err instanceof Error ? err.message : String(err)
-          });
-        }
-      }
-    }
-  ];
-}
-
 // src/pantheon/review-verdict.ts
 var MAX_AUTO_REMEDIATIONS = 2;
 function jsonResult8(payload) {
@@ -23949,6 +24887,26 @@ function createReviewVerdictTool(sessionDomain) {
       } else if (verdict !== "BLOCK" && sessionID) {
         remediationCounts.delete(`${sessionID}:${targetAgent}`);
       }
+      let strategy;
+      if (verdict === "BLOCK") {
+        const stepKey = typeof input.stepKey === "string" && input.stepKey.trim() ? input.stepKey.trim() : void 0;
+        const attach = attachThemisVerdictSafe(resolveMemoryStoreCwd(context), {
+          verdict,
+          ...stepKey ? { stepKey } : { agent: targetAgent }
+        });
+        strategy = {
+          attached: attach.attached,
+          ...attach.runId ? { runId: attach.runId } : {},
+          ...attach.strategyId ? { strategyId: attach.strategyId } : {},
+          ...attach.reason ? { reason: attach.reason } : {},
+          ...typeof attach.forcedSuccessZero === "boolean" ? { forcedSuccessZero: attach.forcedSuccessZero } : {},
+          ...typeof attach.objections === "number" ? { objections: attach.objections } : {},
+          ...attach.status ? { status: attach.status } : {},
+          ...typeof attach.unattributedObjectionId === "number" ? { unattributedObjectionId: attach.unattributedObjectionId } : {},
+          ...attach.candidates ? { candidates: attach.candidates } : {},
+          ...attach.error ? { error: attach.error } : {}
+        };
+      }
       return jsonResult8({
         ok: true,
         verdict,
@@ -23956,7 +24914,8 @@ function createReviewVerdictTool(sessionDomain) {
         findingsCount: findings.length,
         syntheticTriggered,
         ...syntheticSessionID ? { syntheticSessionID } : {},
-        ...remediationAttempt > 0 ? { remediationAttempt, maxRemediations: MAX_AUTO_REMEDIATIONS } : {}
+        ...remediationAttempt > 0 ? { remediationAttempt, maxRemediations: MAX_AUTO_REMEDIATIONS } : {},
+        ...strategy ? { strategy } : {}
       });
     }
   };
@@ -24424,6 +25383,139 @@ function createV2SkillSearchDefinition(defaultDir) {
   };
 }
 
+// src/pantheon/strategy-tool.ts
+function jsonResult9(payload) {
+  return { output: JSON.stringify(payload) };
+}
+function optionalString(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+function optionalNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+var STATUSES = ["candidate", "proven", "anti_pattern"];
+function createStrategyTool(fallbackDir) {
+  return {
+    name: "pantheon_strategy",
+    description: "Persist and query per-step strategy outcomes (FTS5 BM25, no embeddings). Actions: record | query | stats | prune. Query ranks by success_rate*decay DESC, attempts DESC and labels proven (>=3 attempts, success >=0.8) or anti_pattern (>=3 attempts, failure >0.6); retention prunes runs only, never aggregates.",
+    input: {
+      type: "object",
+      additionalProperties: false,
+      required: ["action"],
+      properties: {
+        action: {
+          type: "string",
+          enum: ["record", "query", "stats", "prune"],
+          description: "record | query | stats | prune"
+        },
+        strategyId: {
+          type: "string",
+          description: 'Stable strategy identity (e.g. "hermes:feature" or a decomposition name)'
+        },
+        agent: { type: "string", description: "Owning specialist agent" },
+        success: { type: "boolean", description: "Whether the step succeeded" },
+        taskType: {
+          type: "string",
+          description: "Step task shape (feature | bugfix | refactor | chore)"
+        },
+        stepKey: { type: "string", description: "Associated step-ledger key" },
+        attempt: { type: "number", description: "Attempt number within the step (run id suffix)" },
+        wave: { type: "number", description: "Dependency wave index" },
+        sliceCount: { type: "number", description: "Number of verification slices used" },
+        parallel: { type: "boolean", description: "Whether the step ran in parallel with peers" },
+        durationMs: { type: "number", description: "Observed wall-clock duration" },
+        filesTouched: { type: "number", description: "Number of files mutated" },
+        themisVerdict: {
+          type: "string",
+          description: "Themis verdict for this run (BLOCK forces success=0)"
+        },
+        retries: { type: "number", description: "Failed verification attempts before success" },
+        errorClass: { type: "string", description: "Failure class for unsuccessful runs" },
+        summary: { type: "string", description: "Searchable description of the strategy" },
+        query: { type: "string", description: "FTS5 search terms (query action)" },
+        status: {
+          type: "string",
+          enum: ["candidate", "proven", "anti_pattern", "all"],
+          description: "Filter query results by ladder status"
+        },
+        limit: { type: "number", description: "Maximum rows to return (default 10, max 50)" }
+      }
+    },
+    output: {},
+    execute: async (input, context) => {
+      try {
+        const cwd = resolveMemoryStoreCwd(context, fallbackDir);
+        const action = typeof input.action === "string" ? input.action : "";
+        if (action === "record") {
+          const strategyId = optionalString(input.strategyId);
+          const agent = optionalString(input.agent);
+          if (!strategyId) return jsonResult9({ ok: false, error: "strategyId is required" });
+          if (!agent) return jsonResult9({ ok: false, error: "agent is required" });
+          if (typeof input.success !== "boolean") {
+            return jsonResult9({ ok: false, error: "success must be a boolean" });
+          }
+          const runInput = {
+            strategyId,
+            agent,
+            success: input.success,
+            taskType: optionalString(input.taskType),
+            stepKey: optionalString(input.stepKey),
+            attempt: optionalNumber(input.attempt),
+            wave: optionalNumber(input.wave),
+            sliceCount: optionalNumber(input.sliceCount),
+            parallel: typeof input.parallel === "boolean" ? input.parallel : null,
+            durationMs: optionalNumber(input.durationMs),
+            filesTouched: optionalNumber(input.filesTouched),
+            themisVerdict: optionalString(input.themisVerdict),
+            retries: optionalNumber(input.retries),
+            errorClass: optionalString(input.errorClass),
+            summary: optionalString(input.summary)
+          };
+          const result = recordStrategyRunSafe(cwd, runInput);
+          return jsonResult9({ ...result, action });
+        }
+        if (action === "query") {
+          const limit = typeof input.limit === "number" && Number.isFinite(input.limit) && input.limit > 0 ? Math.min(Math.floor(input.limit), 50) : 10;
+          const rawStatus = optionalString(input.status);
+          if (rawStatus && rawStatus !== "all" && !STATUSES.includes(rawStatus)) {
+            return jsonResult9({ ok: false, error: `unknown status "${rawStatus}"` });
+          }
+          const result = queryStrategies(cwd, {
+            ...optionalString(input.query) ? { query: input.query } : {},
+            ...optionalString(input.strategyId) ? { strategyId: input.strategyId } : {},
+            ...optionalString(input.agent) ? { agent: input.agent } : {},
+            ...rawStatus && rawStatus !== "all" ? { status: rawStatus } : { status: "all" },
+            limit
+          });
+          return jsonResult9({ ...result, action });
+        }
+        if (action === "stats") {
+          const result = strategyStats(cwd);
+          return jsonResult9({ ...result, action });
+        }
+        if (action === "prune") {
+          const result = pruneStrategyRuns(cwd, {});
+          return jsonResult9({
+            ok: result.ok,
+            action,
+            deletedByAge: result.deletedByAge,
+            deletedByRows: result.deletedByRows,
+            remainingRuns: result.remainingRuns,
+            aggregateRows: result.aggregateRows,
+            ...result.error ? { error: result.error } : {}
+          });
+        }
+        return jsonResult9({ ok: false, error: `Unsupported action: ${action || "(missing)"}` });
+      } catch (err) {
+        return jsonResult9({
+          ok: false,
+          error: err instanceof Error ? err.message : String(err)
+        });
+      }
+    }
+  };
+}
+
 // src/pantheon/tools.ts
 function toolContext(context) {
   const ctx = context ?? {};
@@ -24867,6 +25959,7 @@ function createV2ToolDefinitions(visionRuntime, shadow = {}, jevRuntime, hostLoc
   definitions.push(...createCodemapTools(hostLocationDirectory));
   definitions.push(...createAstTools(hostLocationDirectory));
   definitions.push(createReviewVerdictTool(shadow.sessionDomain));
+  definitions.push(createStrategyTool(hostLocationDirectory));
   definitions.push(createWorktreeTool(hostLocationDirectory));
   definitions.push(createBoardTool(hostLocationDirectory));
   if (visionRuntime) definitions.push(createV2VisionTool(visionRuntime));

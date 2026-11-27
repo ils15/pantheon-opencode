@@ -57,8 +57,13 @@ import {
   validateDependencies,
 } from './step-dependencies.ts'
 import { runAtomicStepSubSession, type SubSessionDomainLike } from './step-runner.ts'
+import {
+  deriveStrategyKey,
+  recordStrategyRunSafe,
+  type StrategyRecordResult,
+} from './strategy-store.ts'
 import { ThemisReflexController } from './themis-reflex.ts'
-import { resolveSharedPantheonRoot, resolveToolCwd } from './tool-context.ts'
+import { resolveMemoryStoreCwd, resolveSharedPantheonRoot, resolveToolCwd } from './tool-context.ts'
 import type { PantheonToolDef, PantheonToolResult } from './tools.ts'
 
 export type StepState = 'pending' | 'in_progress' | 'done' | 'blocked' | 'rolled_back'
@@ -822,6 +827,65 @@ export async function preserveLedgerBytes<T>(cwd: string, fn: () => Promise<T>):
   if (afterText === beforeText) return result
   restoreLedgerSnapshotUnderLock(cwd, snapshot)
   return result
+}
+
+/**
+ * Record a terminal step outcome for the strategy store (S4).
+ *
+ * Best-effort by construction: `recordStrategyRunSafe` never throws, so a
+ * broken or locked strategy store can never fail a step. The returned payload
+ * is surfaced in the tool result so a skipped write is never silent.
+ */
+function recordStepStrategyOutcome(
+  workspaceDir: string,
+  ledger: StepLedgerStore,
+  entry: StepLedgerEntry,
+  params: { success: boolean; errorClass?: string; now: number },
+): StrategyRecordResult {
+  let waveIndex: number | null = null
+  let parallel: boolean | null = null
+  try {
+    const graph = buildDependencyGraph(Object.values(ledger.steps) as DependencyNode[])
+    const index = graph.waves.findIndex((wave) => wave.includes(entry.stepKey))
+    if (index >= 0) {
+      waveIndex = index
+      parallel = (graph.waves[index]?.length ?? 0) > 1
+    }
+  } catch {
+    /* wave metadata is advisory; the outcome still gets recorded */
+  }
+  return recordStrategyRunSafe(workspaceDir, {
+    strategyId: deriveStrategyKey(entry.agent, entry.taskType),
+    agent: entry.agent,
+    success: params.success,
+    taskType: entry.taskType ?? null,
+    stepKey: entry.stepKey,
+    wave: waveIndex,
+    // Slice count is not tracked by the ledger; reporting mutated files as
+    // "slices" would be a fabricated metric, so it stays unknown.
+    sliceCount: null,
+    parallel,
+    durationMs:
+      entry.lastMutationAt !== null ? Math.max(0, params.now - entry.lastMutationAt) : null,
+    filesTouched: entry.mutatedFiles.length,
+    retries: entry.verificationFailures ?? 0,
+    errorClass: params.errorClass ?? null,
+    createdAt: new Date(params.now).toISOString(),
+  })
+}
+
+/** Compact, non-silent view of a strategy write for step tool payloads. */
+function strategyPayload(result: StrategyRecordResult): Record<string, unknown> {
+  return {
+    recorded: result.recorded,
+    ...(result.runId ? { runId: result.runId } : {}),
+    ...(result.strategyId ? { strategyId: result.strategyId } : {}),
+    ...(typeof result.success === 'boolean' ? { success: result.success } : {}),
+    ...(result.status ? { status: result.status } : {}),
+    ...(typeof result.attempts === 'number' ? { attempts: result.attempts } : {}),
+    ...(result.reason ? { reason: result.reason } : {}),
+    ...(result.error ? { error: result.error } : {}),
+  }
 }
 
 function emitBlocked(stepKey: string, entry: StepLedgerEntry | undefined): void {
@@ -1641,12 +1705,19 @@ export function createStepLedgerTool(
             })
             const latest = readStepLedger(cwd)
             for (const blockedKey of blocked) emitBlocked(blockedKey, latest.steps[blockedKey])
+            const strategy = recordStepStrategyOutcome(
+              resolveMemoryStoreCwd(context, fallbackDir),
+              latest,
+              patched.step ?? outcome.step,
+              { success: false, errorClass: 'verification_failed', now },
+            )
             return jsonResult({
               ok: false,
               verified: false,
               reflex: outcome.reflex,
               ...(rollbackResult ? { rollback: rollbackResult } : {}),
               step: patched.step ?? outcome.step,
+              strategy: strategyPayload(strategy),
               ...(blocked.length > 0 ? { blocked } : {}),
             })
           }
@@ -1663,11 +1734,18 @@ export function createStepLedgerTool(
           for (const blockedKey of patched.blocked) {
             emitBlocked(blockedKey, latest.steps[blockedKey])
           }
+          const strategy = recordStepStrategyOutcome(
+            resolveMemoryStoreCwd(context, fallbackDir),
+            latest,
+            patched.step ?? outcome.step,
+            { success: false, errorClass: 'verification_failed', now },
+          )
           return jsonResult({
             ok: false,
             verified: false,
             reflex: outcome.reflex,
             step: patched.step ?? outcome.step,
+            strategy: strategyPayload(strategy),
             ...(patched.blocked.length > 0 ? { blocked: patched.blocked } : {}),
           })
         }
@@ -1728,13 +1806,16 @@ export function createStepLedgerTool(
             const readyBefore = new Set(
               readyStepKeys(Object.values(ledger.steps) as DependencyNode[]),
             )
+            // A repeat `complete_step` is not a new outcome: recording it again
+            // would inflate the strategy sample with a duplicate success.
+            const wasDone = entry.state === 'done'
             entry.state = 'done'
             entry.updatedAt = nowIso
             delete entry.blockedBy
             delete entry.cascadeReason
             const readyAfter = readyStepKeys(Object.values(ledger.steps) as DependencyNode[])
             const unlocked = readyAfter.filter((dep) => dep !== key && !readyBefore.has(dep))
-            return { kind: 'done' as const, step: entry, unlocked }
+            return { kind: 'done' as const, step: entry, unlocked, wasDone }
           })
           if (outcome.kind === 'missing') {
             return jsonResult({ ok: false, error: `Step "${key}" is not initialized` })
@@ -1779,11 +1860,20 @@ export function createStepLedgerTool(
               timestamp: Date.now(),
             })
           }
+          const strategy: StrategyRecordResult = outcome.wasDone
+            ? { ok: true, recorded: false, reason: 'already_done' }
+            : recordStepStrategyOutcome(
+                resolveMemoryStoreCwd(context, fallbackDir),
+                latest,
+                outcome.step,
+                { success: true, now },
+              )
           return jsonResult({
             ok: true,
             status: 'done',
             receiptId: outcome.step.receiptId,
             step: outcome.step,
+            strategy: strategyPayload(strategy),
             ...(outcome.unlocked.length > 0 ? { unlocked: outcome.unlocked } : {}),
           })
         }

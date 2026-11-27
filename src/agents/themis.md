@@ -15,6 +15,7 @@ permission:
   pantheon_worktree: deny
   pantheon_review_verdict: allow
   pantheon_deepwork: allow
+  pantheon_strategy: allow
   task:
     "*": deny
   todowrite: allow
