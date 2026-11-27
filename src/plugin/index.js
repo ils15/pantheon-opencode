@@ -766,17 +766,6 @@ function createV2BoundedReadTool(dependencies) {
   };
 }
 
-// src/pantheon/cockpit-events.ts
-import {
-  appendFileSync,
-  existsSync as existsSync2,
-  mkdirSync,
-  readFileSync as readFileSync2,
-  realpathSync as realpathSync2,
-  writeFileSync
-} from "node:fs";
-import { join as join2, resolve as resolve2, sep as sep2 } from "node:path";
-
 // src/pantheon/bus.ts
 var PantheonBus = class {
   listeners = /* @__PURE__ */ new Map();
@@ -878,6 +867,17 @@ function getSharedBus() {
   host[BUS_KEY] = bus;
   return bus;
 }
+
+// src/pantheon/cockpit-events.ts
+import {
+  appendFileSync,
+  existsSync as existsSync2,
+  mkdirSync,
+  readFileSync as readFileSync2,
+  realpathSync as realpathSync2,
+  writeFileSync
+} from "node:fs";
+import { join as join2, resolve as resolve2, sep as sep2 } from "node:path";
 
 // src/pantheon/tool-context.ts
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
@@ -1090,6 +1090,30 @@ function wireCockpitBusRecorder(workspaceDir) {
         stepKey: ev.stepKey,
         ...ev.seq !== void 0 ? { seq: ev.seq } : {},
         ...ev.action === "failed" ? { attentionCategory: "failure" } : {}
+      });
+    }),
+    bus.on("subagent:start", (ev) => {
+      appendCockpitBusEvent(workspaceDir, {
+        kind: "subagent:start",
+        timestamp: ev.timestamp,
+        agent: ev.agent,
+        detail: ev.description ? `${ev.tool}: ${ev.description}` : `${ev.tool} started`,
+        severity: "info",
+        ...ev.sessionID ? { threadId: ev.sessionID } : {},
+        ...ev.callID ? { stepKey: ev.callID } : {}
+      });
+    }),
+    bus.on("subagent:stop", (ev) => {
+      const failed = ev.status === "error" || ev.status === "failed";
+      appendCockpitBusEvent(workspaceDir, {
+        kind: "subagent:stop",
+        timestamp: ev.timestamp,
+        agent: ev.agent,
+        detail: ev.status ? `${ev.tool} (${ev.status})` : `${ev.tool} completed`,
+        severity: failed ? "error" : "ok",
+        ...ev.sessionID ? { threadId: ev.sessionID } : {},
+        ...ev.callID ? { stepKey: ev.callID } : {},
+        ...failed ? { attentionCategory: "failure" } : {}
       });
     })
   ];
@@ -12752,8 +12776,10 @@ import { existsSync as existsSync16, mkdirSync as mkdirSync10, readFileSync as r
 import { join as join21, resolve as resolve16, sep as sep7 } from "node:path";
 
 // src/pantheon/ephemeral-worker.ts
+import { execFile as execFile5 } from "node:child_process";
 import { existsSync as existsSync15 } from "node:fs";
 import { join as join20 } from "node:path";
+import { promisify as promisify5 } from "node:util";
 
 // src/pantheon/board-messages.ts
 import { existsSync as existsSync12, mkdirSync as mkdirSync7, readFileSync as readFileSync12, realpathSync as realpathSync5, writeFileSync as writeFileSync6 } from "node:fs";
@@ -14210,12 +14236,13 @@ function buildAtomicStepPrompt(input) {
 }
 async function runAtomicStepSubSession(input) {
   const { sessionDomain, cwd, stepKey, objective, agent } = input;
+  const ledgerRoot = input.ledgerRoot?.trim() ? input.ledgerRoot : resolveSharedPantheonRoot(cwd);
   const reuseId = typeof input.reuseSessionID === "string" && input.reuseSessionID.trim() !== "" ? input.reuseSessionID.trim() : void 0;
   const reusedSession = reuseId !== void 0;
   if (typeof sessionDomain?.prompt !== "function" || !reusedSession && typeof sessionDomain?.create !== "function") {
     return { ok: false, stepKey, error: "host session.create/prompt domain unavailable" };
   }
-  const store2 = readStepLedger(cwd);
+  const store2 = readStepLedger(ledgerRoot);
   if (!store2.steps[stepKey]) {
     const ckpt = await captureGitCheckpoint(cwd, stepKey);
     store2.steps[stepKey] = {
@@ -14230,9 +14257,9 @@ async function runAtomicStepSubSession(input) {
       lastVerifiedAt: null,
       updatedAt: (/* @__PURE__ */ new Date()).toISOString()
     };
-    writeStepLedger(cwd, store2);
+    writeStepLedger(ledgerRoot, store2);
   }
-  const maxTurns = typeof input.maxTurns === "number" && Number.isInteger(input.maxTurns) ? Math.max(1, Math.min(10, input.maxTurns)) : 1;
+  const maxTurns = typeof input.maxTurns === "number" && Number.isInteger(input.maxTurns) ? Math.max(1, Math.min(20, input.maxTurns)) : 1;
   let createdId = reuseId;
   let turnsUsed = 0;
   try {
@@ -14270,7 +14297,7 @@ async function runAtomicStepSubSession(input) {
       if (typeof sessionDomain.wait === "function") {
         await sessionDomain.wait({ sessionID: activeSessionId });
       }
-      const snapshot = readStepLedger(cwd).steps[stepKey];
+      const snapshot = readStepLedger(ledgerRoot).steps[stepKey];
       if (snapshot?.state === "done" || snapshot?.state === "blocked" || snapshot?.state === "rolled_back") {
         break;
       }
@@ -14283,7 +14310,7 @@ async function runAtomicStepSubSession(input) {
       } catch {
       }
     }
-    const latest = readStepLedger(cwd).steps[stepKey];
+    const latest = readStepLedger(ledgerRoot).steps[stepKey];
     const payloadMissingError = input.requireFinishPayload === true && finishPayload === void 0 ? "missing valid step finish payload" : void 0;
     const ok2 = latest?.state === "done" && payloadMissingError === void 0;
     return {
@@ -14534,6 +14561,61 @@ function resolveEphemeralArchetype(roleOrAlias) {
   }
   return void 0;
 }
+var DEFAULT_EPHEMERAL_MAX_TURNS = 8;
+var execFileAsync5 = promisify5(execFile5);
+async function runGit3(cwd, args) {
+  const { stdout } = await execFileAsync5("git", [...args], {
+    cwd,
+    timeout: 15e3,
+    maxBuffer: 4 * 1024 * 1024
+  });
+  return stdout;
+}
+function sanitizeEphemeralBranchStep(stepKey) {
+  const cleaned = stepKey.replace(/[^a-zA-Z0-9._/-]/g, "-").replace(/\.{2,}/g, "-").replace(/^[-./]+|[-./]+$/g, "");
+  return cleaned || `step-${Date.now()}`;
+}
+async function preserveWorktreeChanges(worktreeDir, stepKey, role, baseHead) {
+  try {
+    const status = (await runGit3(worktreeDir, ["status", "--porcelain"])).trim();
+    if (status.length > 0) {
+      await runGit3(worktreeDir, ["add", "-A"]);
+      const commitMsg = `chore(pantheon): ephemeral worker ${role} step ${stepKey}`;
+      try {
+        await runGit3(worktreeDir, ["commit", "-m", commitMsg, "--no-verify"]);
+      } catch {
+        await runGit3(worktreeDir, [
+          "-c",
+          "user.name=Pantheon",
+          "-c",
+          "user.email=pantheon@local",
+          "commit",
+          "-m",
+          commitMsg,
+          "--no-verify"
+        ]);
+      }
+    }
+    const currentHead = (await runGit3(worktreeDir, ["rev-parse", "HEAD"])).trim();
+    if (baseHead && currentHead !== baseHead) {
+      const branch = `pantheon/eph/${sanitizeEphemeralBranchStep(stepKey)}`;
+      await runGit3(worktreeDir, ["branch", "-f", branch, "HEAD"]);
+      const diffRaw = (await runGit3(worktreeDir, ["diff", "--stat", `${baseHead}..${currentHead}`])).trim();
+      const diffSummary = diffRaw ? diffRaw.split("\n").map((line) => line.trim()).filter(Boolean).join(" | ") : void 0;
+      return {
+        preserved: true,
+        branch,
+        ...diffSummary !== void 0 ? { diffSummary } : {}
+      };
+    }
+    return { preserved: false };
+  } catch (err) {
+    return {
+      preserved: false,
+      error: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
 var SAFE_EPHEMERAL_ROLE_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 var EPHEMERAL_ROLE_MAX_LENGTH = 32;
 var FALLBACK_EPHEMERAL_ROLE = "worker";
@@ -14574,10 +14656,16 @@ async function spawnEphemeralWorker(input) {
   const workerId = `eph-${role}-${Date.now()}`;
   const threadId = input.threadId?.trim() || input.stepKey;
   const bus = getSharedBus();
+  const rawRecipients = Array.isArray(input.to) ? input.to.map((entry) => entry.trim().replace(/^@/, "").toLowerCase()).filter(Boolean) : [];
+  const recipients = rawRecipients.length > 0 ? Array.from(new Set(rawRecipients)) : ["zeus"];
   const worktreeDriver = createPantheonWorktreeDefinition();
   let worktreeDir;
   let worktreeCreated = false;
   let worktreeCleaned = false;
+  let baseHead;
+  let preservedBranch;
+  let diffSummary;
+  let preserveError;
   let claimSeq;
   let finalSeq;
   let runOk = false;
@@ -14596,6 +14684,11 @@ async function spawnEphemeralWorker(input) {
       );
       worktreeDir = created.directory;
       worktreeCreated = true;
+      try {
+        baseHead = (await runGit3(worktreeDir, ["rev-parse", "HEAD"])).trim();
+      } catch {
+        baseHead = void 0;
+      }
     }
     const claimMsg = await appendBoardMessage(sharedRoot, {
       channel: "swarm",
@@ -14639,13 +14732,14 @@ async function spawnEphemeralWorker(input) {
     const runRes = await runAtomicStepSubSession({
       sessionDomain: input.sessionDomain,
       cwd: effectiveCwd,
+      ledgerRoot: sharedRoot,
       stepKey: input.stepKey,
       objective: input.objective,
       agent: baseAgent,
       cleanupSession: true,
       extraContext: contextLines.join("\n"),
       ...input.parentSessionID !== void 0 ? { parentSessionID: input.parentSessionID } : {},
-      ...input.maxTurns !== void 0 ? { maxTurns: input.maxTurns } : {}
+      maxTurns: input.maxTurns ?? DEFAULT_EPHEMERAL_MAX_TURNS
     });
     sessionID = runRes.sessionID;
     runOk = runRes.ok;
@@ -14677,16 +14771,27 @@ async function spawnEphemeralWorker(input) {
       timestamp: Date.now()
     });
   } finally {
-    if (worktreeCreated && worktreeDir && input.keepWorktree !== true) {
-      try {
-        const ac = new AbortController();
-        await worktreeDriver.remove({ directory: worktreeDir, force: true }, { signal: ac.signal });
-        worktreeCleaned = true;
-      } catch {
-        worktreeCleaned = false;
+    if (worktreeCreated && worktreeDir) {
+      const preserved = await preserveWorktreeChanges(worktreeDir, input.stepKey, role, baseHead);
+      preservedBranch = preserved.branch;
+      diffSummary = preserved.diffSummary;
+      preserveError = preserved.error;
+      if (input.keepWorktree !== true && !preserveError) {
+        try {
+          const ac = new AbortController();
+          await worktreeDriver.remove(
+            { directory: worktreeDir, force: true },
+            { signal: ac.signal }
+          );
+          worktreeCleaned = true;
+        } catch {
+          worktreeCleaned = false;
+        }
       }
     }
     const finalStatus = worktreeCleaned ? "cleaned" : runOk ? "completed" : "failed";
+    const mentionText = recipients.map((r) => `@${r}`).join(" ");
+    const branchNote = preservedBranch ? ` (branch: ${preservedBranch}${diffSummary ? `; diff: ${diffSummary}` : ""})` : preserveError ? ` (worktree kept due to preserve error: ${preserveError})` : "";
     try {
       const finalMsg = await appendBoardMessage(sharedRoot, {
         channel: "swarm",
@@ -14695,10 +14800,10 @@ async function spawnEphemeralWorker(input) {
         ...input.workstream !== void 0 ? { workstream: input.workstream } : {},
         stepKey: input.stepKey,
         from: role,
-        to: ["zeus"],
+        to: recipients,
         ...claimSeq !== void 0 ? { replyToSeq: claimSeq } : {},
         tag: runOk ? "done" : "blocker",
-        body: runOk ? `[done] @zeus Ephemeral worker (${role}) finished step ${input.stepKey}${worktreeCleaned ? " and cleaned worktree" : ""}` : `[blocker] @zeus Ephemeral worker (${role}) failed step ${input.stepKey}: ${runError ?? "step not marked done"}`,
+        body: runOk ? `[done] ${mentionText} Ephemeral worker (${role}) finished step ${input.stepKey}${worktreeCleaned ? " and cleaned worktree" : ""}${branchNote}` : `[blocker] ${mentionText} Ephemeral worker (${role}) failed step ${input.stepKey}: ${runError ?? "step not marked done"}${branchNote}`,
         ephemeral: {
           role,
           baseAgent,
@@ -14733,6 +14838,8 @@ async function spawnEphemeralWorker(input) {
     ...sessionID !== void 0 ? { sessionID } : {},
     ...worktreeDir !== void 0 ? { worktreeDir } : {},
     worktreeCleaned,
+    ...preservedBranch !== void 0 ? { branch: preservedBranch } : {},
+    ...diffSummary !== void 0 ? { diffSummary } : {},
     ...claimSeq !== void 0 ? { claimSeq } : {},
     ...finalSeq !== void 0 ? { finalSeq } : {},
     ...runError !== void 0 ? { error: runError } : {}
@@ -14899,7 +15006,8 @@ function assertSafeStepKey(stepKey) {
   return stepKey;
 }
 function resolveLedgerPath(workspaceDir) {
-  const dir = join21(workspaceDir, ".pantheon", "ledger");
+  const sharedRoot = resolveSharedPantheonRoot(workspaceDir);
+  const dir = join21(sharedRoot, ".pantheon", "ledger");
   mkdirSync10(dir, { recursive: true });
   const canonicalDir = realpathSync7(dir);
   const filePath = resolve16(canonicalDir, "step-ledger.json");
@@ -15003,8 +15111,13 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
         maxTurns: {
           type: "integer",
           minimum: 1,
-          maximum: 10,
-          description: "Max continuation turns for execute_step/spawn_ephemeral (default 1)"
+          maximum: 20,
+          description: "Max continuation turns for execute_step/spawn_ephemeral (default 1 for execute_step, 8 for spawn_ephemeral)"
+        },
+        to: {
+          type: "array",
+          items: { type: "string" },
+          description: 'Optional recipient handles for spawn_ephemeral final [done]/[blocker] handoff (default ["zeus"], e.g. ["themis"])'
         },
         extraContext: {
           type: "string",
@@ -15095,7 +15208,8 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             ...typeof input.extraContext === "string" ? { extraContext: input.extraContext } : {},
             ...typeof input.cleanupSession === "boolean" ? { cleanupSession: input.cleanupSession } : {},
             ...typeof input.reuseSessionID === "string" && input.reuseSessionID.trim() ? { reuseSessionID: input.reuseSessionID.trim() } : {},
-            ...typeof input.maxTurns === "number" && Number.isInteger(input.maxTurns) ? { maxTurns: input.maxTurns } : {}
+            ...typeof input.maxTurns === "number" && Number.isInteger(input.maxTurns) ? { maxTurns: input.maxTurns } : {},
+            ...Array.isArray(input.to) ? { to: input.to.filter((entry) => typeof entry === "string") } : {}
           });
           return jsonResult3(runOut);
         }
@@ -15119,7 +15233,8 @@ function createStepLedgerTool(fallbackDir, sessionDomain) {
             ...typeof input.keepWorktree === "boolean" ? { keepWorktree: input.keepWorktree } : {},
             ...parentSid ? { parentSessionID: parentSid } : {},
             ...typeof input.extraContext === "string" ? { extraContext: input.extraContext } : {},
-            ...typeof input.maxTurns === "number" && Number.isInteger(input.maxTurns) ? { maxTurns: input.maxTurns } : {}
+            ...typeof input.maxTurns === "number" && Number.isInteger(input.maxTurns) ? { maxTurns: input.maxTurns } : {},
+            ...Array.isArray(input.to) ? { to: input.to.filter((entry) => typeof entry === "string") } : {}
           });
           return jsonResult3(ephOut);
         }
@@ -16033,7 +16148,7 @@ var TodoEnforcer = class {
 
 // src/pantheon/tools.ts
 import { exec } from "node:child_process";
-import { promisify as promisify5 } from "node:util";
+import { promisify as promisify6 } from "node:util";
 
 // src/pantheon/agent-forge-tool.ts
 import {
@@ -17342,7 +17457,7 @@ function createCodemapTools(fallbackDir) {
 }
 
 // src/pantheon/cost-command.ts
-import { execFile as execFile5 } from "node:child_process";
+import { execFile as execFile6 } from "node:child_process";
 import { accessSync, constants as constants3, existsSync as existsSync21, statSync as statSync8 } from "node:fs";
 import { delimiter, dirname as dirname15, join as join28 } from "node:path";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
@@ -18354,7 +18469,7 @@ function defaultIsExecutable(path5) {
 }
 function defaultExecFile(file, args) {
   return new Promise((resolve25, reject) => {
-    execFile5(file, [...args], { encoding: "utf8" }, (error, stdout, stderr) => {
+    execFile6(file, [...args], { encoding: "utf8" }, (error, stdout, stderr) => {
       if (error) {
         const failure = error;
         if (typeof failure.stdout !== "string") failure.stdout = stdout;
@@ -18411,9 +18526,9 @@ function truncateForError(text2) {
   const trimmed = text2.trim();
   return trimmed.length > 200 ? `${trimmed.slice(0, 200)}\u2026` : trimmed;
 }
-async function assertNodeSqliteSupport(nodePath, execFileAsync5) {
+async function assertNodeSqliteSupport(nodePath, execFileAsync6) {
   try {
-    await execFileAsync5(nodePath, ["-e", "require('node:sqlite')"]);
+    await execFileAsync6(nodePath, ["-e", "require('node:sqlite')"]);
   } catch (err) {
     throw new Error(
       `resolved Node binary "${nodePath}" does not support node:sqlite (Node.js >= ${NODE_SQLITE_MIN_VERSION} required): ${execErrorMessage(err)}`
@@ -18436,7 +18551,7 @@ function extractScriptFailure(err) {
 }
 async function queryWithCliFallback(dbPath, days, deps) {
   const env = deps?.env ?? process.env;
-  const execFileAsync5 = deps?.execFile ?? defaultExecFile;
+  const execFileAsync6 = deps?.execFile ?? defaultExecFile;
   const isExecutable = deps?.isExecutable ?? defaultIsExecutable;
   const costScript = join28(__dirname, "..", "..", "scripts", "cost.mjs");
   if (!existsSync21(costScript)) {
@@ -18448,11 +18563,11 @@ async function queryWithCliFallback(dbPath, days, deps) {
       `no Node.js executable found for the node:sqlite CLI fallback: set PANTHEON_NODE to a Node.js >= ${NODE_SQLITE_MIN_VERSION} binary or put "node" on PATH`
     );
   }
-  await assertNodeSqliteSupport(node.path, execFileAsync5);
+  await assertNodeSqliteSupport(node.path, execFileAsync6);
   let stdout;
   try {
     ;
-    ({ stdout } = await execFileAsync5(node.path, [
+    ({ stdout } = await execFileAsync6(node.path, [
       costScript,
       "--db-path",
       dbPath,
@@ -22319,7 +22434,7 @@ var todoreadTool = {
     };
   }
 };
-var execAsync = promisify5(exec);
+var execAsync = promisify6(exec);
 var SHELL_TIMEOUT_MS = 12e4;
 var SHELL_INPUT = {
   type: "object",
@@ -23539,6 +23654,25 @@ var shellRunnerOverride;
 function resetV2IdleEnforcerForTests() {
   idleTodoEnforcer = void 0;
 }
+function extractSubagentLifecycleInfo(event) {
+  if (event === null || typeof event !== "object") return void 0;
+  const record2 = event;
+  const tool2 = typeof record2.tool === "string" ? record2.tool.trim().toLowerCase() : "";
+  if (tool2 !== "task" && tool2 !== "subagent") return void 0;
+  const input = record2.input !== null && typeof record2.input === "object" ? record2.input : {};
+  const rawAgent = typeof input.agent === "string" ? input.agent : typeof input.subagent_type === "string" ? input.subagent_type : "subagent";
+  const agent = rawAgent.trim().toLowerCase() || "subagent";
+  const sessionID = typeof record2.sessionID === "string" && record2.sessionID ? record2.sessionID : void 0;
+  const callID = typeof record2.callID === "string" && record2.callID ? record2.callID : void 0;
+  const description = typeof input.description === "string" && input.description.trim() ? input.description.trim().slice(0, 120) : void 0;
+  return {
+    tool: tool2,
+    agent,
+    ...sessionID ? { sessionID } : {},
+    ...callID ? { callID } : {},
+    ...description ? { description } : {}
+  };
+}
 async function registerV2ToolHooks(context, subagentOrigins, boundedReadOrigins, jevRuntime, lifecycle) {
   const host = hostDomains(context);
   const toolCtx = host.tool;
@@ -23679,6 +23813,13 @@ async function registerV2ToolHooks(context, subagentOrigins, boundedReadOrigins,
           void j3Observer(event);
         }
         await shellHooks.before(event);
+        const subagentInfo = extractSubagentLifecycleInfo(event);
+        if (subagentInfo !== void 0) {
+          getSharedBus().emit("subagent:start", {
+            ...subagentInfo,
+            timestamp: Date.now()
+          });
+        }
       } finally {
         logBenchHookTiming("before", event, benchStartedAt);
       }
@@ -23723,6 +23864,15 @@ async function registerV2ToolHooks(context, subagentOrigins, boundedReadOrigins,
         }
         await v2ExecuteAfter(event);
         await shellHooks.after(event);
+        const subagentInfo = extractSubagentLifecycleInfo(event);
+        if (subagentInfo !== void 0) {
+          const afterRecord = event ?? {};
+          getSharedBus().emit("subagent:stop", {
+            ...subagentInfo,
+            status: afterRecord.error ? "error" : "completed",
+            timestamp: Date.now()
+          });
+        }
       } finally {
         logBenchHookTiming("after", event, benchStartedAt);
       }

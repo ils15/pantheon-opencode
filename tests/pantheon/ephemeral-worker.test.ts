@@ -11,7 +11,7 @@ import {
   resolveEphemeralArchetype,
   spawnEphemeralWorker,
 } from '../../src/pantheon/ephemeral-worker.ts'
-import { createStepLedgerTool } from '../../src/pantheon/step-ledger.ts'
+import { createStepLedgerTool, readStepLedger } from '../../src/pantheon/step-ledger.ts'
 
 function initGitRepo(dir: string): void {
   execFileSync('git', ['init', '-q', dir])
@@ -269,6 +269,94 @@ test('resolveEphemeralArchetype maps retired v2.2 agents and v2.3 archetypes wit
     assert.equal(explicitOverride.role, 'geospatial')
     assert.equal(explicitOverride.baseAgent, 'demeter')
     assert.deepEqual(createdAgents, ['iris', 'demeter'])
+  } finally {
+    rmSync(parent, { recursive: true, force: true })
+  }
+})
+
+test('spawnEphemeralWorker preserves worktree edits to pantheon/eph/<stepKey>, writes ledger to sharedRoot, defaults maxTurns >= 5, and supports peer to handoffs', async () => {
+  const parent = mkdtempSync(join(tmpdir(), 'pantheon-eph-preserve-'))
+  const repoDir = join(parent, 'app')
+  try {
+    initGitRepo(repoDir)
+    let promptTurns = 0
+    let capturedWorktree: string | undefined
+
+    const sessionDomain = {
+      create: async () => ({ id: 'ses-preserve-1' }),
+      prompt: async (input: { sessionID: string; text: string }) => {
+        promptTurns += 1
+        if (promptTurns === 1) {
+          const wtMatch = /worktree:\s*(\S+)/.exec(input.text)
+          capturedWorktree = wtMatch?.[1]
+          assert.ok(capturedWorktree)
+          // Simulate editing a file inside the isolated worktree on turn 1
+          writeFileSync(join(capturedWorktree, 'feature.ts'), 'export const feature = 42\n')
+          return { ok: true }
+        }
+        if (promptTurns === 3) {
+          // Multi-turn continuation: verify + complete on turn 3 (requires default maxTurns >= 3)
+          assert.ok(capturedWorktree)
+          const ledger = createStepLedgerTool(capturedWorktree)
+          await ledger.execute(
+            { action: 'record_mutation', stepKey: 'preserve-1', files: ['feature.ts'] },
+            { directory: capturedWorktree },
+          )
+          await ledger.execute(
+            {
+              action: 'record_verification',
+              stepKey: 'preserve-1',
+              command: 'node --test',
+              exitCode: 0,
+            },
+            { directory: capturedWorktree },
+          )
+          await ledger.execute(
+            { action: 'complete_step', stepKey: 'preserve-1' },
+            { directory: capturedWorktree },
+          )
+        }
+        return { ok: true }
+      },
+      wait: async () => ({ status: 'completed' }),
+      remove: async () => {},
+    }
+
+    const res = await spawnEphemeralWorker({
+      sessionDomain,
+      cwd: repoDir,
+      stepKey: 'preserve-1',
+      role: 'feature-builder',
+      objective: 'Create feature.ts across multiple turns and hand off to themis',
+      to: ['themis'],
+    })
+
+    assert.equal(res.ok, true)
+    assert.equal(promptTurns, 3, 'should run multi-turn without explicit maxTurns')
+    assert.equal(res.worktreeCleaned, true)
+    assert.equal(res.branch, 'pantheon/eph/preserve-1')
+    assert.ok(res.diffSummary?.includes('feature.ts'))
+
+    // Verify ledger receipt persisted in sharedRoot even after worktree cleanup
+    const sharedLedger = readStepLedger(repoDir)
+    assert.equal(sharedLedger.steps['preserve-1']?.state, 'done')
+    assert.ok(sharedLedger.steps['preserve-1']?.receiptId?.startsWith('rcpt_'))
+
+    // Verify preserved branch exists in shared repo and contains feature.ts
+    const branchFiles = execFileSync(
+      'git',
+      ['ls-tree', '-r', '--name-only', 'pantheon/eph/preserve-1'],
+      { cwd: repoDir, encoding: 'utf8' },
+    )
+    assert.match(branchFiles, /feature\.ts/)
+
+    // Verify board [done] message routes to @themis and mentions preserved branch
+    const board = readBoardMessages(repoDir, { since: 0 })
+    const doneMsg = board.messages.find((m) => m.tag === 'done')
+    assert.ok(doneMsg)
+    assert.deepEqual(doneMsg.mentions, ['themis'])
+    assert.match(doneMsg.body, /@themis/)
+    assert.match(doneMsg.body, /pantheon\/eph\/preserve-1/)
   } finally {
     rmSync(parent, { recursive: true, force: true })
   }

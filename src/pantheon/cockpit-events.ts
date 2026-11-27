@@ -250,6 +250,30 @@ export function wireCockpitBusRecorder(workspaceDir: string): () => void {
         ...(ev.action === 'failed' ? { attentionCategory: 'failure' as const } : {}),
       })
     }),
+    bus.on('subagent:start', (ev) => {
+      appendCockpitBusEvent(workspaceDir, {
+        kind: 'subagent:start',
+        timestamp: ev.timestamp,
+        agent: ev.agent,
+        detail: ev.description ? `${ev.tool}: ${ev.description}` : `${ev.tool} started`,
+        severity: 'info',
+        ...(ev.sessionID ? { threadId: ev.sessionID } : {}),
+        ...(ev.callID ? { stepKey: ev.callID } : {}),
+      })
+    }),
+    bus.on('subagent:stop', (ev) => {
+      const failed = ev.status === 'error' || ev.status === 'failed'
+      appendCockpitBusEvent(workspaceDir, {
+        kind: 'subagent:stop',
+        timestamp: ev.timestamp,
+        agent: ev.agent,
+        detail: ev.status ? `${ev.tool} (${ev.status})` : `${ev.tool} completed`,
+        severity: failed ? 'error' : 'ok',
+        ...(ev.sessionID ? { threadId: ev.sessionID } : {}),
+        ...(ev.callID ? { stepKey: ev.callID } : {}),
+        ...(failed ? { attentionCategory: 'failure' as const } : {}),
+      })
+    }),
   ]
   return () => {
     for (const unsub of unsubs) {

@@ -132,6 +132,16 @@ export interface EphemeralWorkerEventPayload {
   readonly timestamp: number
 }
 
+export interface SubagentLifecycleEventPayload {
+  readonly tool: string
+  readonly agent: string
+  readonly sessionID?: string
+  readonly callID?: string
+  readonly description?: string
+  readonly status?: string
+  readonly timestamp: number
+}
+
 export interface PantheonEventMap {
   'job:created': JobEventPayload
   'job:updated': JobEventPayload
@@ -148,6 +158,8 @@ export interface PantheonEventMap {
   'board:message': BoardMessageEventPayload
   'swarm:stall:detected': SwarmStallDetectedEventPayload
   'ephemeral:worker': EphemeralWorkerEventPayload
+  'subagent:start': SubagentLifecycleEventPayload
+  'subagent:stop': SubagentLifecycleEventPayload
 }
 
 export type PantheonEventName = keyof PantheonEventMap

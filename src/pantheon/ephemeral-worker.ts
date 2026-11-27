@@ -12,8 +12,10 @@
  * @module pantheon/ephemeral-worker
  */
 
+import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 import { appendBoardMessage } from './board-messages.ts'
 import { getSharedBus } from './bus.ts'
 import { PANTHEON_AGENTS } from './delegation-policy.ts'
@@ -117,6 +119,7 @@ export interface SpawnEphemeralWorkerInput {
   readonly goal?: string
   readonly workstream?: string
   readonly maxTurns?: number
+  readonly to?: readonly string[]
 }
 
 export interface SpawnEphemeralWorkerResult {
@@ -128,9 +131,87 @@ export interface SpawnEphemeralWorkerResult {
   readonly sessionID?: string
   readonly worktreeDir?: string
   readonly worktreeCleaned: boolean
+  readonly branch?: string
+  readonly diffSummary?: string
   readonly claimSeq?: number
   readonly finalSeq?: number
   readonly error?: string
+}
+
+export const DEFAULT_EPHEMERAL_MAX_TURNS = 8
+const execFileAsync = promisify(execFile)
+
+async function runGit(cwd: string, args: readonly string[]): Promise<string> {
+  const { stdout } = await execFileAsync('git', [...args], {
+    cwd,
+    timeout: 15_000,
+    maxBuffer: 4 * 1024 * 1024,
+  })
+  return stdout
+}
+
+function sanitizeEphemeralBranchStep(stepKey: string): string {
+  const cleaned = stepKey
+    .replace(/[^a-zA-Z0-9._/-]/g, '-')
+    .replace(/\.{2,}/g, '-')
+    .replace(/^[-./]+|[-./]+$/g, '')
+  return cleaned || `step-${Date.now()}`
+}
+
+async function preserveWorktreeChanges(
+  worktreeDir: string,
+  stepKey: string,
+  role: string,
+  baseHead: string | undefined,
+): Promise<{ preserved: boolean; branch?: string; diffSummary?: string; error?: string }> {
+  try {
+    const status = (await runGit(worktreeDir, ['status', '--porcelain'])).trim()
+    if (status.length > 0) {
+      await runGit(worktreeDir, ['add', '-A'])
+      const commitMsg = `chore(pantheon): ephemeral worker ${role} step ${stepKey}`
+      try {
+        await runGit(worktreeDir, ['commit', '-m', commitMsg, '--no-verify'])
+      } catch {
+        await runGit(worktreeDir, [
+          '-c',
+          'user.name=Pantheon',
+          '-c',
+          'user.email=pantheon@local',
+          'commit',
+          '-m',
+          commitMsg,
+          '--no-verify',
+        ])
+      }
+    }
+
+    const currentHead = (await runGit(worktreeDir, ['rev-parse', 'HEAD'])).trim()
+    if (baseHead && currentHead !== baseHead) {
+      const branch = `pantheon/eph/${sanitizeEphemeralBranchStep(stepKey)}`
+      await runGit(worktreeDir, ['branch', '-f', branch, 'HEAD'])
+      const diffRaw = (
+        await runGit(worktreeDir, ['diff', '--stat', `${baseHead}..${currentHead}`])
+      ).trim()
+      const diffSummary = diffRaw
+        ? diffRaw
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .join(' | ')
+        : undefined
+      return {
+        preserved: true,
+        branch,
+        ...(diffSummary !== undefined ? { diffSummary } : {}),
+      }
+    }
+    return { preserved: false }
+  } catch (err: unknown) {
+    return {
+      preserved: false,
+      error: err instanceof Error ? err.message : String(err),
+    }
+  }
 }
 
 const SAFE_EPHEMERAL_ROLE_RE = /^[a-z0-9][a-z0-9-]{0,31}$/
@@ -199,11 +280,19 @@ export async function spawnEphemeralWorker(
   const workerId = `eph-${role}-${Date.now()}`
   const threadId = input.threadId?.trim() || input.stepKey
   const bus = getSharedBus()
+  const rawRecipients = Array.isArray(input.to)
+    ? input.to.map((entry) => entry.trim().replace(/^@/, '').toLowerCase()).filter(Boolean)
+    : []
+  const recipients = rawRecipients.length > 0 ? Array.from(new Set(rawRecipients)) : ['zeus']
 
   const worktreeDriver = createPantheonWorktreeDefinition()
   let worktreeDir: string | undefined
   let worktreeCreated = false
   let worktreeCleaned = false
+  let baseHead: string | undefined
+  let preservedBranch: string | undefined
+  let diffSummary: string | undefined
+  let preserveError: string | undefined
   let claimSeq: number | undefined
   let finalSeq: number | undefined
   let runOk = false
@@ -223,6 +312,11 @@ export async function spawnEphemeralWorker(
       )
       worktreeDir = created.directory
       worktreeCreated = true
+      try {
+        baseHead = (await runGit(worktreeDir, ['rev-parse', 'HEAD'])).trim()
+      } catch {
+        baseHead = undefined
+      }
     }
 
     const claimMsg = await appendBoardMessage(sharedRoot, {
@@ -270,13 +364,14 @@ export async function spawnEphemeralWorker(
     const runRes = await runAtomicStepSubSession({
       sessionDomain: input.sessionDomain,
       cwd: effectiveCwd,
+      ledgerRoot: sharedRoot,
       stepKey: input.stepKey,
       objective: input.objective,
       agent: baseAgent,
       cleanupSession: true,
       extraContext: contextLines.join('\n'),
       ...(input.parentSessionID !== undefined ? { parentSessionID: input.parentSessionID } : {}),
-      ...(input.maxTurns !== undefined ? { maxTurns: input.maxTurns } : {}),
+      maxTurns: input.maxTurns ?? DEFAULT_EPHEMERAL_MAX_TURNS,
     })
 
     sessionID = runRes.sessionID
@@ -310,13 +405,22 @@ export async function spawnEphemeralWorker(
       timestamp: Date.now(),
     })
   } finally {
-    if (worktreeCreated && worktreeDir && input.keepWorktree !== true) {
-      try {
-        const ac = new AbortController()
-        await worktreeDriver.remove({ directory: worktreeDir, force: true }, { signal: ac.signal })
-        worktreeCleaned = true
-      } catch {
-        worktreeCleaned = false
+    if (worktreeCreated && worktreeDir) {
+      const preserved = await preserveWorktreeChanges(worktreeDir, input.stepKey, role, baseHead)
+      preservedBranch = preserved.branch
+      diffSummary = preserved.diffSummary
+      preserveError = preserved.error
+      if (input.keepWorktree !== true && !preserveError) {
+        try {
+          const ac = new AbortController()
+          await worktreeDriver.remove(
+            { directory: worktreeDir, force: true },
+            { signal: ac.signal },
+          )
+          worktreeCleaned = true
+        } catch {
+          worktreeCleaned = false
+        }
       }
     }
 
@@ -325,6 +429,12 @@ export async function spawnEphemeralWorker(
       : runOk
         ? 'completed'
         : 'failed'
+    const mentionText = recipients.map((r) => `@${r}`).join(' ')
+    const branchNote = preservedBranch
+      ? ` (branch: ${preservedBranch}${diffSummary ? `; diff: ${diffSummary}` : ''})`
+      : preserveError
+        ? ` (worktree kept due to preserve error: ${preserveError})`
+        : ''
     try {
       const finalMsg = await appendBoardMessage(sharedRoot, {
         channel: 'swarm',
@@ -333,12 +443,12 @@ export async function spawnEphemeralWorker(
         ...(input.workstream !== undefined ? { workstream: input.workstream } : {}),
         stepKey: input.stepKey,
         from: role,
-        to: ['zeus'],
+        to: recipients,
         ...(claimSeq !== undefined ? { replyToSeq: claimSeq } : {}),
         tag: runOk ? 'done' : 'blocker',
         body: runOk
-          ? `[done] @zeus Ephemeral worker (${role}) finished step ${input.stepKey}${worktreeCleaned ? ' and cleaned worktree' : ''}`
-          : `[blocker] @zeus Ephemeral worker (${role}) failed step ${input.stepKey}: ${runError ?? 'step not marked done'}`,
+          ? `[done] ${mentionText} Ephemeral worker (${role}) finished step ${input.stepKey}${worktreeCleaned ? ' and cleaned worktree' : ''}${branchNote}`
+          : `[blocker] ${mentionText} Ephemeral worker (${role}) failed step ${input.stepKey}: ${runError ?? 'step not marked done'}${branchNote}`,
         ephemeral: {
           role,
           baseAgent,
@@ -376,6 +486,8 @@ export async function spawnEphemeralWorker(
     ...(sessionID !== undefined ? { sessionID } : {}),
     ...(worktreeDir !== undefined ? { worktreeDir } : {}),
     worktreeCleaned,
+    ...(preservedBranch !== undefined ? { branch: preservedBranch } : {}),
+    ...(diffSummary !== undefined ? { diffSummary } : {}),
     ...(claimSeq !== undefined ? { claimSeq } : {}),
     ...(finalSeq !== undefined ? { finalSeq } : {}),
     ...(runError !== undefined ? { error: runError } : {}),

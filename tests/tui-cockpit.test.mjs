@@ -410,3 +410,46 @@ test('cockpit.tsx and settings-i18n.ts expose bilingual Swarm threads and attent
   assert.match(cockpitSrc, /stopMouseEvent/)
   assert.match(cockpitSrc, /handleMouseClick/)
 })
+
+test('wireCockpitBusRecorder persists subagent:start and subagent:stop telemetry events', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-subagent-bus-'))
+  const stop = wireCockpitBusRecorder(dir)
+  try {
+    getSharedBus().emit('subagent:start', {
+      tool: 'task',
+      agent: 'apollo',
+      callID: 'call-1',
+      description: 'Inspect auth flow',
+      timestamp: 1000,
+    })
+    getSharedBus().emit('subagent:stop', {
+      tool: 'task',
+      agent: 'apollo',
+      callID: 'call-1',
+      status: 'completed',
+      timestamp: 2000,
+    })
+    const ndjson = readFileSync(
+      join(dir, '.pantheon', 'telemetry', 'cockpit-events.ndjson'),
+      'utf8',
+    )
+    assert.match(ndjson, /"kind":"subagent:start"/)
+    assert.match(ndjson, /"kind":"subagent:stop"/)
+    assert.match(ndjson, /"agent":"apollo"/)
+  } finally {
+    stop()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('gui-experimental.cjs uses dynamic version and fixed settings/telemetry/sqlite readers', () => {
+  const bundle = readFileSync(join(root, 'src/plugins/tui/dist/gui-experimental.cjs'), 'utf8')
+  const pkg = JSON.parse(readFileSync(join(root, 'src/plugins/tui/package.json'), 'utf8'))
+  assert.doesNotMatch(bundle, /v2\.3\.3/)
+  assert.ok(bundle.includes(pkg.version))
+  assert.match(bundle, /cockpit-settings\.json/)
+  assert.match(bundle, /session_message/)
+  assert.match(bundle, /parent_id/)
+  assert.match(bundle, /cockpit-events\.ndjson/)
+  assert.doesNotMatch(bundle, /require\(["']node:sqlite["']\)/)
+})

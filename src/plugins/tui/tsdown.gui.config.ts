@@ -1,6 +1,14 @@
+import { readFileSync } from 'node:fs'
 import { isBuiltin } from 'node:module'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import solid from 'rolldown-plugin-solid'
 import { defineConfig } from 'tsdown'
+
+const __dirname = fileURLToPath(new URL('.', import.meta.url))
+const pkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8')) as {
+  version: string
+}
 
 const GUI_EXTERNALS = new Set([
   'electron',
@@ -31,6 +39,9 @@ export default defineConfig({
   outExtensions: () => ({ js: '.cjs' }),
   dts: false,
   target: 'node26.3.0',
+  define: {
+    __PANTHEON_VERSION__: JSON.stringify(pkg.version),
+  },
   deps: {
     neverBundle: (id) =>
       GUI_EXTERNALS.has(id) ||
