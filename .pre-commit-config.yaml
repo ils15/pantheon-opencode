@@ -59,9 +59,11 @@ repos:
 
       # `.pantheon/` runtime state has been ignored since v1.0, but a force-add
       # (ecebfbb, 2026-08-05) put a release-audit snapshot into history anyway.
-      # History is not rewritten; instead this closes the boundary. The allowlist
-      # is derived from the `.gitignore` un-ignore rules (ADRs + code-mode
-      # payload), and files already tracked in HEAD are grandfathered.
+      # History is not rewritten; instead this closes the boundary. The policy is
+      # deny-by-default with a small versioned exception list (ADRs + code-mode
+      # payload) that a test keeps in parity with the `.gitignore` un-ignore rules;
+      # files already tracked in HEAD are grandfathered. It holds with no
+      # `.gitignore` at all, and a nested `.pantheon/` is always blocked.
       - id: pantheon-runtime-state
         name: pantheon-runtime-state — reject staged .pantheon/ runtime state
         entry: node scripts/hooks/check-pantheon-runtime-staged.mjs

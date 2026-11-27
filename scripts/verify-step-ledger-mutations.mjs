@@ -309,15 +309,15 @@ const MUTANTS = [
     ],
   },
   {
-    id: 'F4-check-ignore-allowlist-removed',
-    description: 'the guard stops asking .gitignore and blocks nothing but tracked paths',
-    expect: 'F4 the guard blocks what .gitignore still ignores',
+    id: 'F4-nested-runtime-root-check-removed',
+    description: 'a nested .pantheon/ under an exception prefix is no longer rejected',
+    expect: 'F8 exceptions are segment-bounded',
     slice: 'tests/pantheon/precommit-runtime-guard.test.mjs',
     edits: [
       {
         file: HOOK,
-        from: '  if (isIgnored) blocked.push(path)',
-        to: '  if (false) blocked.push(path)',
+        from: "  return path.split('/').slice(1).includes(RUNTIME_ROOT)",
+        to: '  return false',
       },
     ],
   },
@@ -328,8 +328,21 @@ const MUTANTS = [
     edits: [
       {
         file: CHECKPOINT,
-        from: "  const readable = stepKey.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 96) || 'step'\n  const digest = createHash('sha256').update(stepKey).digest('hex').slice(0, 12)\n  return `${BASELINE_REF_PREFIX}${readable}-${digest}`",
-        to: "  return `${BASELINE_REF_PREFIX}${stepKey.replace(/[^a-zA-Z0-9._-]/g, '_')}`",
+        from: `  const readable = stepKey.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 96) || 'step'\n  const digest = createHash('sha256').update(stepKey).digest('hex').slice(0, 12)\n  return \`\${BASELINE_REF_PREFIX}\${readable}-\${digest}\``,
+        to: `  return \`\${BASELINE_REF_PREFIX}\${stepKey.replace(/[^a-zA-Z0-9._-]/g, '_')}\``,
+      },
+    ],
+  },
+  {
+    id: 'F8-floor-removed',
+    description: 'the guard falls back to git-only policy (open when .gitignore says nothing)',
+    expect: 'F8 the floor blocks runtime state with no .gitignore',
+    slice: 'tests/pantheon/precommit-runtime-guard.test.mjs',
+    edits: [
+      {
+        file: HOOK,
+        from: "  if (matchesException(path) && !ignoredPaths.has(path)) return 'allowed'\n  return 'blocked'",
+        to: "  if (matchesException(path) && !ignoredPaths.has(path)) return 'allowed'\n  return ignoredPaths.has(path) ? 'blocked' : 'allowed'",
       },
     ],
   },
