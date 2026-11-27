@@ -21,6 +21,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -1663,6 +1664,59 @@ test("S3-L3 a dead holder's lock is reclaimed immediately, not after the stale t
       `reclaim must not wait for the wait budget/stale timeout (${elapsed}ms)`,
     )
     assert.equal(existsSync(lockPath), false, 'release removes its own lock')
+  } finally {
+    cleanup(fixture)
+  }
+})
+
+test('S3-L4 an ownerless (zero-byte) lock is refused while fresh and reclaimed once stale', async () => {
+  resetMergeTokens()
+  const fixture = await setupMergeFixture({ stepKey: 'empty-lock-1' })
+  const lockPath = join(fixture.repo, '.pantheon', '.ephemeral-merge.lock')
+  try {
+    const preview = await mergeEphemeralStep({
+      cwd: fixture.repo,
+      stepKey: fixture.stepKey,
+      mode: 'preview',
+    })
+    assert.equal(preview.readyToApply, true)
+
+    // A crash between open('wx') and the token write leaves zero bytes: nothing to
+    // parse, so the pid/age checks must still decide by mtime alone.
+    mkdirSync(dirname(lockPath), { recursive: true })
+    writeFileSync(lockPath, '')
+    const fresh = await mergeEphemeralStep({
+      cwd: fixture.repo,
+      stepKey: fixture.stepKey,
+      mode: 'apply',
+      confirmToken: preview.token,
+    })
+    assert.equal(fresh.ok, false)
+    assert.equal(fresh.error, 'merge_busy')
+    assert.equal(fresh.noOp, true)
+    assert.equal(readFileSync(join(fixture.repo, 'src/a.ts'), 'utf8'), 'export const a = 1\n')
+    assert.equal(existsSync(lockPath), true, 'a fresh ownerless lock is not broken')
+
+    // Once its mtime is past the stale threshold, it is reclaimed (atomically)
+    // instead of blocking the checkout forever.
+    const old = new Date(Date.now() - 11 * 60 * 1000)
+    utimesSync(lockPath, old, old)
+    const reclaimed = await mergeEphemeralStep({
+      cwd: fixture.repo,
+      stepKey: fixture.stepKey,
+      mode: 'apply',
+      confirmToken: preview.token,
+    })
+    assert.equal(
+      reclaimed.ok,
+      true,
+      `expected the stale lock to be reclaimed, got ${reclaimed.error}`,
+    )
+    assert.equal(
+      readFileSync(join(fixture.repo, 'src/a.ts'), 'utf8'),
+      'export const a = "branch"\n',
+    )
+    assert.equal(existsSync(lockPath), false, 'the reclaimed lock is released by its new owner')
   } finally {
     cleanup(fixture)
   }

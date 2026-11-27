@@ -635,6 +635,19 @@ const MUTANTS = [
       },
     ],
   },
+  {
+    id: 'F1-ownerless-lock-age-break-removed',
+    description: 'an ownerless (zero-byte) lock can never be reclaimed by age',
+    slice: MERGE_SLICE,
+    expect: 'S3-L4 an ownerless (zero-byte) lock is refused while fresh and reclaimed once stale',
+    edits: [
+      {
+        file: MERGE,
+        from: '    if (age > MERGE_LOCK_STALE_MS) {',
+        to: '    if (observed !== undefined && age > MERGE_LOCK_STALE_MS) {',
+      },
+    ],
+  },
 ]
 
 function parseArgs(argv) {

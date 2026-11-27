@@ -248,9 +248,13 @@ is the only supported way to land that branch:
   **not** the ledger lock: that one breaks a lock older than 2 s, which for a
   multi-second merge would let a peer steal a live window and then erase its
   content. Instead the merge lock (1) breaks on **liveness** — a dead owner pid is
-  reclaimed immediately, (2) tolerates 10 minutes before any age-based break,
-  (3) refreshes its mtime every second while held, and (4) re-verifies ownership
-  before the squash and again before the ledger write. So: a second apply waits up
+  reclaimed immediately, (2) tolerates 10 minutes before any age-based break and
+  applies that age to ownerless locks too (a crash between `open('wx')` and the
+  token write leaves zero bytes; without this the checkout would answer
+  `merge_busy` forever), (3) refreshes its mtime every second while held, so the
+  age rule can only ever fire for a writer that stopped refreshing, and
+  (4) re-verifies ownership before the squash and again before the ledger write.
+  So: a second apply waits up
   to 1.5 s and then gets `merge_busy` (or `worktree_changed`/`head_changed` if it
   acquires after the first finished), touching nothing either way; a writer whose
   lock was taken mid-window aborts with `lock_lost` and does **not** write the

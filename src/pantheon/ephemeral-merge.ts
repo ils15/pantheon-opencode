@@ -875,8 +875,15 @@ function pidIsAlive(pid: number): boolean {
   }
 }
 
-/** Break a lock only if the token we observed is still the file's token. */
-function breakStaleMergeLock(path: string, observed: string): void {
+/**
+ * Break a lock only if the token we observed is still the file's token.
+ *
+ * `observed` is `undefined` for a lock file that has no parseable token (a crash
+ * between `open('wx')` and the token write leaves a zero-byte file). That case is
+ * still breakable by age, and the compare must be raw — coercing `undefined` to
+ * `''` would look like "another writer replaced it" and restore the dead lock.
+ */
+function breakStaleMergeLock(path: string, observed: string | undefined): void {
   const quarantine = `${path}.stale.${process.pid}.${Date.now()}`
   try {
     renameSync(path, quarantine)
@@ -941,7 +948,7 @@ async function acquireMergeLock(path: string): Promise<MergeLockHandle> {
     }
     const ownerPid = mergeLockPid(observed)
     if (ownerPid !== undefined && !pidIsAlive(ownerPid)) {
-      breakStaleMergeLock(path, observed ?? '')
+      breakStaleMergeLock(path, observed)
       continue
     }
     let age: number | undefined
@@ -950,14 +957,17 @@ async function acquireMergeLock(path: string): Promise<MergeLockHandle> {
     } catch {
       continue // the lock vanished — retry immediately
     }
-    if (observed !== undefined && age > MERGE_LOCK_STALE_MS) {
+    // Age applies to *any* lock, including an ownerless one (zero bytes, no pid to
+    // check). A live holder is protected by its 1 s heartbeat, which keeps the
+    // mtime fresh; only a lock whose writer stopped refreshing can reach this.
+    if (age > MERGE_LOCK_STALE_MS) {
       breakStaleMergeLock(path, observed)
       continue
     }
     if (Date.now() >= deadline) {
       throw new MergeLockError(
         'merge_busy',
-        `held by pid ${ownerPid ?? 'unknown'} for ${Math.round(age)}ms (${path})`,
+        `held by ${ownerPid === undefined ? 'an unreadable/ownerless lock' : `pid ${ownerPid}`} for ${Math.round(age)}ms (${path})`,
       )
     }
     await sleepMs(25)

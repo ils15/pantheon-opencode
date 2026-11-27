@@ -15151,7 +15151,7 @@ async function acquireMergeLock(path6) {
     }
     const ownerPid = mergeLockPid(observed);
     if (ownerPid !== void 0 && !pidIsAlive(ownerPid)) {
-      breakStaleMergeLock(path6, observed ?? "");
+      breakStaleMergeLock(path6, observed);
       continue;
     }
     let age;
@@ -15160,14 +15160,14 @@ async function acquireMergeLock(path6) {
     } catch {
       continue;
     }
-    if (observed !== void 0 && age > MERGE_LOCK_STALE_MS) {
+    if (age > MERGE_LOCK_STALE_MS) {
       breakStaleMergeLock(path6, observed);
       continue;
     }
     if (Date.now() >= deadline) {
       throw new MergeLockError(
         "merge_busy",
-        `held by pid ${ownerPid ?? "unknown"} for ${Math.round(age)}ms (${path6})`
+        `held by ${ownerPid === void 0 ? "an unreadable/ownerless lock" : `pid ${ownerPid}`} for ${Math.round(age)}ms (${path6})`
       );
     }
     await sleepMs(25);
