@@ -86,6 +86,25 @@ export interface CockpitThreadGroup {
   readonly threads: readonly CockpitThreadEntry[]
 }
 
+export interface BoardInteractionEdge {
+  readonly from: string
+  readonly target: string
+  readonly seq: number
+  readonly tag?: BoardMessageTag
+  readonly replyToSeq?: number
+  readonly timestamp: number
+  readonly channel?: string
+  readonly threadId?: string
+  readonly bodyPreview?: string
+}
+
+export interface BoardInteractionGraph {
+  readonly edges: readonly BoardInteractionEdge[]
+  readonly nodes: readonly string[]
+  readonly maxSeq: number
+  readonly edgeCountByPair: Readonly<Record<string, number>>
+}
+
 export interface CockpitChildEntry {
   readonly id: string
   readonly agent: string
@@ -169,6 +188,7 @@ export interface CockpitSnapshot {
     readonly headSeq: number
     readonly groups: readonly CockpitThreadGroup[]
   }
+  readonly interactions: BoardInteractionGraph
   readonly attention: readonly CockpitAttentionItem[]
   readonly flightdeck: {
     readonly allowed: number
@@ -820,6 +840,96 @@ function buildRankedAttentionQueue(params: {
     .slice(0, 20)
 }
 
+function normalizeAgentHandle(raw: string): string {
+  return raw.trim().replace(/^@+/, '')
+}
+
+function extractBodyMentions(body: string): string[] {
+  const found: string[] = []
+  const seen = new Set<string>()
+  const re = /(?:^|[\s(])@([A-Za-z0-9][A-Za-z0-9_-]*)/g
+  for (const match of body.matchAll(re)) {
+    const handle = match[1]
+    if (handle && !seen.has(handle)) {
+      seen.add(handle)
+      found.push(handle)
+    }
+  }
+  return found
+}
+
+/**
+ * Extract directed `@mention` interaction edges (`from -> target`, `seq`, `tag`,
+ * `replyToSeq`, `timestamp`) from Agora Board messages, optionally capped at
+ * `maxSeqCap` for `#seq` causal replay.
+ */
+export function buildBoardInteractionGraph(
+  messages: readonly CockpitBoardMessage[],
+  maxSeqCap?: number,
+): BoardInteractionGraph {
+  const sorted = [...messages]
+    .filter((m) => maxSeqCap === undefined || m.seq <= maxSeqCap)
+    .sort((a, b) => a.seq - b.seq)
+
+  const edges: BoardInteractionEdge[] = []
+  const nodes: string[] = []
+  const seenNodes = new Set<string>()
+  const edgeCountByPair: Record<string, number> = {}
+
+  const addNode = (name: string) => {
+    if (!name || seenNodes.has(name)) return
+    seenNodes.add(name)
+    nodes.push(name)
+  }
+
+  for (const msg of sorted) {
+    const from = normalizeAgentHandle(msg.from) || 'unknown'
+    addNode(from)
+
+    const rawTargets =
+      msg.mentions.length > 0
+        ? msg.mentions.map(normalizeAgentHandle)
+        : extractBodyMentions(msg.body)
+    const dedupTargets: string[] = []
+    const seenTargets = new Set<string>()
+    for (const target of rawTargets) {
+      if (!target || seenTargets.has(target)) continue
+      seenTargets.add(target)
+      dedupTargets.push(target)
+    }
+
+    const preview = msg.body.trim().replace(/\s+/g, ' ').slice(0, 72)
+    for (const target of dedupTargets) {
+      addNode(target)
+      const pairKey = `${from}->${target}`
+      edgeCountByPair[pairKey] = (edgeCountByPair[pairKey] ?? 0) + 1
+      edges.push({
+        from,
+        target,
+        seq: msg.seq,
+        tag: msg.tag,
+        replyToSeq: msg.replyToSeq,
+        timestamp: msg.timestamp,
+        channel: msg.channel,
+        threadId: msg.threadId,
+        bodyPreview: preview || undefined,
+      })
+    }
+  }
+
+  const maxSeq = sorted.length > 0 ? (sorted[sorted.length - 1]?.seq ?? 0) : 0
+  return {
+    edges,
+    nodes,
+    maxSeq,
+    edgeCountByPair,
+  }
+}
+
+function sanitizeMermaidParticipant(name: string): string {
+  return name.replace(/[^A-Za-z0-9_-]/g, '') || 'specialist'
+}
+
 export function buildCockpitSnapshot(input: CockpitInput): CockpitSnapshot {
   const isPt = Boolean(input.isPt)
   const ctxTokens = Math.max(0, input.contextTokens ?? 0)
@@ -867,6 +977,7 @@ export function buildCockpitSnapshot(input: CockpitInput): CockpitSnapshot {
   }
   const boardMessages = Array.from(boardDedup.values()).sort((a, b) => a.seq - b.seq)
   const threads = buildOutcomeThreads(boardMessages, isPt)
+  const interactions = buildBoardInteractionGraph(boardMessages)
   const attention = buildRankedAttentionQueue({
     messages: boardMessages,
     events,
@@ -929,6 +1040,7 @@ export function buildCockpitSnapshot(input: CockpitInput): CockpitSnapshot {
       rows: swarmRows,
     },
     threads,
+    interactions,
     attention,
     flightdeck: {
       allowed,
@@ -966,19 +1078,33 @@ export function formatCockpitReplayArtifact(
     '  participant You',
     '  participant Zeus',
   ]
-  const seenAgents = new Set<string>()
-  for (const row of snapshot.swarm.rows.slice(0, 12)) {
-    const cleanAgent = row.agent.replace(/[^A-Za-z0-9_-]/g, '') || 'specialist'
-    if (!seenAgents.has(cleanAgent)) {
-      seenAgents.add(cleanAgent)
-      seqLines.push(`  participant ${cleanAgent}`)
+  const seenAgents = new Set<string>(['You', 'Zeus'])
+  const ensureParticipant = (raw: string): string => {
+    const clean = sanitizeMermaidParticipant(raw)
+    if (!seenAgents.has(clean)) {
+      seenAgents.add(clean)
+      seqLines.push(`  participant ${clean}`)
     }
+    return clean
+  }
+
+  const interactionEdges = snapshot.interactions?.edges ?? []
+  for (const edge of interactionEdges.slice(0, 24)) {
+    const cleanFrom = ensureParticipant(edge.from)
+    const cleanTarget = ensureParticipant(edge.target)
+    const tagPart = edge.tag ? ` [${edge.tag}]` : ''
+    const replyPart = edge.replyToSeq !== undefined ? ` (re:#${edge.replyToSeq})` : ''
+    seqLines.push(`  ${cleanFrom}->>${cleanTarget}: #${edge.seq}${tagPart}${replyPart}`)
+  }
+
+  for (const row of snapshot.swarm.rows.slice(0, 12)) {
+    const cleanAgent = ensureParticipant(row.agent)
     seqLines.push(
       `  Zeus->>${cleanAgent}: ${row.kind} ($${row.cost.toFixed(3)}, ${row.durationSec}s)`,
     )
     seqLines.push(`  ${cleanAgent}-->>Zeus: ${row.status}`)
   }
-  if (snapshot.swarm.rows.length === 0) {
+  if (interactionEdges.length === 0 && snapshot.swarm.rows.length === 0) {
     seqLines.push('  You->>Zeus: active session telemetry snapshot')
     seqLines.push('  Zeus-->>You: Flightdeck gate check')
   }
@@ -1036,6 +1162,18 @@ export function formatCockpitReplayArtifact(
           .join('\n')
       : '- No board threads recorded.'
 
+  const interactionLines =
+    interactionEdges.length > 0
+      ? interactionEdges
+          .map((edge) => {
+            const tagPart = edge.tag ? ` \`[${edge.tag}]\`` : ''
+            const replyPart = edge.replyToSeq !== undefined ? ` (re: #${edge.replyToSeq})` : ''
+            const preview = edge.bodyPreview ? ` — ${edge.bodyPreview}` : ''
+            return `- #${edge.seq} **@${edge.from} → @${edge.target}**${tagPart}${replyPart}${preview}`
+          })
+          .join('\n')
+      : '- No @mention interaction edges recorded.'
+
   const markdown = [
     `# Pantheon Cockpit Flightdeck Replay`,
     '',
@@ -1048,6 +1186,10 @@ export function formatCockpitReplayArtifact(
     '## Execution Replay Diagram',
     '',
     ...seqLines,
+    '',
+    '## @mention Interaction Graph (#seq Causal Replay)',
+    '',
+    interactionLines,
     '',
     '## Ranked Attention Queue',
     '',

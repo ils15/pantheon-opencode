@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { getSharedBus } from '../src/pantheon/bus.ts'
 import { wireCockpitBusRecorder } from '../src/pantheon/cockpit-events.ts'
 import {
+  buildBoardInteractionGraph,
   buildCockpitSnapshot,
   formatCockpitReplayArtifact,
   formatGanttBar,
@@ -452,4 +453,86 @@ test('gui-experimental.cjs uses dynamic version and fixed settings/telemetry/sql
   assert.match(bundle, /parent_id/)
   assert.match(bundle, /cockpit-events\.ndjson/)
   assert.doesNotMatch(bundle, /require\(["']node:sqlite["']\)/)
+})
+
+test('buildBoardInteractionGraph extracts @mention edges, supports #seq replay cap, and enriches formatCockpitReplayArtifact', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-cockpit-graph-'))
+  try {
+    const messages = [
+      {
+        seq: 10,
+        timestamp: 1000,
+        channel: 'swarm',
+        threadId: 'th-1',
+        from: 'zeus',
+        mentions: ['@hermes', 'hermes'],
+        tag: 'claim',
+        body: 'Claiming OAuth workstream for @hermes',
+      },
+      {
+        seq: 11,
+        timestamp: 2000,
+        channel: 'swarm',
+        threadId: 'th-1',
+        from: 'hermes',
+        mentions: [],
+        replyToSeq: 10,
+        tag: 'blocker',
+        body: 'Blocked on @themis review before merge',
+      },
+      {
+        seq: 12,
+        timestamp: 3000,
+        channel: 'swarm',
+        threadId: 'th-1',
+        from: 'themis',
+        mentions: ['zeus'],
+        replyToSeq: 11,
+        tag: 'done',
+        body: 'Approved and unblocked',
+      },
+    ]
+
+    const fullGraph = buildBoardInteractionGraph(messages)
+    assert.equal(fullGraph.edges.length, 3)
+    assert.deepEqual(fullGraph.nodes, ['zeus', 'hermes', 'themis'])
+    assert.equal(fullGraph.maxSeq, 12)
+    assert.equal(fullGraph.edgeCountByPair['zeus->hermes'], 1)
+    assert.equal(fullGraph.edgeCountByPair['hermes->themis'], 1)
+    assert.equal(fullGraph.edgeCountByPair['themis->zeus'], 1)
+    assert.equal(fullGraph.edges[1]?.replyToSeq, 10)
+    assert.equal(fullGraph.edges[1]?.tag, 'blocker')
+
+    const replayGraph = buildBoardInteractionGraph(messages, 11)
+    assert.equal(replayGraph.edges.length, 2)
+    assert.equal(replayGraph.maxSeq, 11)
+
+    const snapshot = buildCockpitSnapshot({
+      workspaceDir: dir,
+      children: [],
+      boardMessages: messages,
+    })
+    assert.equal(snapshot.interactions.edges.length, 3)
+
+    const replay = formatCockpitReplayArtifact(snapshot, new Date('2026-11-27T00:00:00Z'))
+    assert.match(replay.markdown, /zeus->>hermes: #10 \[claim\]/)
+    assert.match(replay.markdown, /hermes->>themis: #11 \[blocker\] \(re:#10\)/)
+    assert.match(replay.markdown, /themis->>zeus: #12 \[done\] \(re:#11\)/)
+    assert.match(replay.markdown, /## @mention Interaction Graph \(#seq Causal Replay\)/)
+    assert.match(replay.markdown, /\*\*@hermes → @themis\*\*/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('gui.tsx and cockpit.tsx expose @mention interaction graph and #seq replay UI', () => {
+  const guiSrc = readFileSync(join(root, 'src/plugins/tui/src/gui.tsx'), 'utf8')
+  assert.match(guiSrc, /'dag' \| 'gantt' \| 'interactions'/)
+  assert.match(guiSrc, /tr\('Interactions', 'Interações'\)/)
+  assert.match(guiSrc, /interactionEdges\(\)/)
+  assert.match(guiSrc, /edge\.replyToSeq/)
+
+  const cockpitSrc = readFileSync(join(root, 'src/plugins/tui/src/cockpit.tsx'), 'utf8')
+  assert.match(cockpitSrc, /I18N\.cockpit\.interactionGraph/)
+  assert.match(cockpitSrc, /snapshot\(\)\.interactions\.edges/)
 })

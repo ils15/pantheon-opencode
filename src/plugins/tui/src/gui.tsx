@@ -162,6 +162,7 @@ interface BoardMsg {
   channel?: string
   from: string
   mentions: string[]
+  replyToSeq?: number
   tag?: string
   body: string
   ephemeral?: {
@@ -1571,7 +1572,7 @@ function resolveActiveDirectory(ctx: SetupContext<any>, explicit?: () => string)
 
 function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => string }) {
   const [subTab, setSubTab] = createSignal<GuiSubTab>('topology')
-  const [topoView, setTopoView] = createSignal<'dag' | 'gantt'>('dag')
+  const [topoView, setTopoView] = createSignal<'dag' | 'gantt' | 'interactions'>('dag')
   const [scrubberSeq, setScrubberSeq] = createSignal<number | null>(null)
   const [draftMsg, setDraftMsg] = createSignal('')
   const [draftChannel, setDraftChannel] = createSignal('default')
@@ -1630,6 +1631,41 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
     const cap = scrubberSeq()
     const msgs = sharedSnapshot().messages
     return cap === null ? msgs : msgs.filter((m) => m.seq <= cap)
+  })
+
+  const interactionEdges = createMemo(() => {
+    const edges: Array<{
+      from: string
+      target: string
+      seq: number
+      tag?: string
+      replyToSeq?: number
+      timestamp: number
+      bodyPreview: string
+    }> = []
+    for (const m of visibleMessages()) {
+      const from = m.from.trim().replace(/^@+/, '') || 'unknown'
+      const rawTargets =
+        m.mentions.length > 0
+          ? m.mentions.map((t) => t.trim().replace(/^@+/, ''))
+          : Array.from(m.body.matchAll(/(?:^|[\s(])@([A-Za-z0-9][A-Za-z0-9_-]*)/g), (x) => x[1])
+      const seen = new Set<string>()
+      const preview = m.body.trim().replace(/\s+/g, ' ').slice(0, 72)
+      for (const target of rawTargets) {
+        if (!target || seen.has(target)) continue
+        seen.add(target)
+        edges.push({
+          from,
+          target,
+          seq: m.seq,
+          tag: m.tag,
+          replyToSeq: m.replyToSeq,
+          timestamp: m.timestamp,
+          bodyPreview: preview,
+        })
+      }
+    }
+    return edges
   })
 
   const ephemeralWorkers = createMemo(() =>
@@ -1840,40 +1876,153 @@ function PantheonCockpitView(props: { ctx: SetupContext<any>; directory: () => s
               >
                 {tr('Timeline', 'Linha do Tempo')}
               </button>
+              <button
+                type="button"
+                onClick={() => setTopoView('interactions')}
+                style={{
+                  padding: '2px 8px',
+                  'border-radius': '4px',
+                  border: '1px solid var(--border-weak-base, #3f3f46)',
+                  background: topoView() === 'interactions' ? '#fba970' : 'transparent',
+                  color: topoView() === 'interactions' ? '#111' : 'inherit',
+                  cursor: 'pointer',
+                }}
+              >
+                {tr('Interactions', 'Interações')}
+              </button>
             </div>
           </div>
 
-          <Show
-            when={topoView() === 'dag'}
-            fallback={
-              <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
-                <For each={uniqueAgents()}>
-                  {(agent, idx) => (
-                    <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
-                      <span style={{ width: '96px', 'font-family': 'monospace' }}>{agent}</span>
+          <Show when={topoView() === 'gantt'}>
+            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
+              <For each={uniqueAgents()}>
+                {(agent, idx) => (
+                  <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
+                    <span style={{ width: '96px', 'font-family': 'monospace' }}>{agent}</span>
+                    <div
+                      style={{
+                        flex: 1,
+                        height: '10px',
+                        background: 'rgba(128,128,128,0.18)',
+                        'border-radius': '4px',
+                        overflow: 'hidden',
+                      }}
+                    >
                       <div
                         style={{
-                          flex: 1,
-                          height: '10px',
-                          background: 'rgba(128,128,128,0.18)',
-                          'border-radius': '4px',
-                          overflow: 'hidden',
+                          height: '100%',
+                          width: `${Math.max(20, 95 - idx() * 15)}%`,
+                          background: agent === 'zeus' ? '#fba970' : '#38bdf8',
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
+
+          <Show when={topoView() === 'interactions'}>
+            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  'justify-content': 'space-between',
+                  'align-items': 'center',
+                  opacity: 0.8,
+                  'font-size': '11px',
+                }}
+              >
+                <span>
+                  {`${interactionEdges().length} ${tr('@mention edges', 'arestas @mention')} · ${visibleMessages().length}/${sharedSnapshot().messages.length} ${tr('msgs up to', 'msgs até')} #${scrubberSeq() ?? maxSeq()}`}
+                </span>
+                <Show when={scrubberSeq() !== null}>
+                  <button
+                    type="button"
+                    onClick={() => setScrubberSeq(null)}
+                    style={{
+                      padding: '1px 6px',
+                      'border-radius': '4px',
+                      border: '1px solid var(--border-weak-base, #3f3f46)',
+                      background: 'transparent',
+                      color: '#fba970',
+                      cursor: 'pointer',
+                      'font-size': '11px',
+                    }}
+                  >
+                    {tr('Live', 'Ao vivo')}
+                  </button>
+                </Show>
+              </div>
+              <For
+                each={interactionEdges()}
+                fallback={
+                  <div style={{ opacity: 0.6 }}>
+                    {tr(
+                      'No @mention interactions up to this #seq.',
+                      'Nenhuma interação @mention até este #seq.',
+                    )}
+                  </div>
+                }
+              >
+                {(edge) => {
+                  const tagColor =
+                    edge.tag === 'done'
+                      ? '#34d399'
+                      : edge.tag === 'blocker' || edge.tag === 'deadlock'
+                        ? '#f87171'
+                        : edge.tag === 'claim' || edge.tag === 'handoff'
+                          ? '#fba970'
+                          : '#38bdf8'
+                  return (
+                    <div
+                      style={{
+                        display: 'flex',
+                        'flex-direction': 'column',
+                        gap: '3px',
+                        padding: '6px 8px',
+                        'border-radius': '6px',
+                        border: '1px solid var(--border-weak-base, #2e2e32)',
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: 'flex',
+                          'justify-content': 'space-between',
+                          'align-items': 'center',
+                          gap: '8px',
                         }}
                       >
-                        <div
-                          style={{
-                            height: '100%',
-                            width: `${Math.max(20, 95 - idx() * 15)}%`,
-                            background: agent === 'zeus' ? '#fba970' : '#38bdf8',
-                          }}
-                        />
+                        <span style={{ 'font-family': 'monospace' }}>
+                          {`#${edge.seq} ${edge.from} → @${edge.target}`}
+                          {edge.replyToSeq !== undefined ? ` (re:#${edge.replyToSeq})` : ''}
+                        </span>
+                        <Show when={edge.tag}>
+                          <span
+                            style={{
+                              padding: '1px 6px',
+                              'border-radius': '999px',
+                              border: `1px solid ${tagColor}`,
+                              color: tagColor,
+                              'font-size': '10px',
+                              'font-family': 'monospace',
+                            }}
+                          >
+                            {`[${edge.tag}]`}
+                          </span>
+                        </Show>
                       </div>
+                      <Show when={edge.bodyPreview.length > 0}>
+                        <div style={{ opacity: 0.7, 'font-size': '11px' }}>{edge.bodyPreview}</div>
+                      </Show>
                     </div>
-                  )}
-                </For>
-              </div>
-            }
-          >
+                  )
+                }}
+              </For>
+            </div>
+          </Show>
+
+          <Show when={topoView() === 'dag'}>
             <svg viewBox="0 0 640 200" style={{ width: '100%', height: '200px' }}>
               <title>{tr('Olympus Topology DAG', 'Topologia Olympus (DAG)')}</title>
               <rect
