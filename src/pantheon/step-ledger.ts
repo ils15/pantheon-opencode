@@ -147,11 +147,19 @@ function assertSafeStepKey(stepKey: unknown): string {
   return stepKey
 }
 
-function resolveLedgerPath(workspaceDir: string): string {
+function resolveLedgerPath(workspaceDir: string, createDir = true): string {
   const sharedRoot = resolveSharedPantheonRoot(workspaceDir)
   const dir = join(sharedRoot, '.pantheon', 'ledger')
-  mkdirSync(dir, { recursive: true })
-  const canonicalDir = realpathSync(dir)
+  if (createDir) mkdirSync(dir, { recursive: true })
+  let canonicalDir: string
+  try {
+    canonicalDir = realpathSync(dir)
+  } catch (err) {
+    // A read-only caller must not create the directory (and a missing ledger is
+    // a legitimate empty state). Writers keep the loud failure.
+    if (createDir) throw err
+    return resolve(dir, 'step-ledger.json')
+  }
   const filePath = resolve(canonicalDir, 'step-ledger.json')
   const prefix = canonicalDir.endsWith(sep) ? canonicalDir : `${canonicalDir}${sep}`
   if (!filePath.startsWith(prefix)) {
@@ -160,12 +168,48 @@ function resolveLedgerPath(workspaceDir: string): string {
   return filePath
 }
 
+/** How a corrupt ledger is handled while parsing the on-disk store. */
+export interface ReadStepLedgerOptions {
+  /**
+   * Move a corrupt file aside (default `true`, the writer behaviour). A
+   * read-only consumer (the headless cockpit) sets `false` so serving state
+   * never mutates the workspace and can report `corrupt` on every read.
+   */
+  quarantine?: boolean
+}
+
+/** The store plus the corruption signal a read-only consumer needs. */
+export interface StepLedgerReadResult {
+  store: StepLedgerStore
+  corrupt: boolean
+  /** Present only when `corrupt`; never used as the HTTP body. */
+  error?: string
+}
+
 /**
- * Parse the on-disk store. A corrupt file is **quarantined**, never silently
- * replaced by an empty store: the next atomic write would otherwise cement the
- * loss of every step. Callers see a loud, actionable error.
+ * Parse the on-disk store. A corrupt file is **quarantined** by default, never
+ * silently replaced by an empty store: the next atomic write would otherwise
+ * cement the loss of every step. Callers see a loud, actionable error.
  */
-function readLedgerFileAtPath(filePath: string): StepLedgerStore {
+function readLedgerFileAtPath(
+  filePath: string,
+  options: ReadStepLedgerOptions = {},
+): StepLedgerStore {
+  const quarantineCorrupt = options.quarantine ?? true
+  const corruptError = (reason: string): Error => {
+    if (!quarantineCorrupt) {
+      return new Error(`step-ledger at ${filePath} is corrupt: ${reason}`)
+    }
+    const quarantine = `${filePath}.corrupt.${Date.now()}`
+    try {
+      renameSync(filePath, quarantine)
+    } catch {
+      /* keep the original in place if the rename fails */
+    }
+    return new Error(
+      `step-ledger is corrupt and was moved aside to ${quarantine} (${reason}). Inspect it and restore a valid ledger before retrying — refusing to overwrite it with an empty store.`,
+    )
+  }
   if (!existsSync(filePath)) return { version: 1, steps: {} }
   let raw: string
   try {
@@ -179,33 +223,43 @@ function readLedgerFileAtPath(filePath: string): StepLedgerStore {
   try {
     parsed = JSON.parse(raw)
   } catch (err) {
-    const quarantine = `${filePath}.corrupt.${Date.now()}`
-    try {
-      renameSync(filePath, quarantine)
-    } catch {
-      /* keep the original in place if the rename fails */
-    }
-    throw new Error(
-      `step-ledger is corrupt and was moved aside to ${quarantine} (${err instanceof Error ? err.message : String(err)}). Inspect it and restore a valid ledger before retrying — refusing to overwrite it with an empty store.`,
-    )
+    throw corruptError(err instanceof Error ? err.message : String(err))
   }
   const candidate = parsed as Partial<StepLedgerStore> | null
   if (!candidate || typeof candidate.steps !== 'object' || candidate.steps === null) {
-    const quarantine = `${filePath}.corrupt.${Date.now()}`
-    try {
-      renameSync(filePath, quarantine)
-    } catch {
-      /* keep the original in place if the rename fails */
-    }
-    throw new Error(
-      `step-ledger at ${filePath} has no "steps" object and was moved aside to ${quarantine}. Refusing to overwrite it with an empty store.`,
-    )
+    throw corruptError('no "steps" object')
   }
   return { version: 1, steps: candidate.steps as Record<string, StepLedgerEntry> }
 }
 
-export function readStepLedger(workspaceDir: string): StepLedgerStore {
-  return readLedgerFileAtPath(resolveLedgerPath(workspaceDir))
+export function readStepLedger(
+  workspaceDir: string,
+  options: ReadStepLedgerOptions = {},
+): StepLedgerStore {
+  return readLedgerFileAtPath(resolveLedgerPath(workspaceDir), options)
+}
+
+/**
+ * Non-mutating read for read-only consumers (the headless cockpit).
+ *
+ * A missing ledger is an empty store with `corrupt: false`; an unparseable or
+ * shape-invalid ledger is an empty store with `corrupt: true`. That is the same
+ * distinction the TUI makes after S1: "no steps" and "the ledger cannot be
+ * read" must never render identically.
+ */
+export function readStepLedgerSnapshot(workspaceDir: string): StepLedgerReadResult {
+  try {
+    const store = readLedgerFileAtPath(resolveLedgerPath(workspaceDir, false), {
+      quarantine: false,
+    })
+    return { store, corrupt: false }
+  } catch (err) {
+    return {
+      store: { version: 1, steps: {} },
+      corrupt: true,
+      error: err instanceof Error ? err.message : String(err),
+    }
+  }
 }
 
 /** How long a lock may live before it is treated as abandoned by a dead writer. */

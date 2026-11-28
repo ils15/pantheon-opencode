@@ -37,6 +37,107 @@ npx pantheon-opencode init --project --no-mcp
 
 Flags, backup, uninstall, and reconcile are in [Installation](INSTALLATION.md).
 
+## Headless cockpit on a VPS (SSH tunnel)
+
+A headless Linux VPS has no terminal sidebar. For that case Pantheon ships an
+**opt-in, read-only HTTP cockpit** that serves a reduced view of the same
+on-disk artifacts the TUI reads. It is not the TUI and it does not pretend to
+be: the payload is the versioned `pantheon.cockpit.v1` envelope, not the TUI
+`CockpitSnapshot` type.
+
+### Enable it
+
+```bash
+PANTHEON_COCKPIT=1 PANTHEON_COCKPIT_PORT=4747 opencode
+```
+
+`PANTHEON_COCKPIT=1` is the only enable switch. Unset or `0` logs
+`cockpit disabled` and creates no listener at all. While enabled:
+
+| Variable | Contract |
+|---|---|
+| `PANTHEON_COCKPIT_PORT` | Integer `1..65535`, default `4747`. `0`, negative, `>65535`, non-numeric, or whitespace-padded (`' 0 '`) is a **fatal startup error** — never an ephemeral port, never a silent disable. |
+| `PANTHEON_COCKPIT_HOST` | Must be `127.0.0.1`, `::1`, or `localhost`. Anything else (including `0.0.0.0`) is a **fatal startup error**. `localhost` is bound as `127.0.0.1`. |
+| `PANTHEON_COCKPIT_TOKEN` | Optional shared secret. When set, every request must carry it in the `x-pantheon-cockpit-token` header. |
+
+The bound URL is written to `.pantheon/logs/hooks.log` at startup
+(`cockpit listening on http://127.0.0.1:4747 ...`).
+
+A port configured while the cockpit is disabled produces a warning and stays
+disabled; it never opens a socket.
+
+### Tunnel from your laptop
+
+The server only accepts loopback connections, so reach it through SSH:
+
+```bash
+ssh -N -L 4747:127.0.0.1:4747 you@vps.example.com
+```
+
+Then, locally:
+
+```bash
+curl -s http://127.0.0.1:4747/healthz
+curl -s http://127.0.0.1:4747/            # reduced snapshot
+curl -s 'http://127.0.0.1:4747/?full=1'   # opt in to bodies/paths/commands
+curl -s -H "x-pantheon-cockpit-token: $TOKEN" http://127.0.0.1:4747/
+```
+
+`GET /` and `GET /snapshot` are aliases. `GET /healthz` returns
+`{ ok, schema, version }`.
+
+### What it serves — and what it does not
+
+The envelope is reduced **from on-disk artifacts only**:
+`ledger/step-ledger.json` (with S1 readiness: waves, ready, unmet, dangling,
+unplaced), the persisted board (`messages.ndjson` / `threads.json`), and the
+package version. It carries `kind: "headless"`, `source: "on-disk"`, and
+`parity: "not-tui-snapshot"` so the difference is machine-checkable.
+
+It does **not** include live child sessions, bus events, per-session cost or
+token counters, session titles, or in-process background jobs. Those require a
+running host and are only available in the TUI. Expect the cockpit to lag the
+live session and to show only what has been persisted.
+
+A corrupt ledger is reported as `stepsCorrupt: true` with an empty `steps`
+array — the same distinction the TUI makes. The cockpit never quarantines or
+rewrites the ledger on a read, so the corrupt bytes remain for inspection.
+
+### Redaction
+
+By default the snapshot omits board message bodies, session ids, ephemeral
+metadata, receipt ids, file lists, and command lines. `?full=1` opts in to
+those fields. Treat `?full=1` as sensitive: board bodies and verification
+commands can contain secrets.
+
+### Threat model
+
+- **Loopback is the boundary.** The cockpit authenticates no user and has no
+  multi-tenant model. Anyone who can reach the loopback port — including any
+  other local user or process on the VPS — can read the snapshot.
+- **SSH is the transport.** The tunnel encrypts the traffic and reuses your SSH
+  identity; do not expose the port through a reverse proxy or a firewall rule.
+- **DNS rebinding is rejected.** The `Host` header must name `127.0.0.1`,
+  `localhost`, or `[::1]` for the bound port; anything else gets `421
+  Misdirected Request` with an empty body.
+- **No write surface.** Only `GET` and `HEAD` are routed; every other method is
+  `405`. There are no CORS headers, so a browser cannot read responses
+  cross-origin.
+- **No caching.** Every response is `Cache-Control: no-store` with
+  `X-Content-Type-Options: nosniff`.
+- **The token is defence-in-depth, not the boundary.** Loopback plus the SSH
+  tunnel is the boundary. The token protects against a local process that can
+  reach the port but does not know the secret; it is compared in constant time
+  against the header value.
+- **Read-only.** The cockpit performs no git operations, no board writes, and
+  no ledger writes, so `push --mirror`-style repository operations are not
+  reachable from it.
+
+An operator on a VPS can inspect persisted step readiness and board summaries
+through the tunnel. They cannot post to the board, mutate the ledger, spawn or
+stop workers, read live cost/token telemetry, or reach the repository.
+
+
 ## Configuration
 
 OpenCode reads `opencode.json` (or `opencode.jsonc`) from the global config
