@@ -759,6 +759,36 @@ Before cutting a release, verify:
 
 ---
 
+## Post-Release Checklist
+
+Run these **after** the `Release` workflow reports success. They verify the
+published result, which no pre-release gate can see.
+
+- [ ] `npm view pantheon-opencode dist-tags` reports `latest` = the released
+      version (stable) or `beta` = the released version (beta).
+- [ ] The GitHub Release body ends with the concept-DOI citation footer
+      (`node scripts/release-body.mjs` appends it; it is never a version DOI).
+- [ ] **Zenodo archived the release under the right version** — once the
+      deposit has appeared (a few seconds to a few minutes):
+
+      ```bash
+      node scripts/verify-zenodo.mjs            # expected = package.json
+      node scripts/verify-zenodo.mjs --json     # machine-readable report
+      ```
+
+      It resolves the concept DOI `10.5281/zenodo.22650136`, prints the record
+      id, version DOI, publication date and archive size, and exits `0` only
+      when the concept's **latest** archived version equals the expected one.
+      Exit `1` means the concept lags (or leads) — a stale `.zenodo.json` at the
+      tag, or a deposit that never happened. Exit `3` is an API/network
+      failure, `4` a malformed payload; neither is a pass.
+
+The same check runs weekly from `.github/workflows/zenodo-verify.yml`, which
+compares the concept's latest archived version against npm's `latest` dist-tag
+and fails the run when an archive has stopped landing.
+
+---
+
 ## Consumption Options
 
 | Method | Best for | How |

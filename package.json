@@ -40,6 +40,7 @@
     "version:apply": "node scripts/versioning.mjs apply",
     "version:check": "node scripts/version-check.mjs",
     "release:dry-run": "node scripts/versioning.mjs status && node scripts/release-notes.mjs && node scripts/package-evidence.mjs",
+    "verify:zenodo": "node scripts/verify-zenodo.mjs",
     "package:evidence": "node scripts/package-evidence.mjs",
     "engine:check": "node scripts/validate-node-engine-policy.mjs",
     "check:generated": "npm run check:roster && npm run check:tui-dist && npm run check:decision-router && npm run check:plugin && node scripts/build-agents-md.mjs --check",
