@@ -462,6 +462,38 @@ status tool is visible, use synchronous `subagent` dispatch or wait for a
 host-provided completion notification; do not claim deterministic fan-in or job
 recovery without an exposed, verified mechanism.
 
+## Headless cockpit (opt-in, loopback only)
+
+A VPS has no terminal sidebar. Set `PANTHEON_COCKPIT=1` (optionally
+`PANTHEON_COCKPIT_PORT`, default `4747`) to start a read-only HTTP surface on
+loopback, then reach it through an SSH tunnel:
+
+```bash
+ssh -N -L 4747:127.0.0.1:4747 you@vps.example.com
+curl -s http://127.0.0.1:4747/healthz
+curl -s http://127.0.0.1:4747/
+```
+
+**This is not the TUI snapshot.** The response is the versioned
+`pantheon.cockpit.v1` envelope (`kind: "headless"`, `parity:
+"not-tui-snapshot"`), reduced from on-disk artifacts only — the step ledger with
+S1 readiness and the persisted board. Live children, bus events, session
+titles, and cost/token counters require a running host and are absent. A
+corrupt ledger surfaces as `stepsCorrupt: true` rather than an empty step list,
+and a GET never quarantines or rewrites it.
+
+The surface is `GET`/`HEAD` only, sends no CORS headers, rejects a non-loopback
+`Host` with `421`, and by default omits all agent-authored free text —
+objectives, cascade reasons, board goals/workstreams and message bodies — plus
+session ids, file lists, and command lines; only lengths of the free text
+remain. `?full=1` returns those fields verbatim. Bind to loopback only; a
+non-loopback `PANTHEON_COCKPIT_HOST` is a fatal startup error.
+`PANTHEON_COCKPIT_TOKEN` optionally requires the `x-pantheon-cockpit-token`
+header (defence-in-depth, not the boundary). `/healthz` exposes a short
+`workspaceId` (basename + short hash, never the absolute path) so a tunnel can
+be checked. Full enable/tunnel/multi-process/threat-model notes are in
+[Platforms](PLATFORMS.md#headless-cockpit-on-a-vps-ssh-tunnel).
+
 ## Unsupported features
 
 The plugin reports these gaps through `getUnsupportedFeatures()` (the seed in

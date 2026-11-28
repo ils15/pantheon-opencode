@@ -105,6 +105,7 @@ import {
 } from './pantheon/bounded-read.ts'
 import { getSharedBus } from './pantheon/bus.ts'
 import { wireCockpitBusRecorder } from './pantheon/cockpit-events.ts'
+import { startCockpitServer } from './pantheon/cockpit-http.ts'
 import { buildCompactionContext } from './pantheon/compaction-context.ts'
 import {
   CONTEXT_PRUNER_CONFIG_KEYS,
@@ -3374,6 +3375,36 @@ export const plugin = define({
     }
 
     const lifecycle = createV2InstanceLifecycle()
+
+    // ─── Phase 0.5: opt-in headless cockpit (S5 / D01) ────────────────
+    // `PANTHEON_COCKPIT=1` is the only switch. Configuration errors (bad port,
+    // non-loopback host) are FATAL and propagate out of setup: an explicitly
+    // enabled cockpit must never bind something else or silently stay down.
+    // Disabled is the default and creates no server object at all.
+    const cockpit = startCockpitServer({
+      workspaceDir: hostLocationDir ?? process.cwd(),
+      log: (line) => {
+        appendV2HookLog(`[cockpit] ${line}`)
+      },
+    })
+    if (cockpit !== null) {
+      void cockpit.ready.catch((error: unknown) => {
+        const detail = error instanceof Error ? error.message : String(error)
+        appendV2HookLog(
+          `[cockpit] failed to bind on ${cockpit.config.host}:${cockpit.config.port}: ${detail}`,
+        )
+        // This failure is asynchronous (EADDRINUSE), so it cannot abort setup.
+        // It must still be visible where the operator launched `opencode`.
+        process.stderr.write(`pantheon: cockpit failed to start: ${detail}\n`)
+      })
+      const stopCockpit = () => {
+        void cockpit.close().catch(() => {
+          /* best-effort: shutdown must never throw */
+        })
+      }
+      activeCleanups.push(stopCockpit)
+      lifecycle.trackCleanup(stopCockpit)
+    }
 
     // ─── Phase 1: V2 Transforms (isolated per-domain, best-effort) ────
     // Each transform registration is individually wrapped and settled via Promise.allSettled:
