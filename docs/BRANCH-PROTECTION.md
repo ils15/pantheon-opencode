@@ -149,6 +149,16 @@ Commitlint is enforced from this point forward on all new commits (local
 `git log -15 --format=%s | npx --no commitlint` will list them as violations;
 that output is expected. New commits must follow Conventional Commits.
 
+**Pull request titles are linted too.** A squash merge makes the PR title the
+subject that lands on `main`, so `commit-lint.yml` runs the same config against
+`github.event.pull_request.title` and re-runs on `edited` — a retitled PR is
+re-linted. The built-in `subject-case` rule has no acronym tolerance (its
+`sentence-case` is only "first character uppercase"), so the repo uses the local
+`acronym-subject-case` rule instead: prose stays lowercase and Title Case / ALL
+CAPS is rejected, while a known acronym (`OIDC`, `API`, `CLI`, … — see
+`DEFAULT_ACRONYMS` in `scripts/commitlint-acronym-subject-case.mjs`) is fine
+anywhere in the subject, including a normal sentence start.
+
 ---
 
 ## Verification
