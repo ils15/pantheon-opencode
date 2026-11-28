@@ -49,6 +49,7 @@ import {
   STEP_LEDGER_LOCK_STALE_MS,
 } from '../scripts/guardrails.mjs'
 import { REQUIRED_HOOKS } from '../scripts/verify-git-hooks.mjs'
+import { provisionCheckout } from './helpers/provisioned-checkout.mjs'
 
 const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const GUARDRAILS_CLI = join(REPO_ROOT, 'scripts', 'guardrails.mjs')
@@ -383,6 +384,43 @@ test('collectGuardrailFindings reports every check id — no check can be silent
     'ignore-rules',
   ]) {
     assert.ok(ids.includes(id), `missing ${id} (got ${ids.join(', ')})`)
+  }
+})
+
+test('doctor exit codes are provisioned, not ambient: 0 alone, 2 when two worktrees share a branch', () => {
+  // The exit-code contract is a claim about the repository doctor inspected, so
+  // the repository is provisioned here. The ambient checkout's worktree list
+  // belongs to every session on this machine: two of them legitimately holding
+  // one branch is a state the guardrail MUST fail, and it must not be the reason
+  // this suite goes red.
+  const checkout = provisionCheckout(REPO_ROOT)
+  try {
+    const alone = runDoctor(['--profile', 'lite', '--target', checkout.root])
+    assert.equal(alone.report.summary.exit_code, 0, JSON.stringify(alone.report.summary))
+    const pass = alone.report.findings.find(
+      (item) => item.check === 'shared-checkout' && item.code === 'guardrail_shared_checkout',
+    )
+    assert.ok(pass, JSON.stringify(alone.report.findings.map((item) => item.code)))
+    assert.equal(pass.category, 'pass', JSON.stringify(pass))
+    assert.match(pass.message, /1 worktree\(s\), one per branch, none dirty/)
+
+    const first = join(checkout.container, 'wt1')
+    const second = join(checkout.container, 'wt2')
+    git(['worktree', 'add', '--quiet', '-b', 'feat/dup', first], checkout.root)
+    git(['worktree', 'add', '--quiet', '--force', second, 'feat/dup'], checkout.root)
+
+    const duplicated = runDoctor(['--profile', 'lite', '--target', checkout.root])
+    assert.equal(duplicated.report.status, 'error')
+    assert.equal(duplicated.report.summary.exit_code, 2, 'two writers on one branch must block')
+    const collision = duplicated.report.findings.find(
+      (item) => item.check === 'shared-checkout' && item.code === 'guardrail_shared_branch',
+    )
+    assert.ok(collision, JSON.stringify(duplicated.report.findings.map((item) => item.code)))
+    assert.equal(collision.category, 'error', JSON.stringify(collision))
+    assert.match(collision.message, /branch "feat\/dup" is checked out in 2 worktrees/)
+  } finally {
+    // The worktrees live inside the container, so removing it removes them too.
+    checkout.cleanup()
   }
 })
 
