@@ -12,6 +12,10 @@
  * Four checks, each one line of PASS/WARN/FAIL with the exact fix:
  *   1. hooks-reachable   — `git rev-parse --git-path hooks` resolves, the dir
  *                          exists, and commit-msg + pre-commit are executable.
+ *                          A configured-but-unusable pointer is a FAIL; a
+ *                          checkout where hooks were never installed (no
+ *                          `core.hooksPath`, no runnable `.git/hooks`) is a
+ *                          WARN — see inspectHookReachability.
  *   2. runtime-locks     — `.git/index.lock`,
  *                          `.pantheon/ledger/.step-ledger.lock` and
  *                          `.pantheon/.ephemeral-merge.lock`: age, owner pid,
@@ -25,7 +29,7 @@
  *
  * `fail` = a real defect (this CLI exits 1; doctor maps it to a blocking error
  * and exits 2). `warn` = advisory (busy-but-alive lock, dirty worktree, ignore
- * rule that is only satisfied per-path).
+ * rule that is only satisfied per-path, hooks that were never installed).
  *
  * Usage:
  *   node scripts/guardrails.mjs [--cwd <dir>] [--json] [--help]
@@ -150,6 +154,22 @@ function formatAge(ms) {
  * `requireConfigured: false` because an unset `core.hooksPath` that still
  * resolves to a real hooks dir containing both hooks IS reachable; the defect
  * this catches is a pointer to a directory that is missing or unusable.
+ *
+ * Three states, and only the middle one is a FAIL:
+ *   pass — git resolves executable commit-msg + pre-commit where it looks.
+ *   fail — `core.hooksPath` IS SET and resolves to a missing, non-directory, or
+ *          non-executable hooks location. That is the shipped v1.0→2.3.4
+ *          pointer-at-a-generated-dir defect: someone configured the wiring and
+ *          it does not work, so every hook is skipped while nothing complains.
+ *   warn — nothing was configured (no `core.hooksPath`, and `.git/hooks` has no
+ *          runnable hooks), so hooks do not run either, but there is no broken
+ *          configuration to report: this is a checkout where hooks were never
+ *          installed (a pristine `git clone`, and every CI checkout running
+ *          `npm ci --ignore-scripts`, which never runs `prepare`). Failing here
+ *          would report an unconfigured clone as a defective repository and
+ *          train readers to ignore the finding; the fix is still named.
+ * "Not configured" and "configured but broken" are different observations and
+ * must not collapse into one status.
  */
 export function inspectHookReachability({ cwd }) {
   const report = inspectGitHooks({ cwd, requireConfigured: false })
@@ -164,9 +184,20 @@ export function inspectHookReachability({ cwd }) {
       fix,
     }
   }
+  const base = { id: 'hooks-reachable', code: 'guardrail_hooks_reachable' }
+  if (!report.hooksPath && report.hooksDir) {
+    return {
+      ...base,
+      status: 'warn',
+      detail:
+        `core.hooksPath is not configured and ${report.hooksDir} provides no required hook ` +
+        `(${report.problems.join('; ')}) — hooks are not installed in this checkout, ` +
+        'which is not a broken hook configuration',
+      fix,
+    }
+  }
   return {
-    id: 'hooks-reachable',
-    code: 'guardrail_hooks_reachable',
+    ...base,
     status: 'fail',
     detail: `git would SKIP every hook: ${report.problems.join('; ')}`,
     fix,

@@ -5,10 +5,12 @@
  * Why the assertions are shaped this way: a check that never ran also produces
  * no failure, so every test below seeds a real defect in a throwaway repo and
  * asserts the SPECIFIC finding (id + status + evidence), never a bare non-zero
- * exit code that an unrelated check could supply. The two doctor-level tests
- * prove the checks are wired into the real entry point — one against this
- * repository (findings must appear and PASS) and one against a repo with the
- * exact v1.0→2.3.4 defect (the finding must appear as a blocking error).
+ * exit code that an unrelated check could supply. The doctor-level tests prove
+ * the checks are wired into the real entry point: a provisioned repo must come
+ * back PASS, a repo with the exact v1.0→2.3.4 defect must come back as a
+ * blocking error, and a repo where hooks were never installed must come back
+ * as a non-blocking warn. None of them assert against the ambient checkout —
+ * see the note above the provisioned-checkout doctor test.
  *
  * Run: node --test tests/guardrails-doctor.test.mjs
  */
@@ -190,6 +192,19 @@ test('unset core.hooksPath is reachable when .git/hooks really provides both hoo
   const result = inspectHookReachability({ cwd: repo })
   assert.equal(result.status, 'pass', JSON.stringify(result))
   assert.match(result.detail, /core\.hooksPath unset/)
+})
+
+test('a checkout that never configured hooks WARNS: unconfigured is not "configured but broken"', () => {
+  // A pristine `git clone` (and every CI checkout — `npm ci --ignore-scripts`
+  // never runs `prepare`) has no `core.hooksPath` and only `*.sample` files in
+  // `.git/hooks`. Hooks do not run there, but nothing was MISconfigured, and
+  // the fix is `npm run hooks:install`, not "repair the pointer".
+  const repo = makeRepo({ hooksPath: null, hooks: [] })
+  const result = inspectHookReachability({ cwd: repo })
+  assert.equal(result.status, 'warn', JSON.stringify(result))
+  assert.match(result.detail, /core\.hooksPath is not configured/)
+  assert.match(result.detail, /not a broken hook configuration/)
+  assert.match(result.fix, /^npm run hooks:install$/)
 })
 
 test('the CLI exits non-zero on a seeded hook defect and zero on the healthy repo', () => {
@@ -403,8 +418,15 @@ function runDoctor(extraArgs) {
   return { child, report }
 }
 
-test('doctor runs the guardrails in this repository and reports them as findings', () => {
-  const { child, report } = runDoctor([])
+// The doctor-level positive path runs against a repo THIS TEST provisions, not
+// against the ambient checkout. `test-suite` installs with
+// `npm ci --ignore-scripts`, so `prepare` never runs, `core.hooksPath` is never
+// set, and the CI clone really would skip every hook — the guardrail is right
+// about that clone. Asserting PASS there encoded a dev-machine assumption and
+// turned an environment fact into a red suite. The contract under test is the
+// guardrail's, so the repo it inspects is provisioned here.
+test('doctor reports the guardrails for a checkout whose hooks are tracked and reachable', () => {
+  const { report } = runDoctor(['--target', makeRepo()])
   const codes = report.findings.map((item) => item.code)
   for (const code of [
     'guardrail_hooks_reachable',
@@ -415,10 +437,37 @@ test('doctor runs the guardrails in this repository and reports them as findings
     assert.ok(codes.includes(code), `doctor must report ${code} (got ${codes.join(', ')})`)
   }
   const hooks = report.findings.find((item) => item.code === 'guardrail_hooks_reachable')
-  assert.equal(hooks.category, 'pass', `this checkout must have reachable hooks: ${hooks.message}`)
-  // Doctor's own contract: exit 0 here means "no blocking error", and a FAIL
-  // finding would have set it to 2 — asserted on the seeded repo below.
-  assert.notEqual(child.status, 2, `doctor must not block on this checkout: ${hooks.message}`)
+  assert.equal(
+    hooks.category,
+    'pass',
+    `hooks tracked in .husky must be reachable: ${hooks.message}`,
+  )
+})
+
+test('doctor WARNS, and does not block, where hooks were never installed', () => {
+  // The pristine-clone condition, provisioned explicitly: no `core.hooksPath`,
+  // no runnable hook in `.git/hooks`. "Not configured" must not be reported as
+  // the shipped "configured but broken" defect — doctor keeps it advisory.
+  const { report } = runDoctor(['--target', makeRepo({ hooksPath: null, hooks: [] })])
+  const hooks = report.findings.find((item) => item.code === 'guardrail_hooks_reachable')
+  assert.ok(hooks, 'the guardrail finding must still be present in doctor --json')
+  assert.equal(hooks.category, 'warn', JSON.stringify(hooks))
+  assert.match(hooks.message, /core\.hooksPath is not configured/)
+  assert.match(hooks.message, /npm run hooks:install/)
+})
+
+// Informational, and deliberately not an assertion about this machine: on a dev
+// checkout `prepare` set `core.hooksPath=.husky` (pass), while a pristine clone
+// or CI checkout has no hooks at all (warn). Both are legitimate environments,
+// so this records the state as a diagnostic and asserts only that the finding
+// is well-formed. The environment-independent contract lives in the two
+// provisioned-repo tests above.
+test('the ambient checkout hook state is reported, not asserted', (t) => {
+  const result = inspectHookReachability({ cwd: REPO_ROOT })
+  t.diagnostic(`${result.code}: ${result.status} — ${result.detail}`)
+  assert.equal(result.code, 'guardrail_hooks_reachable')
+  assert.ok(['pass', 'warn', 'fail'].includes(result.status), result.status)
+  assert.ok(result.fix.length > 0, 'every finding carries the exact fix/verify command')
 })
 
 test('doctor fails on a repo seeded with the hooks defect, naming the finding', () => {
