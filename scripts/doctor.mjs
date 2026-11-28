@@ -41,6 +41,7 @@ import { cleanLegacyOpenCodeConfigs } from '../src/pantheon/legacy-store-migrati
 import { listV2UnsupportedFeatures } from '../src/pantheon/unsupported.mjs'
 import { resolveLocalDecisionBudgetDbPath } from './decision-router-budget.mjs'
 import { inspectDecisionBudget } from './decision-router-budget-gates.mjs'
+import { collectGuardrailFindings, isGitRepo } from './guardrails.mjs'
 import { classifyOverrideFiles } from './install/behavior-overrides.bundle.mjs'
 import { describePluginOptionsReachability } from './install/capabilities.mjs'
 import {
@@ -257,6 +258,7 @@ function showHelp() {
    C. Permission Checks    — frontmatter validation
    D. OpenCode Status      — OpenCode artifact layout
    E. Git Status           — uncommitted changes
+   E.2 Guardrails          — hooks reachable, stale locks, shared checkout, ignore rules
     F. Runtime Layer        — runtime Python + pinned pip dependencies
    H3. Plugin Drift        — registered plugin version vs this package
    H5. TUI Plugin          — copied TUI payload + host registration (fail-closed)
@@ -1253,6 +1255,39 @@ function checkGitStatus(args) {
     if (lines.length > 20) {
       console.log(`    ... and ${lines.length - 20} more`)
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Check G: Executable Guardrails — the preconditions that used to be prose
+// ---------------------------------------------------------------------------
+// Each finding is one line: PASS/WARN/FAIL, the evidence, and the exact command
+// that fixes it (or re-verifies a PASS). `fail` is blocking (exit 2) because
+// every one of these was green-while-broken at least once: a hooks pointer to a
+// generated directory that never existed in a worktree, stale locks nobody
+// could see, two sessions in one checkout, and an unverified ignore rule.
+// The findings themselves come from scripts/guardrails.mjs, which the CLI and
+// tests exercise directly — this function only renders them.
+
+function checkGuardrails(args) {
+  section('E.2 Executable Guardrails')
+
+  if (!isGitRepo(args.target)) {
+    info('Not a git work tree — guardrail checks skipped (nothing here can be skipped silently)')
+    return
+  }
+
+  for (const finding of collectGuardrailFindings({ cwd: args.target })) {
+    const metadata = { code: finding.code, check: finding.id }
+    if (finding.status === 'fail') {
+      error(`${finding.id}: ${finding.detail} — Fix: ${finding.fix}`, metadata)
+      continue
+    }
+    if (finding.status === 'warn') {
+      warn(`${finding.id}: ${finding.detail} — Fix: ${finding.fix}`, metadata)
+      continue
+    }
+    pass(`${finding.id}: ${finding.detail} (verify: ${finding.fix})`, metadata)
   }
 }
 
@@ -3389,6 +3424,7 @@ async function main() {
   checkBehaviorOverrides(args)
   checkSyncStatus(args)
   checkGitStatus(args)
+  checkGuardrails(args)
   checkAgentsMdFreshness(args)
   checkSubagentDepthPlacement(args)
   checkPermissionTaskPresence(args)
