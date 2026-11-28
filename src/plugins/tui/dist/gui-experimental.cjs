@@ -3564,7 +3564,7 @@ const KNOWN_AGENTS = [
 	"iris"
 ];
 function resolveRunningVersion() {
-	return "2.3.4";
+	return "2.4.0";
 }
 const PantheonBridge = _opencode_plugin_gui.Ipc.define({
 	id: "pantheon-opencode.bridge",

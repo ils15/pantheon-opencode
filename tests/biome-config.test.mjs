@@ -37,6 +37,12 @@ const allowedExclusions = [
   '!.opencode',
   '!.pantheon/autocontinue',
   '!.pantheon/board',
+  // Deepwork's runtime scratch tree: PLAN.md and step state are written by the
+  // engine on every run and are gitignored, never hand-edited source. Excluding
+  // the parent keeps `npm run lint` out of that working directory; tracked
+  // `.pantheon/**` files (including code-publish payloads) stay in the surface,
+  // which the second test below pins.
+  '!.pantheon/deepwork',
   '!.pantheon/deepwork/board-signals',
   '!.pantheon/goals',
   '!logs',

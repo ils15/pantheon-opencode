@@ -1,9 +1,9 @@
-<!-- pantheon:cookbook-version v2.3 -->
+<!-- pantheon:cookbook-version v2.4 -->
 # Livro de Receitas do Pantheon: Fluxos Práticos do Dia a Dia
 
 > 🇺🇸 **English version available:** [Read in English](../../guides/cookbook.md)
 
-Este livro de receitas reúne fluxos práticos prontos para copiar e colar no **Pantheon `v2.3.0` (`OpenCode 2.x` nativo)** — cobrindo onboarding Zero-Init, os **8 agentes canônicos** (+ workers efêmeros `spawn_ephemeral`), as **31 ferramentas TypeScript nativas**, os **9 comandos de servidor** e as **5 superfícies interativas de TUI**.
+Este livro de receitas reúne fluxos práticos prontos para copiar e colar no **Pantheon `v2.4.0` (`OpenCode 2.x` nativo)** — cobrindo onboarding Zero-Init, os **8 agentes canônicos** (+ workers efêmeros `spawn_ephemeral`), as **31 ferramentas TypeScript nativas**, os **9 comandos de servidor** e as **5 superfícies interativas de TUI**.
 
 ---
 
@@ -234,6 +234,24 @@ ou diretamente:
   ```bash
   npx pantheon-opencode doctor
   ```
+
+---
+
+## Receita 15: Cockpit HTTP Somente Leitura em Modo Headless (`PANTHEON_COCKPIT=1`)
+
+**Cenário:** Acompanhar a execução em um VPS sem terminal, pelo navegador ou em loop com `curl`, sem conceder nenhum acesso de escrita.
+
+**Comando:**
+```bash
+PANTHEON_COCKPIT=1 PANTHEON_COCKPIT_PORT=4747 opencode
+curl -s http://127.0.0.1:4747/ | head -c 400
+```
+
+**Por que funciona:**
+- Somente opt-in: `PANTHEON_COCKPIT=1` é o único interruptor de ativação — sem ele, ou com qualquer outro valor, a superfície fica desligada.
+- Apenas loopback, apenas `GET`/`HEAD`, e nunca cabeçalhos CORS. Um `PANTHEON_COCKPIT_HOST` não-loopback (incluindo `0.0.0.0`) é erro fatal de inicialização, nunca um bind silencioso.
+- Os payloads são redigidos por padrão: texto livre escrito por agentes é omitido e apenas seu tamanho é exposto. Use `?full=1` para o texto literal.
+- Defina `PANTHEON_COCKPIT_TOKEN` para exigir o cabeçalho `x-pantheon-cockpit-token` em toda requisição; acesse a porta por um túnel SSH em vez de reabri-la.
 
 ---
 
