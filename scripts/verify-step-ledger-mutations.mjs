@@ -118,6 +118,18 @@ const MUTANTS = [
     ],
   },
   {
+    id: 'quarantine-default-flipped',
+    description: 'the writer read path stops quarantining a corrupt ledger by default',
+    expect: 'A2 a corrupt ledger file is moved aside and the mutation fails loudly',
+    edits: [
+      {
+        file: LEDGER,
+        from: 'const quarantineCorrupt = options.quarantine ?? true',
+        to: 'const quarantineCorrupt = options.quarantine ?? false',
+      },
+    ],
+  },
+  {
     id: 'dedupe-removed',
     description: 'normalizeDependencies keeps duplicate declarations',
     expect: 'S1-7 dedupes dependencies',
