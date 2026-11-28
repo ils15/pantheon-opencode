@@ -5,10 +5,24 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { ZENODO_CITATION_FOOTER, ZENODO_CONCEPT_DOI } from '../scripts/zenodo-record.mjs'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const SCRIPT = join(ROOT, 'scripts/release-body.mjs')
 const tempDirs = []
+
+/**
+ * Every composed body ends with the generic citation footer, separated by a
+ * horizontal rule. Version-bearing content never reaches this constant, so a
+ * release body cannot cite a DOI that does not exist yet.
+ */
+function withCitationFooter(body) {
+  return `${String(body).trimEnd()}\n\n---\n\n${ZENODO_CITATION_FOOTER}\n`
+}
+
+function countOccurrences(haystack, needle) {
+  return haystack.split(needle).length - 1
+}
 
 function makeTempDir() {
   const dir = mkdtempSync(join(tmpdir(), 'pantheon-release-body-'))
@@ -41,7 +55,7 @@ describe('scripts/release-body.mjs', () => {
       ref: 'v2.2.0',
     })
 
-    assert.equal(body, "### 🆕 What's New\n\n- **core** — Added widget.\n")
+    assert.equal(body, withCitationFooter("### 🆕 What's New\n\n- **core** — Added widget."))
   })
 
   test('passes through canonical changelog notes for beta channel and recovery mode even if curated page exists', async () => {
@@ -64,7 +78,7 @@ describe('scripts/release-body.mjs', () => {
         repo: 'ils15/pantheon-opencode',
         ref: 'v2.2.0-beta.1',
       }),
-      "### 🆕 What's New\n\n- **beta** — Snapshot.\n",
+      withCitationFooter("### 🆕 What's New\n\n- **beta** — Snapshot."),
     )
 
     assert.equal(
@@ -78,7 +92,7 @@ describe('scripts/release-body.mjs', () => {
         repo: 'ils15/pantheon-opencode',
         ref: 'v2.2.0',
       }),
-      "### 🆕 What's New\n\n- **beta** — Snapshot.\n",
+      withCitationFooter("### 🆕 What's New\n\n- **beta** — Snapshot."),
     )
   })
 
@@ -182,5 +196,79 @@ describe('scripts/release-body.mjs', () => {
       /https:\/\/raw\.githubusercontent\.com\/ils15\/pantheon-opencode\/v2\.2\.0\/docs\/assets\/tui\/home-status\.png/,
     )
     assert.match(written, /\*\*core\*\* — Shipped\./)
+    assert.ok(written.endsWith(`---\n\n${ZENODO_CITATION_FOOTER}\n`))
+  })
+
+  test('appends the citation footer to every composed body shape, exactly once', async () => {
+    const { composeReleaseBody } = await import(SCRIPT)
+    const dir = makeTempDir()
+    const releasesDir = join(dir, 'docs', 'releases')
+    mkdirSync(releasesDir, { recursive: true })
+    writeFileSync(join(releasesDir, 'v2.2.0.md'), '# Curated page\n', 'utf8')
+    writeFileSync(join(releasesDir, 'v2.2.1.md'), '', 'utf8')
+
+    const changelogNotes = "### 🆕 What's New\n\n- **core** — Shipped.\n"
+    const shapes = {
+      'canonical-only (no curated page)': { version: '2.2.2' },
+      'canonical-only (empty curated page)': { version: '2.2.1' },
+      'curated page': { version: '2.2.0' },
+      beta: { version: '2.2.0-beta.1', channel: 'beta' },
+      recovery: { version: '2.2.0', recovery: true },
+    }
+
+    for (const [label, shape] of Object.entries(shapes)) {
+      const body = composeReleaseBody({
+        changelogNotes,
+        repoRoot: dir,
+        releasesDir,
+        repo: 'ils15/pantheon-opencode',
+        ref: 'v2.2.0',
+        ...shape,
+      })
+      assert.equal(
+        countOccurrences(body, ZENODO_CITATION_FOOTER),
+        1,
+        `${label} must carry the footer exactly once`,
+      )
+      assert.ok(
+        body.trimEnd().endsWith(ZENODO_CITATION_FOOTER),
+        `${label} must end with the footer`,
+      )
+      assert.ok(body.includes('- **core** — Shipped.'), `${label} must keep the changelog notes`)
+    }
+  })
+
+  test('cites the concept DOI, never a version DOI', async () => {
+    assert.equal(ZENODO_CONCEPT_DOI, '10.5281/zenodo.22650136')
+    assert.equal(
+      ZENODO_CITATION_FOOTER,
+      'Cite this release via the concept DOI [10.5281/zenodo.22650136](https://doi.org/10.5281/zenodo.22650136).',
+    )
+    // A version DOI (`zenodo.<record id>`) is unknown at build time; the
+    // footer may only ever name the concept recid.
+    assert.doesNotMatch(ZENODO_CITATION_FOOTER, /zenodo\.(?!22650136)\d+/)
+  })
+
+  test('does not duplicate a footer already present in a curated release doc', async () => {
+    const { composeReleaseBody } = await import(SCRIPT)
+    const dir = makeTempDir()
+    const releasesDir = join(dir, 'docs', 'releases')
+    mkdirSync(releasesDir, { recursive: true })
+    writeFileSync(
+      join(releasesDir, 'v2.3.0.md'),
+      `# Curated page\n\n${ZENODO_CITATION_FOOTER}\n`,
+      'utf8',
+    )
+
+    const body = composeReleaseBody({
+      version: '2.3.0',
+      changelogNotes: "### 🆕 What's New\n\n- **core** — Shipped.\n",
+      repoRoot: dir,
+      releasesDir,
+      repo: 'ils15/pantheon-opencode',
+      ref: 'v2.3.0',
+    })
+
+    assert.equal(countOccurrences(body, ZENODO_CITATION_FOOTER), 1)
   })
 })
