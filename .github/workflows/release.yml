@@ -517,6 +517,44 @@ jobs:
           node-version: '26.4.0'
           registry-url: https://registry.npmjs.org
 
+      # Node 26.4.0 bundles npm 11.17.0, whose `lib/commands/dist-tag.js` never
+      # runs the OIDC exchange, so `npm dist-tag add` sends NODE_AUTH_TOKEN
+      # verbatim. Only `lib/commands/publish.js` called `lib/utils/oidc.js`
+      # before 11.21.0, which is why the published release still failed E401 on
+      # a dead ~117-day-old GAT (run 46120900422) even though `publish` itself
+      # succeeded over OIDC.
+      #
+      # Proof — fetched each version's tarball and ran
+      # `grep -n oidc package/lib/commands/dist-tag.js` on the extracted tree:
+      #   11.17.0  (bundled with Node 26.4.0)  0 matches
+      #   11.19.1                             0 matches
+      #   11.20.0                             0 matches
+      #   11.21.0                             6 matches — lines 6 (require),
+      #                                       105 (add), 135 (remove),
+      #                                       169 (list), 210/212 (#oidc)
+      #   11.21.3                             identical file (empty diff)
+      #   12.2.3                              identical file (empty diff)
+      # 11.21.0 is the first published version that carries the exchange; the
+      # 11.21.x line is byte-identical through 11.21.3 and again in 12.2.3.
+      # 11.21.3's engines field is "^20.17.0 || >=22.9.0", satisfied by the
+      # job's Node 26.4.0, and a `--prefix` install on 26.4.0 was exercised:
+      # the installed dist-tag.js greps clean.
+      #
+      # Scoped to this job on purpose: `ci.yml` and local dev keep the npm that
+      # ships with Node, because only the release job needs the OIDC dist-tag.
+      - name: Pin npm for OIDC-capable dist-tag
+        run: |
+          set -euo pipefail
+          npm i -g npm@11.21.3
+          npm --version
+          # Fail here, not on a 403/E401 later, if the installed npm lost the
+          # exchange. This is the same grep the pin was chosen with.
+          NPM_GLOBAL_ROOT="$(npm root -g)"
+          grep -q 'this.#oidc(spec, opts)' "$NPM_GLOBAL_ROOT/npm/lib/commands/dist-tag.js" || {
+            echo "::error::npm $(npm --version) has no OIDC exchange in dist-tag.js; the pinned version is wrong."
+            exit 1
+          }
+
       - name: Check idempotency
         id: idem
         env:
@@ -734,14 +772,36 @@ jobs:
           set -euo pipefail
           TARGET_VER="${VERSION#v}"
           REGISTRY="https://registry.npmjs.org"
-          # Dist-tag writes right after a publish can transiently fail with
-          # E401/E404/E409 while the registry finishes accepting the version.
-          # Retry those only when the version is confirmed present, and let
-          # every other failure surface immediately.
-          retryable_error() {
+          read_dist_tags() {
+            npm view pantheon-opencode dist-tags --json --registry "$REGISTRY"
+          }
+          # Classify one registry failure as "<class> <detail>":
+          #   auth        — deterministic credential/authorization failure
+          #   propagation — the version is not indexed yet (E404 only)
+          #   transient   — 5xx, network timeout, reset
+          #   fatal       — anything unrecognised
+          #
+          # A dist-tag write right after a publish CAN race propagation, and
+          # the registry CAN 5xx or time out; those are worth a bounded retry.
+          # An authentication failure is not: retrying E401 five times only
+          # repeats the same rejection ~20 s later (run 46120900422), so it
+          # fails immediately with its cause and its remedy.
+          failure_class() {
             case "$1" in
-              *E401*|*E404*|*E409*) return 0 ;;
-              *) return 1 ;;
+              *E401*|*ENEEDAUTH*)
+                printf '%s %s' auth 'the registry rejected NPM_TOKEN (E401/ENEEDAUTH): it is missing, expired or revoked. Rotate the NPM_TOKEN repository secret with a fresh automation token, then re-run' ;;
+              *EOTP*|*'one-time password'*|*'one-time pass'*)
+                printf '%s %s' auth 'the token demands a one-time password (EOTP), which cannot be answered unattended. Replace NPM_TOKEN with an automation token that has 2FA bypass enabled' ;;
+              *E403*)
+                printf '%s %s' auth 'NPM_TOKEN is not allowed to write this package (E403). Grant the token read-write publish access to pantheon-opencode, or use an automation token with publish rights' ;;
+              *E404*)
+                printf '%s %s' propagation 'the version is not yet present on the registry' ;;
+              *ETIMEDOUT*|*ESOCKETTIMEDOUT*|*ECONNRESET*|*EAI_AGAIN*|*ENOTFOUND*|*EPIPE*|*'socket hang up'*|*'network timeout'*)
+                printf '%s %s' transient 'the registry connection timed out or reset' ;;
+              *E5[0-9][0-9]*|*'status 5'*|*' 5'[0-9][0-9]*)
+                printf '%s %s' transient 'the registry reported a 5xx error' ;;
+              *)
+                printf '%s %s' fatal 'unclassified registry error' ;;
             esac
           }
           version_present() {
@@ -750,95 +810,95 @@ jobs:
           dist_tag_write() {
             local attempt=1
             local output=''
+            local verdict=''
+            local class=''
+            local detail=''
+            local retry='no'
             while [ "$attempt" -le 5 ]; do
               if output=$("$@" 2>&1); then
                 return 0
               fi
-              if retryable_error "$output" && version_present; then
-                if [ "$attempt" -lt 5 ]; then
-                  echo "npm $* failed with a retryable registry error (attempt ${attempt}/5); retrying in 5s: ${output}" >&2
-                  sleep 5
-                  attempt=$((attempt + 1))
-                  continue
-                fi
+              verdict=$(failure_class "$output")
+              class=${verdict%% *}
+              detail=${verdict#* }
+              retry='no'
+              case "$class" in
+                transient) retry='yes' ;;
+                propagation)
+                  # Retry a 404 only when the version really is on the registry:
+                  # otherwise this is a missing version, not a propagation race.
+                  if version_present; then retry='yes'; fi ;;
+              esac
+              if [ "$retry" = 'yes' ] && [ "$attempt" -lt 5 ]; then
+                echo "npm $* hit a transient registry error (${detail}; attempt ${attempt}/5); retrying in 5s." >&2
+                echo "registry said: ${output}" >&2
+                sleep 5
+                attempt=$((attempt + 1))
+                continue
               fi
-              echo "::error::npm $* failed: ${output}" >&2
+              if [ "$class" = 'auth' ]; then
+                echo "::error::npm $* failed with an authentication error and was not retried — ${detail}" >&2
+              elif [ "$class" = 'propagation' ]; then
+                echo "::error::npm $* failed after ${attempt} attempt(s) — ${detail}. The version resolves, but the tag write is still refused; check the package's publish permissions and re-run." >&2
+              else
+                echo "::error::npm $* failed after ${attempt} attempt(s) — ${detail}" >&2
+              fi
+              echo "registry said: ${output}" >&2
+              echo "::error::dist-tags read immediately after the failure: $(read_dist_tags 2>&1 || true)" >&2
               return 1
             done
             return 1
           }
-          BEFORE_JSON=$(npm view pantheon-opencode dist-tags --json --registry "$REGISTRY")
+          BEFORE_JSON=$(read_dist_tags)
+          # Tags that must end the step pointing at TARGET_VER, in write order.
           ACTIONS=$(BEFORE_JSON="$BEFORE_JSON" TARGET_VER="$TARGET_VER" RELEASE_TAG="$RELEASE_TAG" node <<'NODE'
           const tags = JSON.parse(process.env.BEFORE_JSON || '{}');
           const target = String(process.env.TARGET_VER || '').trim();
           const releaseTag = String(process.env.RELEASE_TAG || 'latest').trim();
-          const parse = (v) => {
-            const m = /^(\d+)\.(\d+)\.(\d+)(?:-(beta|rc)\.(\d+))?$/.exec(String(v || '').trim());
-            if (!m) return null;
-            const rank = m[4] === 'beta' ? 1 : m[4] === 'rc' ? 2 : 3;
-            return { core: [+m[1], +m[2], +m[3]], rank, pre: m[5] ? +m[5] : Number.POSITIVE_INFINITY };
-          };
-          const lt = (a, b) => {
-            const pa = parse(a); const pb = parse(b);
-            if (!pa || !pb) return false;
-            for (let i = 0; i < 3; i++) if (pa.core[i] !== pb.core[i]) return pa.core[i] < pb.core[i];
-            if (pa.rank !== pb.rank) return pa.rank < pb.rank;
-            return pa.pre < pb.pre;
-          };
           const cmds = [];
           if (releaseTag === 'latest') {
-            if (tags.latest !== target) cmds.push(`add latest`);
-            if (tags.beta && lt(tags.beta, target)) cmds.push(`add beta`);
-            if (tags.next && lt(tags.next, target)) cmds.push(`rm next`);
+            // `next` is ADVANCED, never removed: DELETE .../dist-tags/next
+            // answers 403 for this credential class (2FA-bypass GAT
+            // restriction, 2026-07-31) while PUT succeeds. `beta` is advanced
+            // for the same reason it always was — a stale beta must not keep
+            // resolving to an older version after a newer one ships.
+            if (tags.latest !== target) cmds.push('latest');
+            if (tags.beta !== target) cmds.push('beta');
+            if (tags.next !== target) cmds.push('next');
           } else if (releaseTag === 'beta' && tags.beta !== target) {
-            cmds.push(`add beta`);
+            cmds.push('beta');
           }
           process.stdout.write(cmds.join('\n'));
           NODE
           )
-          while IFS= read -r line; do
-            [ -z "$line" ] && continue
-            OP=${line%% *}
-            TAG=${line#* }
-            if [ "$OP" = "add" ]; then
-              dist_tag_write npm dist-tag add "pantheon-opencode@${TARGET_VER}" "$TAG" --registry "$REGISTRY"
-            elif [ "$OP" = "rm" ]; then
-              dist_tag_write npm dist-tag rm pantheon-opencode "$TAG" --registry "$REGISTRY"
-            fi
+          while IFS= read -r TAG; do
+            [ -z "$TAG" ] && continue
+            dist_tag_write npm dist-tag add "pantheon-opencode@${TARGET_VER}" "$TAG" --registry "$REGISTRY"
           done <<< "$ACTIONS"
-          AFTER_JSON=$(npm view pantheon-opencode dist-tags --json --registry "$REGISTRY")
+          AFTER_JSON=$(read_dist_tags)
           AFTER_JSON="$AFTER_JSON" TARGET_VER="$TARGET_VER" RELEASE_TAG="$RELEASE_TAG" node <<'NODE'
           const tags = JSON.parse(process.env.AFTER_JSON || '{}');
           const target = String(process.env.TARGET_VER || '').trim();
           const releaseTag = String(process.env.RELEASE_TAG || 'latest').trim();
-          const parse = (v) => {
-            const m = /^(\d+)\.(\d+)\.(\d+)(?:-(beta|rc)\.(\d+))?$/.exec(String(v || '').trim());
-            if (!m) return null;
-            const rank = m[4] === 'beta' ? 1 : m[4] === 'rc' ? 2 : 3;
-            return { core: [+m[1], +m[2], +m[3]], rank, pre: m[5] ? +m[5] : Number.POSITIVE_INFINITY };
-          };
-          const lt = (a, b) => {
-            const pa = parse(a); const pb = parse(b);
-            if (!pa || !pb) return true;
-            for (let i = 0; i < 3; i++) if (pa.core[i] !== pb.core[i]) return pa.core[i] < pb.core[i];
-            if (pa.rank !== pb.rank) return pa.rank < pb.rank;
-            return pa.pre < pb.pre;
-          };
+          // Exact equality, not an ordering guess. `dist-tag add` returns early
+          // ("is already set") before the PUT when the tag already holds the
+          // target, so a tag that merely compares newer can still be wrong —
+          // and an unparseable tag always compared "not older".
           if (releaseTag === 'latest') {
             if (tags.latest !== target) {
-              console.error(`::error::Expected dist-tags.latest=${target}, got ${tags.latest}`);
+              console.error(`::error::Expected dist-tags.latest=${target}, got ${tags.latest}. Actual dist-tags read: ${JSON.stringify(tags)}`);
               process.exit(1);
             }
-            if (tags.beta && lt(tags.beta, target)) {
-              console.error(`::error::Stale dist-tags.beta=${tags.beta} is older than ${target}`);
+            if (tags.beta !== target) {
+              console.error(`::error::Expected dist-tags.beta=${target}, got ${tags.beta}. Actual dist-tags read: ${JSON.stringify(tags)}`);
               process.exit(1);
             }
-            if (tags.next && lt(tags.next, target)) {
-              console.error(`::error::Stale dist-tags.next=${tags.next} is older than ${target}`);
+            if (tags.next !== target) {
+              console.error(`::error::Expected dist-tags.next=${target}, got ${tags.next}. Actual dist-tags read: ${JSON.stringify(tags)}`);
               process.exit(1);
             }
           } else if (releaseTag === 'beta' && tags.beta !== target) {
-            console.error(`::error::Expected dist-tags.beta=${target}, got ${tags.beta}`);
+            console.error(`::error::Expected dist-tags.beta=${target}, got ${tags.beta}. Actual dist-tags read: ${JSON.stringify(tags)}`);
             process.exit(1);
           }
           console.log('Verified npm dist-tags:', JSON.stringify(tags));

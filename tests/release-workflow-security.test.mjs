@@ -254,12 +254,18 @@ test('dist-tag reconciliation waits for npm registry visibility before mutating 
     reconcileStep,
     /dist_tag_write npm dist-tag add "pantheon-opencode@\$\{TARGET_VER\}"/,
   )
-  assert.match(reconcileStep, /dist_tag_write npm dist-tag rm pantheon-opencode/)
+  // `next` is advanced, never removed: DELETE answers 403 for this credential
+  // class (2FA-bypass GAT restriction) while PUT succeeds.
+  assert.doesNotMatch(reconcileStep, /dist-tag rm/)
   assert.doesNotMatch(reconcileStep, /^\s+npm dist-tag (?:add|rm) /m)
-  assert.match(reconcileStep, /\*E401\*\|\*E404\*\|\*E409\*/)
   assert.match(reconcileStep, /version_present/)
+  assert.match(reconcileStep, /failure_class "\$output"/)
   assert.match(reconcileStep, /while \[ "\$attempt" -le 5 \]/)
   assert.match(reconcileStep, /::error::npm \$\* failed/)
+  // Auth failures are deterministic: the retry gate must never admit them.
+  // (Contract covered behaviourally by tests/release-dist-tag-retry.test.mjs.)
+  assert.doesNotMatch(reconcileStep, /retryable_error/)
+  assert.match(reconcileStep, /not retried/)
 })
 
 test('recovery inputs, hostile refs, and tag objects are rejected', () => {
