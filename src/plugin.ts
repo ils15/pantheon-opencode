@@ -3389,10 +3389,13 @@ export const plugin = define({
     })
     if (cockpit !== null) {
       void cockpit.ready.catch((error: unknown) => {
+        const detail = error instanceof Error ? error.message : String(error)
         appendV2HookLog(
-          `[cockpit] failed to bind on ${cockpit.config.host}:${cockpit.config.port}: ` +
-            (error instanceof Error ? error.message : String(error)),
+          `[cockpit] failed to bind on ${cockpit.config.host}:${cockpit.config.port}: ${detail}`,
         )
+        // This failure is asynchronous (EADDRINUSE), so it cannot abort setup.
+        // It must still be visible where the operator launched `opencode`.
+        process.stderr.write(`pantheon: cockpit failed to start: ${detail}\n`)
       })
       const stopCockpit = () => {
         void cockpit.close().catch(() => {

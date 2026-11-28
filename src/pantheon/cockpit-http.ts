@@ -19,15 +19,18 @@
  *   rebinding defence).
  * - `Cache-Control: no-store` + `X-Content-Type-Options: nosniff` on every
  *   response.
- * - Redaction is the default: board bodies, session ids, cost/token-shaped
- *   fields and command lines are absent unless `?full=1`.
+ * - Redaction is the default: agent-authored free text (objectives, cascade
+ *   reasons, board goals/workstreams and message bodies) is omitted rather
+ *   than scrubbed, together with session ids, cost/token-shaped fields, file
+ *   lists and command lines. Only `?full=1` returns them.
  *
  * @module cockpit-http
  */
 
-import { timingSafeEqual } from 'node:crypto'
+import { createHash, timingSafeEqual } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { basename, resolve } from 'node:path'
 import {
   type BoardMessage,
   type BoardMessageTag,
@@ -95,17 +98,20 @@ export function resolveCockpitConfig(env: CockpitEnv = process.env): CockpitConf
   let port = DEFAULT_COCKPIT_PORT
   if (rawPort !== undefined) {
     // No trim: `' 0 '` is a typo, not a port. Only bare decimal digits pass.
+    // The error names both the received value and the accepted shape: a stray
+    // space or a trailing newline from a `.env` loader must be diagnosable
+    // without reading the plugin log.
     if (!/^[0-9]+$/.test(rawPort)) {
       throw new CockpitConfigError(
         'invalid_port',
-        `PANTHEON_COCKPIT_PORT must be a bare integer between 1 and 65535 (got ${JSON.stringify(rawPort)})`,
+        `PANTHEON_COCKPIT_PORT must be a bare integer between 1 and 65535 with no surrounding whitespace, quotes or trailing newline (got ${JSON.stringify(rawPort)}; expected e.g. "4747")`,
       )
     }
     port = Number(rawPort)
     if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {
       throw new CockpitConfigError(
         'invalid_port',
-        `PANTHEON_COCKPIT_PORT must be between 1 and 65535 (got ${JSON.stringify(rawPort)}); 0 is never an ephemeral port`,
+        `PANTHEON_COCKPIT_PORT must be between 1 and 65535 with no surrounding whitespace (got ${JSON.stringify(rawPort)}; expected e.g. "4747"); 0 is never an ephemeral port`,
       )
     }
   }
@@ -120,6 +126,15 @@ export function resolveCockpitConfig(env: CockpitEnv = process.env): CockpitConf
   }
 
   const token = env.PANTHEON_COCKPIT_TOKEN
+  // A whitespace-only token is a live one-character secret (the space) that an
+  // operator can neither see nor type back reliably. Do not trim it into an
+  // empty "disabled" token: that would hide the mistake. Reject it loudly.
+  if (typeof token === 'string' && token.length > 0 && token.trim() === '') {
+    throw new CockpitConfigError(
+      'invalid_token',
+      `PANTHEON_COCKPIT_TOKEN must be a non-empty secret when set (got ${JSON.stringify(token)}; expected a token with at least one non-whitespace character, or unset it to disable the token check)`,
+    )
+  }
   return {
     enabled: true,
     host: hostValue === '::1' ? '::1' : '127.0.0.1',
@@ -145,13 +160,23 @@ export interface HeadlessCockpitSnapshot {
 
 export interface HeadlessStep {
   readonly stepKey: string
-  readonly objective: string
+  /**
+   * Agent-authored free text. `?full=1` only: default mode carries
+   * `objectiveLength` instead, because free text can carry absolute paths,
+   * command lines and pasted credentials and is not passed through a scrubber.
+   */
+  readonly objective?: string
+  /** Default mode only (also present in full mode): length of the omitted objective. */
+  readonly objectiveLength: number
   readonly agent: string
   readonly state: string
   readonly taskType?: string
   readonly dependsOn: readonly string[]
   readonly blockedBy: readonly string[]
+  /** Agent-authored free text. `?full=1` only. */
   readonly cascadeReason?: string
+  /** Default mode only (also present in full mode): length of the omitted reason. */
+  readonly cascadeReasonLength?: number
   readonly verificationAttempts?: number
   readonly verificationFailures?: number
   readonly verificationExitCode?: number
@@ -173,8 +198,14 @@ export interface HeadlessStep {
 export interface HeadlessBoardThread {
   readonly channel: string
   readonly threadId: string
+  /** Agent-authored free text. `?full=1` only. */
   readonly goal?: string
+  /** Default mode only (also present in full mode). */
+  readonly goalLength?: number
+  /** Agent-authored free text. `?full=1` only. */
   readonly workstream?: string
+  /** Default mode only (also present in full mode). */
+  readonly workstreamLength?: number
   readonly headSeq: number
   readonly messageCount: number
   readonly lastTag?: BoardMessageTag
@@ -191,11 +222,16 @@ export interface HeadlessBoardMessage {
   readonly replyToSeq?: number
   readonly tag?: BoardMessageTag
   readonly stepKey?: string
-  /** Full mode only. */
+  /** Agent-authored free text. Full mode only. */
   readonly goal?: string
+  readonly goalLength?: number
+  /** Agent-authored free text. Full mode only. */
   readonly workstream?: string
+  readonly workstreamLength?: number
   /** Full mode only. */
   readonly body?: string
+  /** Default mode: length of the omitted body. */
+  readonly bodyLength: number
   /** Full mode only. */
   readonly ephemeral?: Record<string, unknown>
 }
@@ -206,8 +242,12 @@ export interface HeadlessBoard {
   readonly channelHeaders: ReadonlyArray<{
     readonly channel: string
     readonly threadId: string
+    /** Agent-authored free text. Full mode only. */
     readonly goal?: string
+    readonly goalLength?: number
+    /** Agent-authored free text. Full mode only. */
     readonly workstream?: string
+    readonly workstreamLength?: number
     readonly updatedAt: number
   }>
   readonly threads: readonly HeadlessBoardThread[]
@@ -231,7 +271,10 @@ function optional<T>(key: string, value: T | undefined): Record<string, T> {
 function reduceStep(entry: StepLedgerEntry, full: boolean): HeadlessStep {
   const base: HeadlessStep = {
     stepKey: entry.stepKey,
-    objective: entry.objective,
+    // Free text is opt-in. Default mode exposes only its length, never the
+    // text: an objective routinely contains a path, a command line or a pasted
+    // token and no scrubber can be proven complete over agent-authored prose.
+    objectiveLength: entry.objective.length,
     agent: entry.agent,
     state: entry.state,
     dependsOn: [...(entry.dependsOn ?? [])],
@@ -241,7 +284,9 @@ function reduceStep(entry: StepLedgerEntry, full: boolean): HeadlessStep {
     updatedAt: entry.updatedAt,
     mutatedFileCount: Array.isArray(entry.mutatedFiles) ? entry.mutatedFiles.length : 0,
     ...optional('taskType', entry.taskType),
-    ...optional('cascadeReason', entry.cascadeReason),
+    ...(entry.cascadeReason === undefined
+      ? {}
+      : { cascadeReasonLength: entry.cascadeReason.length }),
     ...optional('verificationAttempts', entry.verificationAttempts),
     ...optional('verificationFailures', entry.verificationFailures),
     ...optional('verificationExitCode', entry.verificationExitCode),
@@ -249,6 +294,8 @@ function reduceStep(entry: StepLedgerEntry, full: boolean): HeadlessStep {
   if (!full) return base
   return {
     ...base,
+    objective: entry.objective,
+    ...optional('cascadeReason', entry.cascadeReason),
     mutatedFiles: [...(entry.mutatedFiles ?? [])],
     ...optional('receiptId', entry.receiptId),
     ...optional('verificationCommand', entry.verificationCommand),
@@ -270,6 +317,9 @@ function reduceMessage(message: BoardMessage, full: boolean): HeadlessBoardMessa
     threadId: message.threadId,
     from: message.from,
     mentions: [...message.mentions],
+    bodyLength: message.body.length,
+    ...(message.goal === undefined ? {} : { goalLength: message.goal.length }),
+    ...(message.workstream === undefined ? {} : { workstreamLength: message.workstream.length }),
     ...optional('replyToSeq', message.replyToSeq),
     ...optional('tag', message.tag),
     ...optional('stepKey', message.stepKey),
@@ -319,8 +369,11 @@ export function buildHeadlessSnapshot(
     channel: header.channel,
     threadId: header.threadId,
     updatedAt: header.updatedAt,
-    ...optional('goal', header.goal),
-    ...optional('workstream', header.workstream),
+    ...(header.goal === undefined ? {} : { goalLength: header.goal.length }),
+    ...(header.workstream === undefined ? {} : { workstreamLength: header.workstream.length }),
+    ...(full
+      ? { ...optional('goal', header.goal), ...optional('workstream', header.workstream) }
+      : {}),
   }))
 
   return {
@@ -343,8 +396,11 @@ export function buildHeadlessSnapshot(
         headSeq: thread.headSeq,
         messageCount: thread.messageCount,
         updatedAt: thread.updatedAt,
-        ...optional('goal', thread.goal),
-        ...optional('workstream', thread.workstream),
+        ...(thread.goal === undefined ? {} : { goalLength: thread.goal.length }),
+        ...(thread.workstream === undefined ? {} : { workstreamLength: thread.workstream.length }),
+        ...(full
+          ? { ...optional('goal', thread.goal), ...optional('workstream', thread.workstream) }
+          : {}),
         ...optional('lastTag', thread.lastTag),
       })),
       messages: read.messages.map((message) => reduceMessage(message, full)),
@@ -418,11 +474,25 @@ function headerValue(req: IncomingMessage, name: string): string | undefined {
   return undefined
 }
 
+/**
+ * A short, stable identity for the served workspace: its directory basename
+ * plus a hash of the absolute path. It lets an operator confirm that an SSH
+ * tunnel points at the workspace they think, without exposing the absolute
+ * path (which leaks the user name and directory layout).
+ */
+function workspaceIdentity(workspaceDir: string): { name: string; id: string } {
+  const absolute = resolve(workspaceDir)
+  const name = basename(absolute) || 'workspace'
+  const hash = createHash('sha256').update(absolute).digest('hex').slice(0, 8)
+  return { name, id: `${name}-${hash}` }
+}
+
 function createRequestHandler(
   workspaceDir: string,
   config: CockpitConfig,
   log: (line: string) => void,
 ): (req: IncomingMessage, res: ServerResponse) => void {
+  const workspace = workspaceIdentity(workspaceDir)
   return (req, res) => {
     try {
       // 1. The rebinding gate, before anything else and for every method.
@@ -458,7 +528,18 @@ function createRequestHandler(
       }
 
       if (url.pathname === '/healthz') {
-        sendJson(res, 200, { ok: true, schema: COCKPIT_SCHEMA, version: PACKAGE_VERSION }, head)
+        sendJson(
+          res,
+          200,
+          {
+            ok: true,
+            schema: COCKPIT_SCHEMA,
+            version: PACKAGE_VERSION,
+            workspaceId: workspace.id,
+            workspaceName: workspace.name,
+          },
+          head,
+        )
         return
       }
 
@@ -485,6 +566,23 @@ function createRequestHandler(
   }
 }
 
+/** The cockpit could not bind its loopback port (almost always EADDRINUSE). */
+export class CockpitBindError extends Error {
+  readonly code = 'port_in_use'
+  readonly port: number
+
+  constructor(port: number, cause?: unknown) {
+    super(
+      `cannot bind loopback port ${port}: another process already holds it (EADDRINUSE). ` +
+        `Another Pantheon process on this machine most likely owns the port, so an SSH tunnel would serve that process's workspace, not this one. ` +
+        `Set PANTHEON_COCKPIT_PORT to a free port for this process and restart.`,
+      cause === undefined ? undefined : { cause },
+    )
+    this.name = 'CockpitBindError'
+    this.port = port
+  }
+}
+
 export interface CockpitListenInfo {
   readonly host: string
   readonly port: number
@@ -496,8 +594,17 @@ export interface StartCockpitOptions {
   readonly env?: CockpitEnv
   /** `cockpit disabled`, startup warnings and request failures. */
   readonly log?: (line: string) => void
+  /**
+   * Fatal configuration errors are also written here so the operator sees them
+   * on the terminal, not only in `.pantheon/logs/hooks.log`. Defaults to stderr.
+   */
+  readonly stderr?: (line: string) => void
   /** Production hook used to log the bound port; also the test's listener probe. */
   readonly onListening?: (info: CockpitListenInfo) => void
+}
+
+function hasCode(error: unknown, code: string): boolean {
+  return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === code
 }
 
 export interface CockpitHandle {
@@ -519,16 +626,31 @@ export interface CockpitHandle {
 export function startCockpitServer(options: StartCockpitOptions): CockpitHandle | null {
   const env = options.env ?? process.env
   const log = options.log ?? (() => {})
-  const config = resolveCockpitConfig(env)
+  const stderr = options.stderr ?? ((line: string) => void process.stderr.write(`${line}\n`))
+
+  let config: CockpitConfig
+  try {
+    config = resolveCockpitConfig(env)
+  } catch (error) {
+    // D01 keeps this fatal. Make it visible on the operator's terminal as well:
+    // `.pantheon/logs/hooks.log` is not where someone looks after `opencode`
+    // exits immediately.
+    if (error instanceof CockpitConfigError) {
+      stderr(`pantheon: fatal cockpit configuration error [${error.code}]: ${error.message}`)
+    }
+    throw error
+  }
 
   if (!config.enabled) {
+    const reasons: string[] = []
     if (env.PANTHEON_COCKPIT_PORT !== undefined) {
-      log(
-        'cockpit disabled: PANTHEON_COCKPIT_PORT is set but PANTHEON_COCKPIT is not 1; the port is ignored',
-      )
-    } else {
-      log('cockpit disabled')
+      reasons.push('PANTHEON_COCKPIT_PORT is set but ignored while the cockpit is disabled')
     }
+    const rawEnabled = env.PANTHEON_COCKPIT
+    if (rawEnabled !== undefined && rawEnabled.trim() !== '1') {
+      reasons.push(`PANTHEON_COCKPIT=${JSON.stringify(rawEnabled)} is not exactly "1"`)
+    }
+    log(reasons.length === 0 ? 'cockpit disabled' : `cockpit disabled: ${reasons.join('; ')}`)
     return null
   }
 
@@ -542,6 +664,25 @@ export function startCockpitServer(options: StartCockpitOptions): CockpitHandle 
 
   const displayHost = config.host === '::1' ? '[::1]' : config.host
   const ready = new Promise<CockpitListenInfo>((resolve, reject) => {
+    // Persistent listener with a state guard: `once('error')` would be consumed
+    // by the first post-listen error, turning the second one into an uncaught
+    // exception. Pre-listen errors reject `ready`; post-listen errors are logged.
+    let settled = false
+    server.on('error', (error: unknown) => {
+      const described = hasCode(error, 'EADDRINUSE')
+        ? new CockpitBindError(config.port, error)
+        : error
+      if (!settled) {
+        settled = true
+        reject(described)
+        return
+      }
+      log(
+        `cockpit error after listening: ${
+          described instanceof Error ? described.message : String(described)
+        }`,
+      )
+    })
     server.once('listening', () => {
       const address = server.address()
       const port = address !== null && typeof address === 'object' ? address.port : config.port
@@ -550,6 +691,7 @@ export function startCockpitServer(options: StartCockpitOptions): CockpitHandle 
         port,
         url: `http://${displayHost}:${port}`,
       }
+      settled = true
       log(`cockpit listening on ${info.url} (loopback only, GET/HEAD, read-only)`)
       try {
         options.onListening?.(info)
@@ -558,7 +700,6 @@ export function startCockpitServer(options: StartCockpitOptions): CockpitHandle 
       }
       resolve(info)
     })
-    server.once('error', reject)
     server.listen(config.port, config.host)
   })
 
