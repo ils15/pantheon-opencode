@@ -88,19 +88,68 @@ test('skill metadata uses the OpenCode V2 frontmatter contract', () => {
   }
 })
 
+/**
+ * The progressive-disclosure budget: a SKILL.md core may be 120 CONTENT lines.
+ *
+ * Content lines, not newline occurrences. `text.split('\n').length` returns one
+ * more than `wc -l` for every newline-terminated file an editor writes, so the
+ * precedent expression made the effective budget 119 lines and failed a
+ * 120-line core that satisfied the rule. The rule always said 120, and that is
+ * what is measured here; the boundary test below pins both sides, and the
+ * failure message reports the same count the assertion judged.
+ */
+const CORE_BUDGET_LINES = 120
+
+/** Count lines that carry content: a trailing newline terminates, never adds, a line. */
+function countContentLines(text) {
+  if (text === '') return 0
+  return text.replace(/\r?\n$/, '').split('\n').length
+}
+
+/** Assert one core's line budget; returns the measured count so callers can pin it. */
+function assertCoreBudget(id, body) {
+  const lines = countContentLines(body)
+  assert.ok(
+    lines <= CORE_BUDGET_LINES,
+    `${id}/SKILL.md is ${lines} lines — over the ${CORE_BUDGET_LINES}-line core budget; ` +
+      'move depth to references/ and route it',
+  )
+  return lines
+}
+
+/** A synthetic core of `count` content lines, newline-terminated like a real file. */
+function syntheticCore(count) {
+  return `${Array.from({ length: count }, (_, index) => `line ${index + 1}`).join('\n')}\n`
+}
+
 test('SKILL.md cores stay under the progressive-disclosure budget (120 lines)', () => {
-  const BUDGET_LINES = 120
   const ids = readdirSync(SKILLS_DIR, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
   for (const id of ids) {
-    const body = readFileSync(join(SKILLS_DIR, id, 'SKILL.md'), 'utf8')
-    const lines = body.split('\n').length
-    assert.ok(
-      lines <= BUDGET_LINES,
-      `${id}/SKILL.md is ${lines} lines — over the ${BUDGET_LINES}-line core budget; move depth to references/ and route it`,
-    )
+    assertCoreBudget(id, readFileSync(join(SKILLS_DIR, id, 'SKILL.md'), 'utf8'))
   }
+})
+
+test('the budget is 120 CONTENT lines: a trailing newline does not buy a line', () => {
+  // The exact case that exposed the off-by-one: 120 content lines, terminated.
+  assert.equal(assertCoreBudget('synthetic-120', syntheticCore(120)), 120)
+  // CRLF checkouts and foreign editors must measure identically.
+  assert.equal(
+    assertCoreBudget('synthetic-120-crlf', syntheticCore(120).replaceAll('\n', '\r\n')),
+    120,
+  )
+})
+
+test('121 content lines fails, and the message reports 121', () => {
+  assert.throws(
+    () => assertCoreBudget('synthetic-121', syntheticCore(121)),
+    (error) => {
+      assert.match(error.message, /synthetic-121\/SKILL\.md is 121 lines/)
+      assert.match(error.message, /120-line core budget/)
+      return true
+    },
+  )
 })
 
 test('the decision catalog mirrors the skill directory (one entry per skill)', async () => {

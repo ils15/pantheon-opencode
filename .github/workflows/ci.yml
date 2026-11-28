@@ -98,6 +98,32 @@ jobs:
       - name: Validate routing.yml
         run: node scripts/validate-routing.mjs
 
+      # Hook reachability is verified where the defect lives: a LINKED WORKTREE.
+      # `core.hooksPath` is stored in the SHARED .git/config, so every worktree
+      # inherits the pointer, while `git worktree add` materialises only TRACKED
+      # files. A pointer at a generated/untracked hooks dir therefore resolves to
+      # nothing in a worktree and git skips every hook SILENTLY (v1.0 -> 2.3.4).
+      # A run in the primary checkout cannot see that, so this step provisions
+      # hooks exactly as the `prepare` script does (`--apply`), re-verifies them
+      # from inside a throwaway worktree, and then proves DISPATCH with a real
+      # `git commit` (tests/hooks-worktree.test.mjs) — existence alone is not the
+      # claim. Doctor's guardrail section (E.2) re-checks the same invariant.
+      - name: Git hooks reachable and dispatched inside a linked worktree
+        run: |
+          set -euo pipefail
+          node scripts/verify-git-hooks.mjs --apply
+          root="$(mktemp -d "$RUNNER_TEMP/pantheon-hooks-XXXXXX")"
+          worktree="$root/wt"
+          git worktree add --detach "$worktree" HEAD
+          cleanup() {
+            if ! git worktree remove --force "$worktree"; then rm -rf "$worktree"; fi
+            rm -rf "$root"
+            :
+          }
+          trap cleanup EXIT
+          ( cd "$worktree" && node scripts/verify-git-hooks.mjs )
+          node --test tests/hooks-worktree.test.mjs
+
       - name: Doctor checkout runtime
         env:
           # CI deliberately has no repository .venv. Doctor's checkout/lite

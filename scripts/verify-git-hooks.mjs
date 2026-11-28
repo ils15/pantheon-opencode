@@ -52,9 +52,15 @@ function git(args, cwd) {
  * a configuration without mutating the shared `.git/config`) and check that
  * every required hook exists and is executable.
  *
+ * `requireConfigured: false` answers a narrower, still load-bearing question —
+ * "will git find executable hooks here?" — for callers (doctor/guardrails) that
+ * inspect an arbitrary checkout: an unset `core.hooksPath` that resolves to a
+ * real hooks directory containing both hooks IS reachable. The default stays
+ * strict for `npm run hooks:install`, which must point at the tracked dir.
+ *
  * Read-only. Returns `{ ok, hooksDir, hooksPath, problems }`.
  */
-export function inspectGitHooks({ cwd = process.cwd(), hooksPath } = {}) {
+export function inspectGitHooks({ cwd = process.cwd(), hooksPath, requireConfigured = true } = {}) {
   const configured = git(['config', '--get', 'core.hooksPath'], cwd)
   const effective = hooksPath ?? (configured.ok ? configured.out : '')
   const revParse = effective
@@ -68,7 +74,7 @@ export function inspectGitHooks({ cwd = process.cwd(), hooksPath } = {}) {
   }
 
   const hooksDir = resolve(cwd, revParse.out)
-  if (!effective) {
+  if (!effective && requireConfigured) {
     problems.push(`core.hooksPath is not set in ${cwd}; hooks would come from ${hooksDir}`)
   }
   if (!existsSync(hooksDir)) {

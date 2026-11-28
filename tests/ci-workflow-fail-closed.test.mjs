@@ -476,3 +476,37 @@ test('no workflow installs the TUI plugin separately from the root lockfile', ()
     'the TUI dist-freshness build must survive inside check-tui-dist.mjs; it is a build, not an install',
   )
 })
+
+test('CI proves git hook reachability inside a linked worktree, not the primary checkout', () => {
+  // The defect this locks: `core.hooksPath` lives in the shared .git/config, so
+  // a linked worktree inherits it while `git worktree add` materialises only
+  // TRACKED files. A verifier that only runs in the primary checkout therefore
+  // proves nothing about the place the hooks were silently skipped (v1.0 -> 2.3.4).
+  const step = workflow.match(
+    /- name: Git hooks reachable and dispatched inside a linked worktree\n([\s\S]*?)(?=\n {6}- name: )/,
+  )
+  assert.ok(step, 'CI must keep the worktree hook-reachability step')
+  const [block, body] = step
+
+  assert.match(
+    body,
+    /node scripts\/verify-git-hooks\.mjs --apply/,
+    'hooks must be provisioned first',
+  )
+  assert.match(
+    body,
+    /git worktree add --detach "\$worktree" HEAD/,
+    'it must run in a real worktree',
+  )
+  assert.match(
+    body,
+    /\( cd "\$worktree" && node scripts\/verify-git-hooks\.mjs \)/,
+    'the verifier must execute INSIDE the worktree, not from the primary checkout',
+  )
+  assert.match(
+    body,
+    /node --test tests\/hooks-worktree\.test\.mjs/,
+    'existence is not dispatch: a real `git commit` must prove the hook ran',
+  )
+  assert.doesNotMatch(block, /continue-on-error:\s*true/, 'a skipped hook check must fail the job')
+})
