@@ -298,13 +298,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/release-artifact"
-          # Notes come from the committed CHANGELOG.md for BOTH channels. For
-          # stable non-recovery builds with a curated docs/releases/vX.Y.Z.md,
-          # scripts/release-body.mjs composes the visual release page plus the
-          # canonical CHANGELOG ledger into the single artifact release-notes.md.
-          # Recovery extracts the section at the recovery target as well, so a
-          # republished release keeps the canonical body; the static note is
-          # the last resort for tags predating the CHANGELOG section.
+          # Notes come from the committed CHANGELOG.md for BOTH channels, then
+          # ALWAYS flow through scripts/release-body.mjs. That composer already
+          # handles every body shape — curated page, canonical-only (no page),
+          # empty curated page, beta and recovery — so anything it appends
+          # (e.g. the concept-DOI citation footer) is unconditional. Gating the
+          # composer on "stable + a curated docs/releases/vX.Y.Z.md exists" was
+          # what shipped a bare changelog body for releases without a page.
           if [ -n "$RECOVERY_VERSION" ]; then
             if node scripts/changelog-extract.mjs "v$RECOVERY_VERSION" > "$RUNNER_TEMP/release-notes.md" 2>/dev/null && [ -s "$RUNNER_TEMP/release-notes.md" ]; then
               echo "Recovery notes extracted from the CHANGELOG section of v$RECOVERY_VERSION."
@@ -312,19 +312,25 @@ jobs:
               echo "No CHANGELOG section for v$RECOVERY_VERSION — publishing the static recovery note."
               printf '%s\n' "Recovery publish for existing tag $RECOVERY_VERSION." > "$RUNNER_TEMP/release-notes.md"
             fi
+            node scripts/release-body.mjs \
+              --version "$RECOVERY_VERSION" \
+              --channel "$RELEASE_CHANNEL" \
+              --recovery \
+              --changelog-notes "$RUNNER_TEMP/release-notes.md" \
+              --repo "$RELEASE_REPO" \
+              --ref "v$RECOVERY_VERSION" \
+              --out "$RUNNER_TEMP/release-notes.md"
           else
             if ! node scripts/changelog-extract.mjs "$BASE_VERSION" > "$RUNNER_TEMP/release-notes.md"; then
               echo "::error::CHANGELOG.md has no [$BASE_VERSION] section."; exit 1
             fi
-            if [ "$RELEASE_CHANNEL" = "stable" ] && [ -f "docs/releases/v$BASE_VERSION.md" ]; then
-              node scripts/release-body.mjs \
-                --version "$BASE_VERSION" \
-                --channel "$RELEASE_CHANNEL" \
-                --changelog-notes "$RUNNER_TEMP/release-notes.md" \
-                --repo "$RELEASE_REPO" \
-                --ref "v$BASE_VERSION" \
-                --out "$RUNNER_TEMP/release-notes.md"
-            fi
+            node scripts/release-body.mjs \
+              --version "$BASE_VERSION" \
+              --channel "$RELEASE_CHANNEL" \
+              --changelog-notes "$RUNNER_TEMP/release-notes.md" \
+              --repo "$RELEASE_REPO" \
+              --ref "v$BASE_VERSION" \
+              --out "$RUNNER_TEMP/release-notes.md"
           fi
           npm run package:evidence -- --output-dir="$RUNNER_TEMP/release-artifact" --target-sha="$TARGET_SHA" > "$RUNNER_TEMP/package-evidence.json"
           TARBALLS=("$RUNNER_TEMP/release-artifact"/*.tgz)

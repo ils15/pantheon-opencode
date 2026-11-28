@@ -191,12 +191,15 @@ workflow-owned (see below).
 ## Release Notes
 
 Release notes live in the version's `CHANGELOG.md` section and serve as the
-canonical GitHub Release body. For **stable** non-recovery releases, when an
-optional curated release document exists at `docs/releases/v<version>.md`,
-`scripts/release-body.mjs` composes that visual release page (rewriting
-relative image/doc links to immutable tag URLs) followed by the verbatim
-`CHANGELOG.md` section inside a collapsible ledger. Both formats require a
-valid canonical `CHANGELOG.md` section:
+canonical GitHub Release body. **Every** release body flows through
+`scripts/release-body.mjs` (stable, beta and recovery alike). When a curated
+release document exists at `docs/releases/v<version>.md` the composer emits that
+visual release page (rewriting relative image/doc links to immutable tag URLs)
+followed by the verbatim `CHANGELOG.md` section inside a collapsible ledger;
+without one it emits the canonical section alone. The curated page is therefore
+optional — and because the composer is the only path, nothing it appends (such
+as the citation footer) can be skipped by a missing page. Both formats require
+a valid canonical `CHANGELOG.md` section:
 curated `### 🆕 What's New` highlights on top, Keep a Changelog subsections
 below, in fixed order, in **English**:
 
@@ -325,7 +328,10 @@ committed changelog section and does not generate notes itself.
    pulls the curated versioned section into the GitHub Release body for both
    stable (`X.Y.Z`) and beta (`X.Y.Z-beta.N`), and fails if the section is
    missing; recovery extracts the section at the recovery target (the static
-   note is the last resort for tags predating the section).
+   note is the last resort for tags predating the section). Every path then
+   passes that body through `scripts/release-body.mjs`, which owns the
+   per-channel shape (curated page, canonical-only, empty curated page, beta,
+   recovery), so the composer never depends on a curated page existing.
 5. **Publish** — the workflow tags the exact dispatch target SHA and publishes
    to npm (stable or beta per the `release_channel` input).
 
