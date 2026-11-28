@@ -415,10 +415,7 @@ test('doctor exit codes are provisioned, not ambient: 0 alone, 2 when two worktr
     const collision = duplicated.report.findings.find(
       (item) => item.check === 'shared-checkout' && item.code === 'guardrail_shared_branch',
     )
-    assert.ok(
-      collision,
-      JSON.stringify(duplicated.report.findings.map((item) => item.code)),
-    )
+    assert.ok(collision, JSON.stringify(duplicated.report.findings.map((item) => item.code)))
     assert.equal(collision.category, 'error', JSON.stringify(collision))
     assert.match(collision.message, /branch "feat\/dup" is checked out in 2 worktrees/)
   } finally {

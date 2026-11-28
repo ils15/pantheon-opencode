@@ -65,14 +65,7 @@ export function provisionCheckout(source, { hooksPath = '.husky' } = {}) {
 
   const git = (args) => execFileSync('git', args, { cwd: root, stdio: 'pipe' })
   git(['init', '--quiet'])
-  git([
-    '-c',
-    'user.email=pantheon-test@pantheon.dev',
-    '-c',
-    'user.name=Pantheon Test',
-    'add',
-    '-A',
-  ])
+  git(['-c', 'user.email=pantheon-test@pantheon.dev', '-c', 'user.name=Pantheon Test', 'add', '-A'])
   git([
     '-c',
     'user.email=pantheon-test@pantheon.dev',
