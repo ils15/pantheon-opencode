@@ -12,7 +12,9 @@
  */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
@@ -252,6 +254,277 @@ test('the merge is direct squash, bound to the tested SHA, never --auto', () => 
     withoutComments,
     /--auto\b/,
     '`--auto` waits for nothing when no required checks exist; the CI conclusion is the gate',
+  )
+})
+
+/**
+ * The shell program of a step, dedented from its `run: |` block.
+ *
+ * `runBlock` above returns the raw YAML slice (handy for `strip`-free regexes);
+ * this one returns something a shell can actually execute.
+ */
+function shellProgram(stepText) {
+  const lines = stepText.split('\n')
+  const start = lines.findIndex((line) => /^\s*run:\s*\|/.test(line))
+  assert.notEqual(start, -1, 'the step must have a `run: |` block')
+  const indent = lines[start].match(/^(\s*)/)[1].length + 2
+  const body = []
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const line = lines[index]
+    if (line.trim() === '') {
+      body.push('')
+      continue
+    }
+    if (line.match(/^(\s*)/)[1].length < indent) break
+    body.push(line.slice(indent))
+  }
+  return body.join('\n')
+}
+
+/** All 6-space `- name:` steps in a job section, with their text. */
+function jobSteps(jobText) {
+  const steps = []
+  const lines = jobText.split('\n')
+  let current = null
+  for (const line of lines) {
+    if (/^ {6}- name: /.test(line)) {
+      current = { name: line.replace(/^ {6}- name: /, '').trim(), text: `${line}\n` }
+      steps.push(current)
+      continue
+    }
+    if (current) current.text += `${line}\n`
+  }
+  return steps
+}
+
+const ELIGIBILITY_GATE = "if: steps.eligibility.outputs.eligible == 'true'"
+
+test('every merge-capable step is gated on the eligibility output', () => {
+  const job = jobSection('auto-merge')
+  const steps = jobSteps(job)
+  assert.ok(steps.length >= 4, `expected the merge job's steps, found ${steps.length}`)
+
+  // Anti-vacuity: the predicate must actually match something, or "every
+  // merge-capable step is gated" would hold because there are no such steps.
+  const mergeCapable = (step) =>
+    /\bgh pr merge\b/.test(step.text) ||
+    /\bgh pr (?:close|reopen|edit|ready)\b/.test(step.text) ||
+    /\bgh (?:api|api graphql)\b[^\n]*(?:-X|--method)\s*(?:PUT|PATCH|POST|DELETE)\b/.test(step.text)
+
+  const capable = steps.filter(mergeCapable)
+  assert.deepEqual(
+    capable.map((step) => step.name),
+    ['Merge (squash, delete branch)'],
+    'the merge-capable step set changed; re-derive the gate list deliberately',
+  )
+
+  // The three steps that either decide the merge or perform it. A merge step
+  // that runs with `eligible` unset/empty would merge a disqualified PR, which
+  // is strictly worse than the failure this fix removes.
+  const mustBeGated = [
+    'Require an owner-authored, non-draft PR at the tested SHA',
+    'Require MERGEABLE/CLEAN',
+    'Require required checks to be SUCCESS, not skipped',
+    'Merge (squash, delete branch)',
+  ]
+  const gated = steps.filter((step) => step.text.includes(ELIGIBILITY_GATE))
+
+  const ungated = mustBeGated
+    .filter((name) => name !== 'Require an owner-authored, non-draft PR at the tested SHA')
+    .map((name) => steps.find((step) => step.name === name))
+    .filter((step) => !step?.text.includes(ELIGIBILITY_GATE))
+    .map((step) => step?.name ?? '<missing step>')
+
+  assert.deepEqual(
+    ungated,
+    [],
+    `these steps can merge without an eligible=true: ${ungated.join(', ')}`,
+  )
+
+  assert.ok(
+    gated.length >= 3,
+    `${gated.length} step(s) carry "${ELIGIBILITY_GATE}" (${gated
+      .map((step) => step.name)
+      .join(', ')}) — no merge may run ungated`,
+  )
+
+  // The fix must not weaken the merge binding it was layered onto.
+  const merge = steps.find((step) => step.name === 'Merge (squash, delete branch)')
+  assert.match(
+    merge.text,
+    /--match-head-commit "\$HEAD_SHA"/,
+    'the merge must still refuse a head that moved after the checks read (TOCTOU)',
+  )
+  assert.match(
+    shellProgram(merge.text),
+    /^set -euo pipefail$/m,
+    'the merge step must keep set -euo pipefail',
+  )
+  assert.match(merge.text, /--squash/, 'the merge must stay a squash merge')
+  assert.match(merge.text, /--delete-branch/, 'the merged branch must still be deleted')
+})
+
+test('a policy refusal yields eligible=false and a green step, not a failure', () => {
+  const eligibility = stepSection(
+    jobSection('auto-merge'),
+    'Require an owner-authored, non-draft PR at the tested SHA',
+  )
+  const program = shellProgram(eligibility)
+
+  assert.match(
+    eligibility,
+    /^ {8}id: eligibility$/m,
+    'the refusal step must publish outputs under id "eligibility"',
+  )
+  assert.match(program, /^set -euo pipefail$/m, 'set -e is what keeps real API failures red')
+
+  // The refusal helper: notice + `eligible=false` + `exit 0`. Anchored on the
+  // function body so a stray `echo` elsewhere cannot satisfy it.
+  const refuse = program.match(/\n\s*refuse\(\) \{\n([\s\S]*?)\n\s*\}\n/)
+  assert.ok(refuse, 'the eligibility step must define a refuse() helper')
+  assert.match(
+    refuse[1],
+    /echo "eligible=false" >> "\$GITHUB_OUTPUT"/,
+    'a refusal must record eligible=false',
+  )
+  assert.match(refuse[1], /^\s*exit 0$/m, 'a refusal must exit 0: ineligible is not a CI failure')
+  assert.doesNotMatch(refuse[1], /exit 1/, 'a policy refusal must never fail the run')
+
+  const around = program
+    .split('\n')
+    .filter((line) => !/^\s*#/.test(line))
+    .filter((line) => /GITHUB_OUTPUT/.test(line))
+  assert.deepEqual(
+    around.map((line) => line.trim()),
+    ['echo "eligible=false" >> "$GITHUB_OUTPUT"', 'echo "eligible=true" >> "$GITHUB_OUTPUT"'],
+    'the step must write exactly one of the two eligibility values, never both',
+  )
+})
+
+test('the eligibility step decides by policy, and a real API failure stays fatal', {
+  skip: skipWithoutJq,
+}, () => {
+  const program = shellProgram(
+    stepSection(
+      jobSection('auto-merge'),
+      'Require an owner-authored, non-draft PR at the tested SHA',
+    ),
+  )
+
+  const owner = 'ils15'
+  const repo = 'ils15/pantheon'
+  const headSha = '3d6df3ee'
+
+  /**
+   * Run the real shell program with a stubbed `gh`. `gh pr view` prints the
+   * JSON the script parses with jq; `gh api … --jq .base.repo.full_name` prints
+   * the already-filtered value. `fail` makes every call exit 1, which is what a
+   * transport/API error looks like to `set -e`.
+   */
+  const run = ({ author, headRepoOwner, base, baseRef, draft, head, fail }) => {
+    const dir = mkdtempSync(join(tmpdir(), 'auto-merge-eligibility-'))
+    try {
+      const outputPath = join(dir, 'github_output')
+      writeFileSync(outputPath, '')
+      const prJson = JSON.stringify({
+        author: { login: author },
+        headRepositoryOwner: { login: headRepoOwner },
+        baseRefName: baseRef,
+        headRefOid: head,
+        isDraft: draft,
+      })
+      writeFileSync(join(dir, 'pr.json'), prJson)
+      writeFileSync(join(dir, 'base.txt'), `${base}\n`)
+
+      const gh = join(dir, 'gh')
+      writeFileSync(
+        gh,
+        [
+          '#!/bin/sh',
+          'if [ "$FAKE_GH_FAIL" = 1 ]; then',
+          '  echo gh-http-502 >&2',
+          '  exit 1',
+          'fi',
+          'case "$1 $2" in',
+          '  "pr view") cat "$FAKE_GH_PR_JSON" ;;',
+          '  "api repos/"*) cat "$FAKE_GH_BASE" ;;',
+          '  *) echo "unexpected gh call: $*" >&2; exit 1 ;;',
+          'esac',
+          '',
+        ].join('\n'),
+        { mode: 0o755 },
+      )
+
+      const scriptPath = join(dir, 'program.sh')
+      writeFileSync(scriptPath, program)
+      // The runner's steps execute under bash (`set -o pipefail` is bash-only).
+      const result = spawnSync('bash', [scriptPath], {
+        encoding: 'utf8',
+        env: {
+          PATH: `${dir}:${process.env.PATH}`,
+          FAKE_GH_FAIL: fail ? '1' : '0',
+          FAKE_GH_PR_JSON: join(dir, 'pr.json'),
+          FAKE_GH_BASE: join(dir, 'base.txt'),
+          GITHUB_OUTPUT: outputPath,
+          GITHUB_REPOSITORY: repo,
+          GITHUB_REPOSITORY_OWNER: owner,
+          PR_NUMBER: '453',
+          HEAD_SHA: headSha,
+        },
+      })
+      return { ...result, output: readFileSync(outputPath, 'utf8') }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  const eligible = {
+    author: owner,
+    headRepoOwner: owner,
+    base: repo,
+    baseRef: 'main',
+    draft: false,
+    head: headSha,
+    fail: false,
+  }
+
+  const refusals = [
+    ['dependabot author (run 46095839568)', { author: 'app/dependabot' }],
+    ['fork head', { headRepoOwner: 'someone-else' }],
+    ['wrong base repository', { base: 'other/repo' }],
+    ['non-main base branch', { baseRef: 'next' }],
+    ['draft PR', { draft: true }],
+    ['head moved past the CI run', { head: 'abc12345' }],
+  ]
+  for (const [label, override] of refusals) {
+    const result = run({ ...eligible, ...override })
+    assert.equal(result.status, 0, `${label} must exit 0 (got ${result.status}): ${result.stderr}`)
+    assert.match(
+      result.output,
+      /^eligible=false$/m,
+      `${label} must publish eligible=false so the merge steps skip`,
+    )
+    assert.doesNotMatch(result.output, /^eligible=true$/m, `${label} must not be eligible`)
+    assert.match(
+      result.stdout,
+      /::notice::.*not eligible for auto-merge/,
+      `${label} needs a notice`,
+    )
+  }
+
+  const ok = run(eligible)
+  assert.equal(ok.status, 0, ok.stderr)
+  assert.match(ok.output, /^eligible=true$/m, 'an owner PR at the tested SHA must be eligible')
+
+  // The no-regression case: a real gh failure is NOT a policy refusal. `set -e`
+  // must abort before any refusal writes, or an outage would silently look like
+  // "nothing to merge".
+  const broken = run({ ...eligible, fail: true })
+  assert.notEqual(broken.status, 0, 'a transport/API failure must fail the step')
+  assert.doesNotMatch(
+    broken.output,
+    /eligible=(?:true|false)/,
+    'an API failure must not publish an eligibility verdict — that would mask a real failure',
   )
 })
 
