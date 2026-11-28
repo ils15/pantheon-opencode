@@ -197,9 +197,44 @@ test('beta gate trusts the committed X.Y.Z-beta.N and notes come from the change
   assert.match(validate, /Expected a committed X\.Y\.Z-beta\.N version/)
   // Both channels extract release notes from the committed CHANGELOG section.
   assert.match(validate, /node scripts\/changelog-extract\.mjs "\$BASE_VERSION"/)
-  // Stable releases with a curated docs/releases/vX.Y.Z.md compose via release-body.mjs.
-  assert.match(validate, /node scripts\/release-body\.mjs/)
-  assert.match(validate, /"\$RELEASE_CHANNEL" = "stable"/)
+})
+
+test('release-body.mjs is the only body path, so the citation footer is unconditional', () => {
+  // Incident: the composer was gated on `stable` AND an existing
+  // docs/releases/vX.Y.Z.md, so a release without a curated page shipped a bare
+  // changelog body — no citation footer. 2.4.0 shipped exactly that before its
+  // page was written. The composer already handles every shape (curated page,
+  // canonical-only, empty curated page, beta, recovery), so the gate was the
+  // defect and the step now always composes.
+  const start = validate.indexOf('Create release artifact and notes')
+  assert.ok(start >= 0, 'the validate job must keep the "Create release artifact and notes" step')
+  const rest = validate.slice(start)
+  const next = rest.slice(1).search(/^ {6}- name: /m)
+  const notesStep = next === -1 ? rest : rest.slice(0, next + 1)
+  assert.ok(notesStep.trim().length > 0, 'the notes step must not be empty')
+
+  const invocations = [...notesStep.matchAll(/node scripts\/release-body\.mjs/g)]
+  // One for recovery, one for the regular path: every shape composes.
+  assert.equal(invocations.length, 2, 'both the recovery and regular paths must compose the body')
+  assert.equal((notesStep.match(/--channel "\$RELEASE_CHANNEL"/g) ?? []).length, 2)
+  assert.match(notesStep, /--recovery/)
+  assert.match(notesStep, /node scripts\/changelog-extract\.mjs/)
+
+  // No curated-page gate and no stable-only channel gate around the composer.
+  assert.doesNotMatch(notesStep, /-f "docs\/releases/)
+  assert.doesNotMatch(notesStep, /"\$RELEASE_CHANNEL" = "stable"/)
+  // The recovery branch must reach the composer too; anchor the branch split on
+  // the 10-space `else` line so an inner `else` cannot truncate the block.
+  const recoveryStart = notesStep.indexOf('if [ -n "$RECOVERY_VERSION" ]; then')
+  assert.ok(recoveryStart >= 0, 'the notes step must keep the recovery branch')
+  const recoveryElse = notesStep.slice(recoveryStart).search(/^ {10}else$/m)
+  assert.ok(recoveryElse >= 0, 'the recovery branch must still have an else')
+  const recoveryBlock = notesStep.slice(recoveryStart, recoveryStart + recoveryElse)
+  const regularBlock = notesStep.slice(recoveryStart + recoveryElse)
+  assert.match(recoveryBlock, /node scripts\/release-body\.mjs/)
+  assert.match(recoveryBlock, /--recovery/)
+  assert.match(regularBlock, /node scripts\/release-body\.mjs/)
+  assert.match(regularBlock, /--channel "\$RELEASE_CHANNEL"/)
 })
 
 test('tag and release provenance remains bound to TARGET_SHA', () => {

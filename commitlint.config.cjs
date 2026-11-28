@@ -1,10 +1,22 @@
+const { acronymSubjectCase } = require('./scripts/commitlint-acronym-subject-case.mjs')
+
 module.exports = {
   extends: ['@commitlint/config-conventional'],
+  // Local rule `acronym-subject-case` (see scripts/commitlint-acronym-subject-case.mjs).
+  // The acronym allowlist is that module's DEFAULT_ACRONYMS. commitlint only
+  // accepts a plugin as a package name, so the object form is used instead.
+  plugins: [{ rules: { 'acronym-subject-case': acronymSubjectCase } }],
   ignores: [
     (message) => message.startsWith('Changes before error encountered'),
     (message) => message.startsWith('Potential fix for pull request finding'),
   ],
   rules: {
+    // The built-in `subject-case` has no acronym tolerance: its `sentence-case`
+    // is only `upperFirst(subject)`, so `OIDC-capable dist-tag writes` fails.
+    // It is replaced by the acronym-aware plugin rule below, which still
+    // rejects Title Case and ALL CAPS.
+    'subject-case': [0],
+    'acronym-subject-case': [2, 'always'],
     'type-enum': [
       2,
       'always',
