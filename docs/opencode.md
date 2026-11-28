@@ -483,15 +483,18 @@ corrupt ledger surfaces as `stepsCorrupt: true` rather than an empty step list,
 and a GET never quarantines or rewrites it.
 
 The surface is `GET`/`HEAD` only, sends no CORS headers, rejects a non-loopback
-`Host` with `421`, and redacts board bodies, session ids, file lists, and
-command lines unless `?full=1`. Bind to loopback only; a non-loopback
-`PANTHEON_COCKPIT_HOST` is a fatal startup error. `PANTHEON_COCKPIT_TOKEN`
-optionally requires the `x-pantheon-cockpit-token` header (defence-in-depth,
-not the boundary). Full enable/tunnel/threat-model notes are in
+`Host` with `421`, and by default omits all agent-authored free text —
+objectives, cascade reasons, board goals/workstreams and message bodies — plus
+session ids, file lists, and command lines; only lengths of the free text
+remain. `?full=1` returns those fields verbatim. Bind to loopback only; a
+non-loopback `PANTHEON_COCKPIT_HOST` is a fatal startup error.
+`PANTHEON_COCKPIT_TOKEN` optionally requires the `x-pantheon-cockpit-token`
+header (defence-in-depth, not the boundary). `/healthz` exposes a short
+`workspaceId` (basename + short hash, never the absolute path) so a tunnel can
+be checked. Full enable/tunnel/multi-process/threat-model notes are in
 [Platforms](PLATFORMS.md#headless-cockpit-on-a-vps-ssh-tunnel).
 
 ## Unsupported features
-
 
 The plugin reports these gaps through `getUnsupportedFeatures()` (the seed in
 `src/pantheon/unsupported.mjs`):

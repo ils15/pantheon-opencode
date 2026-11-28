@@ -56,15 +56,20 @@ PANTHEON_COCKPIT=1 PANTHEON_COCKPIT_PORT=4747 opencode
 
 | Variable | Contract |
 |---|---|
-| `PANTHEON_COCKPIT_PORT` | Integer `1..65535`, default `4747`. `0`, negative, `>65535`, non-numeric, or whitespace-padded (`' 0 '`) is a **fatal startup error** — never an ephemeral port, never a silent disable. |
+| `PANTHEON_COCKPIT_PORT` | Integer `1..65535`, default `4747`. `0`, negative, `>65535`, non-numeric, or whitespace-padded (`' 0 '`, `'4747\n'`) is a **fatal startup error** — never an ephemeral port, never a silent disable. The error names the received value and the expected `"4747"` form. |
 | `PANTHEON_COCKPIT_HOST` | Must be `127.0.0.1`, `::1`, or `localhost`. Anything else (including `0.0.0.0`) is a **fatal startup error**. `localhost` is bound as `127.0.0.1`. |
-| `PANTHEON_COCKPIT_TOKEN` | Optional shared secret. When set, every request must carry it in the `x-pantheon-cockpit-token` header. |
+| `PANTHEON_COCKPIT_TOKEN` | Optional shared secret. When set, every request must carry it in the `x-pantheon-cockpit-token` header. A whitespace-only value (`' '`, `'\n'`) is a **fatal startup error**: it is a live one-character secret, and trimming it would hide the mistake. |
 
-The bound URL is written to `.pantheon/logs/hooks.log` at startup
+Only `PANTHEON_COCKPIT=1` enables the cockpit. Any other value — `0`, `01`,
+`TRUE`, `true` — disables it and logs a single `cockpit disabled: …` line
+naming the rejected value; a configured port is reported as ignored. A port
+configured while disabled never opens a socket.
+
+A fatal configuration error aborts plugin setup (D01 keeps it fatal) **and is
+printed on the operator's terminal** as
+`pantheon: fatal cockpit configuration error [<code>]: <detail>`, in addition
+to `.pantheon/logs/hooks.log`. The bound URL is written to that log at startup
 (`cockpit listening on http://127.0.0.1:4747 ...`).
-
-A port configured while the cockpit is disabled produces a warning and stays
-disabled; it never opens a socket.
 
 ### Tunnel from your laptop
 
@@ -84,7 +89,34 @@ curl -s -H "x-pantheon-cockpit-token: $TOKEN" http://127.0.0.1:4747/
 ```
 
 `GET /` and `GET /snapshot` are aliases. `GET /healthz` returns
-`{ ok, schema, version }`.
+`{ ok, schema, version, workspaceId, workspaceName }`. `workspaceId` is the
+served workspace directory's basename plus a short hash of its absolute path
+(for example `my-project-1a2b3c4d`); the absolute path is never exposed. The
+same directory always yields the same id, so an operator can confirm that a
+tunnel points at the workspace they think.
+
+### More than one Pantheon process on the same VPS
+
+The cockpit binds one loopback port. Two `opencode` processes cannot share it:
+the second fails with `EADDRINUSE` and serves nothing, while an SSH tunnel to
+the fixed port still reaches the **first** process's workspace. Give each
+process its own port and tunnel each port separately:
+
+```bash
+# project A
+PANTHEON_COCKPIT=1 PANTHEON_COCKPIT_PORT=4747 opencode
+# project B
+PANTHEON_COCKPIT=1 PANTHEON_COCKPIT_PORT=4748 opencode
+
+ssh -N -L 4747:127.0.0.1:4747 you@vps.example.com   # terminal for A
+ssh -N -L 4748:127.0.0.1:4748 you@vps.example.com   # terminal for B
+```
+
+A bind failure names the port, says another Pantheon process most likely owns
+it, and tells you to set `PANTHEON_COCKPIT_PORT` to a free port. It is written
+to the plugin log and to stderr. It never reuses or proxies the other process's
+listener. Confirm which workspace a tunnel reaches with `GET /healthz` and its
+`workspaceId`.
 
 ### What it serves — and what it does not
 
@@ -105,10 +137,32 @@ rewrites the ledger on a read, so the corrupt bytes remain for inspection.
 
 ### Redaction
 
-By default the snapshot omits board message bodies, session ids, ephemeral
-metadata, receipt ids, file lists, and command lines. `?full=1` opts in to
-those fields. Treat `?full=1` as sensitive: board bodies and verification
-commands can contain secrets.
+Default mode (`GET /` or `GET /snapshot`) does not "filter" free text — it
+**omits it entirely** and leaves only a length:
+
+| Removed by default | Replaced by |
+|---|---|
+| `steps[].objective` | `steps[].objectiveLength` |
+| `steps[].cascadeReason` | `steps[].cascadeReasonLength` |
+| board `goal` (threads, channel headers, messages) | `goalLength` |
+| board `workstream` (threads, channel headers, messages) | `workstreamLength` |
+| board message `body` | `bodyLength` |
+| `mutatedFiles`, `verificationCommand`, `reproductionCommand`, `receiptId`, `baselineTree`, `baselineRef`, `ephemeral`, `sessionID`, cost/token counters | omitted |
+| board message `ephemeral` | omitted |
+
+Free text is **omitted, not scrubbed**. Agent-written objectives, cascade
+reasons, goals, workstreams and message bodies are unbounded channels: they
+routinely contain absolute paths, complete command lines and pasted
+credentials (`sk-live-…`, `--token=…`), and no pattern-based scrubber can be
+proven complete over arbitrary prose. Default mode therefore carries none of
+that text; a length cannot be turned back into a path or a secret. Structured
+identifiers (step keys, agent names, state, dependency keys, counts, tags and
+timestamps) remain because they are the operator signal and are not
+agent-authored prose.
+
+`?full=1` returns every one of those fields verbatim. Treat it as sensitive:
+objectives, cascade reasons, board bodies and verification commands can all
+contain secrets.
 
 ### Threat model
 
@@ -120,9 +174,10 @@ commands can contain secrets.
 - **DNS rebinding is rejected.** The `Host` header must name `127.0.0.1`,
   `localhost`, or `[::1]` for the bound port; anything else gets `421
   Misdirected Request` with an empty body.
-- **No write surface.** Only `GET` and `HEAD` are routed; every other method is
-  `405`. There are no CORS headers, so a browser cannot read responses
-  cross-origin.
+- **No write surface.** Only `GET` and `HEAD` are routed; every other *routed*
+  method is `405`. A `CONNECT` never reaches the handler — Node's HTTP parser
+  closes the socket before routing — so it is a closed connection, not a `405`.
+  There are no CORS headers, so a browser cannot read responses cross-origin.
 - **No caching.** Every response is `Cache-Control: no-store` with
   `X-Content-Type-Options: nosniff`.
 - **The token is defence-in-depth, not the boundary.** Loopback plus the SSH
