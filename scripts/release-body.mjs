@@ -11,6 +11,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { ZENODO_CITATION_FOOTER } from './zenodo-record.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const DEFAULT_RELEASES_DIR = join(ROOT, 'docs', 'releases')
@@ -96,6 +97,21 @@ export function rewriteReleaseDocUrls(markdown, { sourceDir, repoRoot, repo, ref
 }
 
 /**
+ * Append the one generic citation footer every release body carries.
+ *
+ * The footer names the **concept** DOI only: a version DOI is minted by Zenodo
+ * *after* the deposit, so any version DOI written at build time is wrong the
+ * moment the next release archives. A curated release doc may already carry the
+ * same footer, so an existing occurrence is never duplicated.
+ */
+export function withCitationFooter(body) {
+  const trimmed = String(body ?? '').trimEnd()
+  if (!trimmed) return `${ZENODO_CITATION_FOOTER}\n`
+  if (trimmed.includes(ZENODO_CITATION_FOOTER)) return `${trimmed}\n`
+  return `${trimmed}\n\n---\n\n${ZENODO_CITATION_FOOTER}\n`
+}
+
+/**
  * Compose the GitHub Release body.
  *
  * Only non-recovery stable releases with an existing `docs/releases/vX.Y.Z.md`
@@ -117,12 +133,12 @@ export function composeReleaseBody({
     .replace(/^v/i, '')
   const canonical = `${String(changelogNotes ?? '').trim()}\n`
   if (!normalized || recovery || channel === 'beta') {
-    return canonical
+    return withCitationFooter(canonical)
   }
 
   const releaseDocPath = join(releasesDir, `v${normalized}.md`)
   if (!existsSync(releaseDocPath)) {
-    return canonical
+    return withCitationFooter(canonical)
   }
 
   const effectiveRef = ref || `v${normalized}`
@@ -133,7 +149,7 @@ export function composeReleaseBody({
     ref: effectiveRef,
   }).trim()
 
-  return [
+  const composed = [
     curated,
     '',
     '---',
@@ -146,6 +162,8 @@ export function composeReleaseBody({
     '</details>',
     '',
   ].join('\n')
+
+  return withCitationFooter(composed)
 }
 
 function parseArgs(argv) {
