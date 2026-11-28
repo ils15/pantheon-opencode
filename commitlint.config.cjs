@@ -35,6 +35,7 @@ module.exports = {
         'scripts',
         'setup',
         'docs',
+        'citation',
         'ci',
         'deps',
         'deps-dev',
