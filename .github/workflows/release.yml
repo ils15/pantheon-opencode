@@ -526,13 +526,19 @@ jobs:
       #
       # Proof — fetched each version's tarball and ran
       # `grep -n oidc package/lib/commands/dist-tag.js` on the extracted tree:
-      #   11.19.1  no match
-      #   11.20.0  no match
-      #   11.21.0  line 105:  await this.#oidc(spec, opts)
-      #   11.21.3  lines 105 (add) / 135 (remove), same call
-      # 11.21.0 is the first published version that carries the call; 11.21.3 is
-      # the last patch on that line. Its engines field is "^20.17.0 || >=22.9.0",
-      # so the job's Node 26.4.0 satisfies it.
+      #   11.17.0  (bundled with Node 26.4.0)  0 matches
+      #   11.19.1                             0 matches
+      #   11.20.0                             0 matches
+      #   11.21.0                             6 matches — lines 6 (require),
+      #                                       105 (add), 135 (remove),
+      #                                       169 (list), 210/212 (#oidc)
+      #   11.21.3                             identical file (empty diff)
+      #   12.2.3                              identical file (empty diff)
+      # 11.21.0 is the first published version that carries the exchange; the
+      # 11.21.x line is byte-identical through 11.21.3 and again in 12.2.3.
+      # 11.21.3's engines field is "^20.17.0 || >=22.9.0", satisfied by the
+      # job's Node 26.4.0, and a `--prefix` install on 26.4.0 was exercised:
+      # the installed dist-tag.js greps clean.
       #
       # Scoped to this job on purpose: `ci.yml` and local dev keep the npm that
       # ships with Node, because only the release job needs the OIDC dist-tag.
