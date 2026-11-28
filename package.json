@@ -80,6 +80,7 @@
     "scripts/*.py",
     "src/plugin",
     "src/plugin.ts",
+    "CITATION.cff",
     "README.md",
     "src/mcp/*.txt",
     "commands/*.md",

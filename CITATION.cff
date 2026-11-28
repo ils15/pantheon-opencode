@@ -1,10 +1,11 @@
 cff-version: 1.2.0
 message: "If you use Pantheon, please cite this software."
 title: "Pantheon Opencode"
+type: software
 abstract: >-
-  Pantheon v2.4.0 is an OpenCode plugin and installer coordinating 14
-  specialized agents with high-speed direct dispatch, native subagents,
-  and progressive skill disclosure for OpenCode 2.x.
+  Pantheon v2.4.0 is an OpenCode plugin coordinating 8 canonical agents plus
+  on-demand ephemeral workers, with a typed decision router (Jev) and
+  progressive skill disclosure for OpenCode 2.x.
 version: 2.4.0
 date-released: 2026-11-28
 url: https://github.com/ils15/pantheon-opencode/releases/tag/v2.4.0
@@ -20,3 +21,4 @@ keywords:
 authors:
   - given-names: Igor Leite
     family-names: da Silva
+    orcid: "https://orcid.org/0000-0001-7787-7562"

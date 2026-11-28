@@ -792,20 +792,50 @@ release a **version DOI**; all versions share the stable **concept DOI**
 (`conceptrecid 22650136`), which always resolves to the latest archived release.
 
 The integration has **no pre-release filter**: it archives *every* GitHub
-Release. Only the stable channel creates a GitHub Release, so only stable
-versions are archived. Beta releases create a git tag and publish to npm but no
-Release, and are therefore intentionally absent from the Zenodo family.
+Release. The current workflow policy creates a GitHub Release only for the
+stable channel
+([`release.yml`](https://github.com/ils15/pantheon-opencode/blob/main/.github/workflows/release.yml)),
+so only stable versions are *added* to the concept today.
+
+Prerelease versions archived before v2.0.0 remain in the concept: an earlier
+generation of the workflow did publish beta Releases, and a deposit cannot be
+withdrawn.
 
 [`.zenodo.json`](https://github.com/ils15/pantheon-opencode/blob/main/.zenodo.json) is the source of the deposited metadata
 (title, creators/ORCID, description, license, keywords, and related
 identifiers). `scripts/versioning.mjs` bumps its `version`, `publication_date`,
 and `url` alongside the other manifests on every release, so the file must stay
-in sync for the next archive. The deposited `title` is read from `.zenodo.json`
-at the tagged commit and is **not** applied retroactively to versions already
-archived.
+in sync for the next archive.
+
+### Archive metadata is read at the tagged commit
+
+`version`, `publication_date`, `title` and `description` are read from `.zenodo.json` at the **tagged commit**;
+the tag only determines the file name and the version DOI. Zenodo snapshots that
+file once, so the release gates that compare version strings between manifests
+cannot repair a stale metadata file afterwards:
+
+> **Never tag a release whose `.zenodo.json` still carries the previous version.**
+> The deposit is irreversible, and no later edit in the repository changes what
+> the archive says.
+
+This invariant exists because it was violated. Published Zenodo records are
+immutable — they are documented here, not repaired:
+
+- Five records labelled `1.4.3` (`22650137`, `22688985`, `22709558`, `22728638`,
+  `22729516`) actually contain `v1.5.0-beta.1`, `v1.5.0-beta.3`,
+  `v1.5.0-beta.4`, `v1.5.0-beta.5` and `v1.5.0-beta.6`. Each tag was cut while
+  `.zenodo.json` still said `1.4.3`.
+- Duplicate version labels exist for `1.7.0` (×2), `1.5.0-beta.20` (×2) and
+  `1.5.0-beta.12` (×2), so a label alone never identifies one record — cite the
+  record id.
+- The five mislabels mean v1.0.0–v1.4.3 were never archived at all: the concept
+  starts at those `1.4.3`-labelled beta deposits.
+
+Cite the **concept** DOI unless you mean one exact deposited snapshot.
 
 The integration is configured in Zenodo and runs on Zenodo's side — no
 workflow, token, or protected environment is stored in this repository. If a
 Release is not archived automatically, trigger a sync from the repository's
 Zenodo GitHub settings, then verify the concept DOI, the per-release version
-DOI, and the record metadata on Zenodo.
+DOI, and the record metadata on Zenodo. `node scripts/verify-zenodo.mjs` does
+that comparison for you (see [Post-Release Checklist](#post-release-checklist)).

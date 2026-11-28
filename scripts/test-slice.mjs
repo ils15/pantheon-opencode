@@ -129,6 +129,22 @@ const CONTRACT_SLICES = [
     command: 'node --test tests/pantheon/precommit-runtime-guard.test.mjs',
     selection: 'pre-commit runtime-state guard',
   },
+  // Citation/packaging contracts are named after the artifact, not the file.
+  {
+    pattern: /^scripts\/release-body\.mjs$/,
+    command: 'node --test tests/release-body.test.mjs',
+    selection: 'release-body footer + URL rewrite contract',
+  },
+  {
+    pattern: /^scripts\/(?:verify-zenodo|zenodo-record)\.mjs$/,
+    command: 'node --test tests/verify-zenodo.test.mjs',
+    selection: 'Zenodo archive verification contract (fixtures, no network)',
+  },
+  {
+    pattern: /^(?:CITATION\.cff|\.zenodo\.json|docs\/RELEASING\.md)$/,
+    command: 'node --test tests/citation-metadata.test.mjs',
+    selection: 'citation metadata contract (roster count, DOI, archive history)',
+  },
   {
     pattern: /^scripts\/[^/]+\.mjs$/,
     command: (file) => `node scripts/redaction-gate.mjs ${file}`,
