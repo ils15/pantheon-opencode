@@ -4,13 +4,13 @@
  *
  * The S1 review rejected probe evidence that only lived in a chat transcript.
  * This script is the committed, re-runnable form: each mutant disables exactly
- * one mechanism in `step-dependencies.ts` / `step-ledger.ts` and MUST turn a
- * named test red. A mutant that survives means the corresponding gate is not
- * actually enforced by the suite.
+ * one mechanism in `step-dependencies.ts` / `step-ledger.ts` /
+ * `ephemeral-merge.ts` and MUST turn a named test red. A mutant that survives
+ * means the corresponding gate is not actually enforced by the suite.
  *
  * Usage:
  *   node scripts/verify-step-ledger-mutations.mjs
- *   node scripts/verify-step-ledger-mutations.mjs --runs 5 --only lock-bypass
+ *   node scripts/verify-step-ledger-mutations.mjs --runs 5 --only S3-token-check-removed
  *
  * It temporarily rewrites the source file(s), runs the narrow slice, restores
  * the original bytes in a `finally`, and exits non-zero if any expectation
@@ -30,6 +30,8 @@ const LEDGER = 'src/pantheon/step-ledger.ts'
 const DEPS = 'src/pantheon/step-dependencies.ts'
 const CHECKPOINT = 'src/pantheon/git-checkpoint.ts'
 const HOOK = 'scripts/hooks/check-pantheon-runtime-staged.mjs'
+const MERGE = 'src/pantheon/ephemeral-merge.ts'
+const MERGE_SLICE = 'tests/pantheon/ephemeral-merge.test.ts'
 
 /**
  * @type {Array<{
@@ -105,10 +107,13 @@ const MUTANTS = [
     edits: [
       {
         file: LEDGER,
-        from: 'const token = acquireLedgerLock(lockPath)',
+        // Anchored on the whole function head: `acquireLedgerLock(lockPath)` also
+        // appears in `restoreLedgerSnapshotUnderLock`, so the bare line stops
+        // being unique as soon as another lock helper exists.
+        from: 'export function updateStepLedger<T>(\n  workspaceDir: string,\n  mutator: (store: StepLedgerStore) => T,\n): T {\n  const filePath = resolveLedgerPath(workspaceDir)\n  const lockPath = resolveLockPath(filePath)\n  const token = acquireLedgerLock(lockPath)',
         // The token literal is split so this shipped script never looks like a
         // credential to `scripts/redaction-gate.mjs` (which scans the tarball).
-        to: "const token = 'mutant' + '-no-lock'",
+        to: "export function updateStepLedger<T>(\n  workspaceDir: string,\n  mutator: (store: StepLedgerStore) => T,\n): T {\n  const filePath = resolveLedgerPath(workspaceDir)\n  const lockPath = resolveLockPath(filePath)\n  const token = 'mutant' + '-no-lock'",
       },
     ],
   },
@@ -348,6 +353,301 @@ const MUTANTS = [
       },
     ],
   },
+  // --- S3: protected ephemeral merge (ephemeral-merge.ts) -------------------
+  {
+    id: 'S3-token-check-removed',
+    description: 'merge_ephemeral apply accepts any (or no) confirmToken',
+    slice: MERGE_SLICE,
+    expect:
+      'S3-6 apply requires a token that is single-use, expiring, and invalid after any change',
+    edits: [
+      {
+        file: MERGE,
+        from: '  const verdict = validateToken(storeKey, input.confirmToken, computedToken, now)\n  if (!verdict.ok) {',
+        to: '  const verdict = validateToken(storeKey, input.confirmToken, computedToken, now)\n  if (!verdict.ok && false) {',
+      },
+    ],
+  },
+  {
+    id: 'S3-single-use-removed',
+    description: 'a merge token is never burned, so it stays usable forever',
+    slice: MERGE_SLICE,
+    expect: 'S3-A2 two concurrent applies with one token: exactly one wins',
+    edits: [
+      {
+        file: MERGE,
+        // Anchored on the apply-path indentation: the discard path burns its own
+        // token with the same two lines at a shallower indent.
+        from: '        const record = tokenStore().get(storeKey)\n        if (record) record.consumed = true',
+        to: '        const record = tokenStore().get(storeKey)\n        if (record) void record',
+      },
+    ],
+  },
+  {
+    id: 'S3-drift-check-removed',
+    description: 'apply ignores HEAD drift past ephemeral.baseHead',
+    slice: MERGE_SLICE,
+    expect: 'S3-2 apply refuses head_drift and leaves git status byte-identical',
+    edits: [
+      {
+        file: MERGE,
+        from: "  if (headDrift) {\n    return refuse(base, 'head_drift', {",
+        to: "  if (headDrift && false) {\n    return refuse(base, 'head_drift', {",
+      },
+    ],
+  },
+  {
+    id: 'S3-lease-check-removed',
+    description: 'apply ignores dirty/lease/branch overlaps',
+    slice: MERGE_SLICE,
+    expect:
+      "S3-4 apply refuses a second live pantheon/eph branch on the same file (source:'branch')",
+    edits: [
+      {
+        file: MERGE,
+        from: "  if (leaseConflicts.length > 0) {\n    return refuse(base, 'lease_conflict', {",
+        to: "  if (leaseConflicts.length > 0 && false) {\n    return refuse(base, 'lease_conflict', {",
+      },
+    ],
+  },
+  {
+    id: 'S3-recovery-reset-removed',
+    description: 'recovery skips `git reset --merge`, leaving an unmerged index behind',
+    slice: MERGE_SLICE,
+    expect:
+      'S3-5b an injected mid-apply conflict is aborted and the tree is restored byte-identically',
+    edits: [
+      {
+        file: MERGE,
+        from: "  const reset = await git(root, ['reset', '--merge'])\n  resetApplied = reset.ok",
+        to: "  const reset = await git(root, ['rev-parse', 'HEAD'])\n  resetApplied = reset.ok",
+      },
+    ],
+  },
+  {
+    id: 'S3-recovery-restore-skipped',
+    description: 'recovery trusts `git reset --merge` and never restores the checkpoint',
+    slice: MERGE_SLICE,
+    expect:
+      'S3-5b an injected mid-apply conflict is aborted and the tree is restored byte-identically',
+    edits: [
+      {
+        file: MERGE,
+        from: '      const restore = await restoreGitCheckpoint(root, preMerge.treeHash)',
+        to: '      const restore = { ok: true, reason: undefined }',
+      },
+    ],
+  },
+  {
+    id: 'S3-unstage-skipped',
+    description: 'apply leaves the squash staged instead of review-first (D05)',
+    slice: MERGE_SLICE,
+    expect:
+      'S3-A1 apply leaves the squash unstaged, records ephemeral metadata, emits step:merge, and keeps the branch',
+    edits: [
+      {
+        file: MERGE,
+        from: "    const unstaged = await git(root, ['reset'])",
+        to: "    const unstaged = await git(root, ['status'])",
+      },
+    ],
+  },
+  // --- review round 2: B1 ref resolution, B2 foreign merge, B3 ledger write --
+  {
+    id: 'B1-symbolic-guard-removed',
+    description: 'a short branch name shadowed by a tag is accepted instead of refused',
+    slice: MERGE_SLICE,
+    expect: 'S3-B1 a same-named tag or refs/pantheon ref is refused, never merged',
+    edits: [
+      {
+        file: MERGE,
+        from: '  if (!branchSymbolic.ok || branchSymbolic.stdout.trim() !== branchRef) {',
+        to: '  if (false && branchSymbolic.ok) {',
+      },
+    ],
+  },
+  {
+    id: 'B1-short-ref-merge',
+    description: 'the squash re-resolves the ref instead of the reviewed sha (force-push wins)',
+    slice: MERGE_SLICE,
+    expect: 'S3-B1c a force-push inside the merge window still merges the reviewed sha',
+    edits: [
+      {
+        file: MERGE,
+        from: "        const merge = await git(root, ['merge', '--squash', '--no-edit', branchSha])",
+        to: "        const merge = await git(root, ['merge', '--squash', '--no-edit', branchRef])",
+      },
+    ],
+  },
+  {
+    id: 'B2-preflight-merge-state-ignored',
+    description: 'apply no longer notices that a foreign merge is in progress',
+    slice: MERGE_SLICE,
+    expect: 'S3-B2 apply refuses merge_in_progress and leaves the user merge untouched',
+    edits: [
+      {
+        file: MERGE,
+        from: '  const mergeInProgress = mergeStateBefore.mergeHead || mergeStateBefore.mergeMsg',
+        to: '  const mergeInProgress = false && (mergeStateBefore.mergeHead || mergeStateBefore.mergeMsg)',
+      },
+    ],
+  },
+  {
+    id: 'B2-foreign-abort-restored',
+    description: 'recovery proceeds on a MERGE_HEAD it does not own (resets the user merge)',
+    slice: MERGE_SLICE,
+    expect: 'S3-5e recovery leaves a merge it does not own completely untouched',
+    edits: [
+      {
+        file: MERGE,
+        from: '  if (stateBefore.mergeHead) {',
+        to: '  if (false) {',
+      },
+    ],
+  },
+  {
+    id: 'B3-metadata-write-uncaught',
+    description: 'a ledger write failure after the squash escapes instead of being reported',
+    slice: MERGE_SLICE,
+    expect: 'S3-B3 a ledger write failure after the squash still reports the merge as landed',
+    edits: [
+      {
+        file: MERGE,
+        from: '  } catch (err: unknown) {\n    const structured = describeLedgerError(err)',
+        to: '  } catch (err: unknown) {\n    throw err\n    const structured = describeLedgerError(err)',
+      },
+    ],
+  },
+  {
+    id: 'S1-status-fail-open',
+    description: 'an unreadable git status is reported as an empty (clean) tree again',
+    slice: MERGE_SLICE,
+    expect: 'S3-S1 an unreadable git status refuses instead of reporting a clean tree',
+    edits: [
+      {
+        file: MERGE,
+        from: "  if (!res.ok) {\n    return { ok: false, reason: unavailableReason('git status', res) }\n  }",
+        to: '  if (!res.ok) {\n    return { ok: true, value: [] }\n  }',
+      },
+    ],
+  },
+  {
+    id: 'S2-merge-lock-stale-break',
+    description:
+      'the merge lock reverts to the ledger rule (2 s stale break, no liveness, no heartbeat)',
+    slice: MERGE_SLICE,
+    expect: 'S3-L1 two processes cannot share the merge window, and neither erases the other',
+    edits: [
+      {
+        file: MERGE,
+        from: 'const MERGE_LOCK_STALE_MS = 10 * 60 * 1000',
+        to: 'const MERGE_LOCK_STALE_MS = 2_000',
+      },
+      {
+        file: MERGE,
+        from: '    if (ownerPid !== undefined && !pidIsAlive(ownerPid)) {',
+        to: '    if (false) {',
+      },
+      {
+        file: MERGE,
+        from: '      const timer = setInterval(() => {\n',
+        to: '      const timer = setInterval(() => {\n        return\n',
+      },
+    ],
+  },
+  {
+    id: 'S2-merge-lock-liveness-removed',
+    description: 'a dead lock owner is no longer detected, so its lock waits for the stale timeout',
+    slice: MERGE_SLICE,
+    expect: "S3-L3 a dead holder's lock is reclaimed immediately, not after the stale timeout",
+    edits: [
+      {
+        file: MERGE,
+        from: '    if (ownerPid !== undefined && !pidIsAlive(ownerPid)) {',
+        to: '    if (false) {',
+      },
+    ],
+  },
+  {
+    id: 'S3-lock-ownership-reverify-removed',
+    description:
+      'the post-window ownership check always passes, so an evicted writer reports success',
+    slice: MERGE_SLICE,
+    expect: 'S3-L2 an evicted writer aborts with lock_lost instead of reporting success',
+    edits: [
+      {
+        file: MERGE,
+        from: '  if (mergeLockToken(handle.path) === handle.token) return',
+        to: '  if (mergeLockToken(handle.path) === handle.token || true) return',
+      },
+    ],
+  },
+  {
+    id: 'B1-sha-not-in-token',
+    description:
+      'the token ignores the reviewed commit sha (a same-content force-push stays valid)',
+    slice: MERGE_SLICE,
+    expect: 'S3-B1d a same-content force-push before apply invalidates the token (sha binding)',
+    edits: [
+      {
+        file: MERGE,
+        from: '        fingerprint.branchSha,\n',
+        to: '',
+      },
+    ],
+  },
+  {
+    id: 'S1-refname-short-reverted',
+    description: 'the other-branch scan uses %(refname:short), so a shadowing tag disables it',
+    slice: MERGE_SLICE,
+    expect: 'S3-B1e a tag shadowing another live branch does not disable the overlap gate',
+    edits: [
+      {
+        file: MERGE,
+        from: "    '--format=%(refname)',",
+        to: "    '--format=%(refname:short)',",
+      },
+    ],
+  },
+  {
+    id: 'S2-reverify-removed',
+    description: 'the queued apply no longer re-checks HEAD inside the lock',
+    slice: MERGE_SLICE,
+    expect: 'S3-S2b a writer that moved HEAD while queued is detected before the merge',
+    edits: [
+      {
+        file: MERGE,
+        from: '        if (headSeen !== headNow) {',
+        to: '        if (false && headSeen !== headNow) {',
+      },
+    ],
+  },
+  {
+    id: 'S3-preview-token-deferred',
+    description: 'the token is minted only after a successful preview, so discard can deadlock',
+    slice: MERGE_SLICE,
+    expect: 'S3-S3 a preview that cannot run still mints the token discard needs',
+    edits: [
+      {
+        file: MERGE,
+        from: "  if (mode === 'preview') {\n    tokenStore().set(storeKey, {",
+        to: "  if (false && mode === 'preview') {\n    tokenStore().set(storeKey, {",
+      },
+    ],
+  },
+  {
+    id: 'F1-ownerless-lock-age-break-removed',
+    description: 'an ownerless (zero-byte) lock can never be reclaimed by age',
+    slice: MERGE_SLICE,
+    expect: 'S3-L4 an ownerless (zero-byte) lock is refused while fresh and reclaimed once stale',
+    edits: [
+      {
+        file: MERGE,
+        from: '    if (age > MERGE_LOCK_STALE_MS) {',
+        to: '    if (observed !== undefined && age > MERGE_LOCK_STALE_MS) {',
+      },
+    ],
+  },
 ]
 
 function parseArgs(argv) {
@@ -410,7 +710,9 @@ if (selected.length === 0) {
 const backupPath = join(root, '.step-ledger-mutation-backup')
 let failures = 0
 
-console.log(`Running ${selected.length} mutant(s) x ${options.runs} run(s) against ${SLICE}\n`)
+console.log(
+  `Running ${selected.length} mutant(s) x ${options.runs} run(s) against each mutant's slice\n`,
+)
 
 for (const mutant of selected) {
   let originals = new Map()

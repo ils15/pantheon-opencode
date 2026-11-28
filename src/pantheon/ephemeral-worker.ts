@@ -20,6 +20,7 @@ import { appendBoardMessage } from './board-messages.ts'
 import { getSharedBus } from './bus.ts'
 import { PANTHEON_AGENTS } from './delegation-policy.ts'
 import { type KnownAgent, RETIRED_AGENT_ALIASES } from './model-agents.ts'
+import { updateStepLedger } from './step-ledger.ts'
 import {
   DEFAULT_WALL_CLOCK_MS,
   runAtomicStepSubSession,
@@ -180,7 +181,10 @@ export interface SpawnEphemeralWorkerResult {
   readonly worktreeDir?: string
   readonly worktreeCleaned: boolean
   readonly branch?: string
+  /** Commit the disposable worktree started from; the merge gate's drift anchor. */
+  readonly baseHead?: string
   readonly diffSummary?: string
+  readonly ledgerMetadataError?: string
   readonly claimSeq?: number
   readonly finalSeq?: number
   readonly haltedReason?: StepHaltReason
@@ -304,6 +308,50 @@ const SAFE_EPHEMERAL_ROLE_RE = /^[a-z0-9][a-z0-9-]{0,31}$/
 const EPHEMERAL_ROLE_MAX_LENGTH = 32
 const FALLBACK_EPHEMERAL_ROLE = 'worker'
 
+export interface RecordEphemeralBranchPatch {
+  readonly branch: string
+  readonly baseHead?: string
+  readonly role?: string
+  readonly worktreeDir?: string
+}
+
+/**
+ * Persist a preserved worker branch on the ledger entry (D06: ephemeral
+ * metadata lives on the entry, never in a sidecar).
+ *
+ * Best-effort and honest: an unknown step key is never created here, and the
+ * caller receives the failure reason instead of a silent no-op. Recording a
+ * fresh branch also clears the merge/discard markers, because those describe the
+ * *previous* branch content that this run just replaced.
+ */
+export function recordEphemeralBranch(
+  workspaceDir: string,
+  stepKey: string,
+  patch: RecordEphemeralBranchPatch,
+): { recorded: boolean; error?: string } {
+  try {
+    return updateStepLedger(workspaceDir, (ledger) => {
+      const entry = ledger.steps[stepKey]
+      if (!entry) return { recorded: false as const, error: 'step_not_found' }
+      const ephemeral = {
+        ...entry.ephemeral,
+        branch: patch.branch,
+        ...(patch.baseHead ? { baseHead: patch.baseHead } : {}),
+        ...(patch.role ? { role: patch.role } : {}),
+        ...(patch.worktreeDir ? { worktreeDir: patch.worktreeDir } : {}),
+      }
+      delete ephemeral.mergedAt
+      delete ephemeral.mergeTree
+      delete ephemeral.discardedAt
+      entry.ephemeral = ephemeral
+      entry.updatedAt = new Date().toISOString()
+      return { recorded: true as const }
+    })
+  } catch (err: unknown) {
+    return { recorded: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
 /**
  * Derive a validator-safe role slug (see `SAFE_EPHEMERAL_ROLE_RE`) from an
  * arbitrary label such as a step key. Lowercases, maps every character outside
@@ -381,6 +429,7 @@ export async function spawnEphemeralWorker(
   let preservedBranch: string | undefined
   let diffSummary: string | undefined
   let preserveError: string | undefined
+  let ledgerMetadataError: string | undefined
   let claimSeq: number | undefined
   let finalSeq: number | undefined
   let runOk = false
@@ -536,6 +585,17 @@ export async function spawnEphemeralWorker(
       preservedBranch = preserved.branch
       diffSummary = preserved.diffSummary
       preserveError = preserved.error
+      if (preservedBranch) {
+        // D06: the branch and its base belong on the ledger entry, so the merge
+        // gate never has to re-derive them (or guess) from git alone.
+        const rec = recordEphemeralBranch(sharedRoot, input.stepKey, {
+          branch: preservedBranch,
+          ...(baseHead !== undefined ? { baseHead } : {}),
+          role,
+          ...(worktreeDir !== undefined ? { worktreeDir } : {}),
+        })
+        if (!rec.recorded) ledgerMetadataError = rec.error ?? 'ledger_metadata_not_recorded'
+      }
       if (input.keepWorktree !== true && !preserveError) {
         try {
           const ac = new AbortController()
@@ -636,7 +696,9 @@ export async function spawnEphemeralWorker(
     ...(worktreeDir !== undefined ? { worktreeDir } : {}),
     worktreeCleaned,
     ...(preservedBranch !== undefined ? { branch: preservedBranch } : {}),
+    ...(baseHead !== undefined ? { baseHead } : {}),
     ...(diffSummary !== undefined ? { diffSummary } : {}),
+    ...(ledgerMetadataError !== undefined ? { ledgerMetadataError } : {}),
     ...(claimSeq !== undefined ? { claimSeq } : {}),
     ...(finalSeq !== undefined ? { finalSeq } : {}),
     ...(haltedReason !== undefined ? { haltedReason } : {}),

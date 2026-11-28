@@ -92,6 +92,21 @@ export interface StepBlockedEventPayload {
   readonly timestamp: number
 }
 
+/** An ephemeral branch was merged (D05/D06) or discarded (S3). */
+export interface StepMergeEventPayload {
+  readonly stepKey: string
+  readonly branch: string
+  readonly baseHead: string
+  readonly head: string
+  readonly mode: 'apply' | 'discard'
+  readonly mergeTree?: string | undefined
+  readonly mergedAt?: string | undefined
+  readonly committed?: boolean | undefined
+  readonly commit?: string | undefined
+  readonly discarded?: boolean | undefined
+  readonly timestamp: number
+}
+
 export interface ReproductionGateEventPayload {
   readonly stepKey: string
   readonly agent: string
@@ -173,6 +188,7 @@ export interface PantheonEventMap {
   'step:rollback': StepRollbackEventPayload
   'step:unlocked': StepUnlockedEventPayload
   'step:blocked': StepBlockedEventPayload
+  'step:merge': StepMergeEventPayload
   'reproduction:gate': ReproductionGateEventPayload
   'board:message': BoardMessageEventPayload
   'swarm:stall:detected': SwarmStallDetectedEventPayload
