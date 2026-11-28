@@ -13,6 +13,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+## [v2.4.0] - 2026-11-28
+
+### 🆕 What's New
+
+- **Protected ephemeral-branch merge** — `merge_ephemeral` gates every merge on HEAD drift, content pins, leases and two-step tokens.
+- **Step prerequisites** — `dependsOn` chains run on a locked atomic ledger, with a cascade rollback that is explicit and recoverable.
+- **Strategy learning store** — an FTS5 index of per-step outcomes tracks candidate → proven → anti-pattern decay.
+- **Opt-in HTTP cockpit** — a loopback, read-only, GET/HEAD-only window on the swarm, redacted by default.
+- **Executable guardrails** — `scripts/guardrails.mjs` plus a `doctor` section catch unreachable hooks, stale locks and shared checkouts.
+
+### Added
+- **ledger** — `dependsOn` prerequisites, atomic locked writes, cascade rollback with an explicit `unblock_step`, `.pantheon`-free git checkpoints, anchored baselines (#508)
+- **strategy** — `pantheon_strategy` tool and an FTS5 store of per-step outcomes with candidate → proven → anti-pattern decay (#510)
+- **merge** — `merge_ephemeral` with HEAD-drift, content-pinned, lease and two-step token gates (#513)
+- **cockpit** — opt-in loopback read-only HTTP cockpit, GET/HEAD only, redacted by default (#516)
+- **guardrails** — `scripts/guardrails.mjs` and a `doctor` section covering hook reachability, stale locks, shared checkouts and ignore preconditions (#514)
+
+### Changed
+- **deps** — refresh the TUI toolchain and regenerate both lockfiles (#502)
+- **ci** — `PR_MERGE_TOKEN` so merges trigger CI on main (#499)
+- **biome** — ignore `.pantheon/deepwork` so local lint stops scanning a gitignored runtime artefact, while tracked `.pantheon/**` files keep their coverage
+- **cockpit** — the default payload omits agent-authored free text and exposes only lengths; `?full=1` returns it verbatim over the tunnel
+
+### Fixed
+- **ci** — never merge on red; gate generated artifacts on the fast lane (#507)
+- **ci** — auto-merge asked `gh pr view --json` for a field no `gh` version supports (#509)
+- **ci** — auto-merge ran `gh` in a checkout-less job with no `GH_REPO` (#512)
+- **hooks** — commit hooks were silently skipped in every worktree; hooks are now tracked and reachable, husky dropped (#511)
+- **validate** — doctor tests asserted ambient machine state instead of a provisioned checkout (#515)
+- **plugin** — re-pin the native Decisions tripwire (#506)
+- **release** — wait for npm registry visibility before reconciling dist-tags (#500)
 ## [v2.3.4] - 2026-11-27
 
 ### 🆕 What's New

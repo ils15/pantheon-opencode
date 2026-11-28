@@ -1,6 +1,6 @@
 {
   "name": "pantheon-opencode",
-  "version": "2.3.4",
+  "version": "2.4.0",
   "description": "Multi-agent orchestration for OpenCode — 8 canonical agents + on-demand ephemeral workers, TDD, Themis review gates.",
   "type": "module",
   "workspaces": [

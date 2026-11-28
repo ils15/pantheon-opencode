@@ -1,9 +1,9 @@
-<!-- pantheon:cookbook-version v2.3 -->
+<!-- pantheon:cookbook-version v2.4 -->
 # Pantheon Cookbook: Everyday Practical Recipes
 
 > 🇧🇷 **Versão em Português disponível:** [Leia em Português](../pt-BR/guides/cookbook.md)
 
-This practical cookbook gathers copy-paste recipes for everyday development in **Pantheon `v2.3.0` (`OpenCode 2.x` native)** — covering zero-init setup, the **8 canonical agents** (+ `spawn_ephemeral` slice workers), **31 native in-process tools**, **9 server commands**, and **5 interactive TUI surfaces**.
+This practical cookbook gathers copy-paste recipes for everyday development in **Pantheon `v2.4.0` (`OpenCode 2.x` native)** — covering zero-init setup, the **8 canonical agents** (+ `spawn_ephemeral` slice workers), **31 native in-process tools**, **9 server commands**, and **5 interactive TUI surfaces**.
 
 ---
 
@@ -234,6 +234,24 @@ or directly:
   ```bash
   npx pantheon-opencode doctor
   ```
+
+---
+
+## Recipe 15: Headless Read-Only HTTP Cockpit (`PANTHEON_COCKPIT=1`)
+
+**Scenario:** Watch a headless VPS run from a browser or a `curl` loop without granting anything write access.
+
+**Command:**
+```bash
+PANTHEON_COCKPIT=1 PANTHEON_COCKPIT_PORT=4747 opencode
+curl -s http://127.0.0.1:4747/ | head -c 400
+```
+
+**Why this works:**
+- Opt-in only: `PANTHEON_COCKPIT=1` is the single enable switch — unset or any other value leaves the surface off.
+- Loopback-only, `GET`/`HEAD`-only, and no CORS headers ever. A non-loopback `PANTHEON_COCKPIT_HOST` (including `0.0.0.0`) is a fatal startup error instead of a silent bind.
+- Payloads are redacted by default: agent-authored free text is omitted and only its length is exposed. Add `?full=1` for the verbatim text.
+- Set `PANTHEON_COCKPIT_TOKEN` to require the `x-pantheon-cockpit-token` header on every request; reach the port through an SSH tunnel rather than rebinding it.
 
 ---
 

@@ -18,6 +18,7 @@
       "!.opencode",
       "!.pantheon/autocontinue",
       "!.pantheon/board",
+      "!.pantheon/deepwork",
       "!.pantheon/deepwork/board-signals",
       "!.pantheon/goals",
       "!logs",
