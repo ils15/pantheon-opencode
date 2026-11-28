@@ -62,6 +62,25 @@ export function extractStep(source, name) {
   return body.join('\n')
 }
 
+/**
+ * The comment block attached immediately above a step.
+ *
+ * Workflow rationale lives in YAML comments above the `- name:` line, so a
+ * contract assertion has to read both to keep the proof next to the pin.
+ */
+export function extractLeadingComments(source, name) {
+  const lines = source.split('\n')
+  const header = new RegExp(`^\\s*- name: ${escapeRegex(name)}\\s*$`)
+  const start = lines.findIndex((line) => header.test(line))
+  if (start === -1) return null
+  const block = []
+  for (let index = start - 1; index >= 0; index -= 1) {
+    if (!/^\s*#/.test(lines[index])) break
+    block.unshift(lines[index])
+  }
+  return block.join('\n')
+}
+
 /** Remove the common leading indentation so shell functions sit at column 0. */
 function dedent(text) {
   const lines = text.split('\n')
@@ -149,7 +168,6 @@ function classify(message) {
 test('the dist-tag step is extracted, so the assertions below cannot pass vacuously', () => {
   assert.ok(step, `expected a "${STEP_NAME}" step in release.yml`)
   assert.match(step, /dist-tag add/, 'the extracted step must be the dist-tag reconciler')
-  assert.match(step, /dist-tag rm/)
 
   // Negative control: the extractor must report absence for an unknown step,
   // otherwise a renamed/deleted step would satisfy every test with ''.
@@ -274,7 +292,7 @@ test('the end-state assertion survives and prints the dist-tags it actually read
   const endState = step.slice(afterIndex)
   assert.match(endState, /Expected dist-tags\.latest=\$\{target\}, got \$\{tags\.latest\}/)
   assert.match(endState, /Expected dist-tags\.beta=\$\{target\}, got \$\{tags\.beta\}/)
-  assert.match(endState, /Stale dist-tags\.next=\$\{tags\.next\}/)
+  assert.match(endState, /Expected dist-tags\.next=\$\{target\}, got \$\{tags\.next\}/)
   // Every end-state assertion must report the full object it read, not just
   // the single field that happened to differ.
   const assertionLines = endState.split('\n').filter((line) => /::error::.*dist-tags/.test(line))
@@ -287,6 +305,65 @@ test('the end-state assertion survives and prints the dist-tags it actually read
     )
   }
   assert.match(endState, /Verified npm dist-tags:/)
+})
+
+test('beta and next are asserted by exact equality, not by an ordering guess', () => {
+  const endState = step.slice(step.indexOf('AFTER_JSON='))
+  // A stale or unparseable tag must fail: `lt()` returned false for anything
+  // it could not parse, and `dist-tag add` short-circuits before the PUT when
+  // the tag already holds the target version.
+  assert.doesNotMatch(endState, /\blt\(tags\.(?:beta|next)/)
+  assert.match(
+    endState,
+    /if \(tags\.beta !== target\) \{[\s\S]*?Expected dist-tags\.beta=\$\{target\}, got \$\{tags\.beta\}/,
+  )
+  assert.match(
+    endState,
+    /if \(tags\.next !== target\) \{[\s\S]*?Expected dist-tags\.next=\$\{target\}, got \$\{tags\.next\}/,
+  )
+})
+
+test('a stale next tag is advanced with dist-tag add, never removed', () => {
+  // DELETE .../dist-tags/next answers 403 for this credential class
+  // (2FA-bypass GAT restriction, 2026-07-31) while PUT succeeds, so the only
+  // working reconciliation is to advance the tag.
+  assert.match(step, /cmds\.push\('next'\)/)
+  assert.doesNotMatch(step, /dist-tag rm/)
+  assert.doesNotMatch(step, /'rm'/)
+  assert.match(step, /dist_tag_write npm dist-tag add "pantheon-opencode@\$\{TARGET_VER\}"/)
+})
+
+test('the release job pins an npm whose dist-tag performs the OIDC exchange', () => {
+  const pinStep = extractStep(workflow, 'Pin npm for OIDC-capable dist-tag')
+  assert.ok(pinStep, 'expected the release job to pin its npm version')
+  // The rationale lives in the YAML comment block attached to the step; assert
+  // against both so the proof cannot drift away from the pin.
+  const pinRegion = `${extractLeadingComments(workflow, 'Pin npm for OIDC-capable dist-tag')}${pinStep}`
+
+  const pinned = /npm i -g npm@(\d+)\.(\d+)\.(\d+)/.exec(pinStep)
+  assert.ok(pinned, `the pin step must install an exact npm version: ${pinStep.slice(0, 200)}`)
+  const [major, minor, patch] = pinned.slice(1).map(Number)
+  // 11.21.0 is the first release whose lib/commands/dist-tag.js calls
+  // `await this.#oidc(spec, opts)`; anything below it sends NODE_AUTH_TOKEN.
+  assert.ok(
+    major > 11 || (major === 11 && (minor > 21 || (minor === 21 && patch >= 0))),
+    `npm ${major}.${minor}.${patch} predates the dist-tag OIDC exchange`,
+  )
+
+  // The pin must carry its own proof and verify itself at runtime.
+  assert.match(pinRegion, /#oidc\(spec, opts\)/)
+  assert.match(pinRegion, /11\.21\.0/)
+  assert.match(pinRegion, /11\.20\.0/)
+  assert.match(pinRegion, /lib\/commands\/dist-tag\.js/)
+  assert.match(pinStep, /grep -q 'this\.#oidc\(spec, opts\)'/)
+
+  // ci.yml and local dev keep the npm that ships with Node.
+  const ci = readFileSync(
+    fileURLToPath(new URL('../.github/workflows/ci.yml', import.meta.url)),
+    'utf8',
+  )
+  assert.doesNotMatch(ci, /npm i(?:nstall)? -g npm@/)
+  assert.doesNotMatch(workflow.slice(0, workflow.indexOf('  release:')), /npm i(?:nstall)? -g npm@/)
 })
 
 test('a failed write also reports the dist-tags it read', () => {

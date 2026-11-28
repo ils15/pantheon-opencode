@@ -254,7 +254,9 @@ test('dist-tag reconciliation waits for npm registry visibility before mutating 
     reconcileStep,
     /dist_tag_write npm dist-tag add "pantheon-opencode@\$\{TARGET_VER\}"/,
   )
-  assert.match(reconcileStep, /dist_tag_write npm dist-tag rm pantheon-opencode/)
+  // `next` is advanced, never removed: DELETE answers 403 for this credential
+  // class (2FA-bypass GAT restriction) while PUT succeeds.
+  assert.doesNotMatch(reconcileStep, /dist-tag rm/)
   assert.doesNotMatch(reconcileStep, /^\s+npm dist-tag (?:add|rm) /m)
   assert.match(reconcileStep, /version_present/)
   assert.match(reconcileStep, /failure_class "\$output"/)
